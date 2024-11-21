@@ -1,0 +1,1052 @@
+﻿<!DOCTYPE html>
+
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+    <meta charset="utf-8" />
+    <title>SoraList</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+        }
+
+        .box {
+            width: 400px;
+            height: 400px;
+            border: 1px solid #000;
+            margin: 100px auto;
+            box-shadow: 0 0 10px 5px rgba(0,0,0,.8);
+            border-radius: 10px;
+            line-height: 400px;
+            text-align: center;
+            font-size: 30px;
+            font-weight: 700;
+            text-shadow: 0 0 5px;
+            transition: all 1s;
+            display: none;
+        }
+
+            .box .entity {
+                width: 100%;
+                height: 100%;
+            }
+
+        .mulubox {
+            /*display:none;*/
+            width:100%;
+        }
+
+        .addButtons {
+            width: 1000px;
+            margin: 3% auto;
+            height: auto;
+            overflow: hidden;
+            text-align: center;
+        }
+
+            .addButtons button {
+                line-height: 300%;
+                background-color: antiquewhite;
+                width: 16%;
+                border-radius: 10px;
+            }
+
+        .mulu {
+            width: 99%;
+            height: 30px;
+            line-height: 30px;
+            border: 2px solid black;
+            text-align: center;
+            overflow: hidden;
+            text-overflow: ellipsis; /*文字溢出时用省略号显示*/
+            white-space: nowrap;
+        }
+
+        .select {
+            font-weight: bolder;
+        }
+
+        .bigbox {
+            width: 20%;
+            height: 500px;
+            overflow-y: auto;
+        }
+
+            .bigbox::-webkit-scrollbar {
+                display: none
+            }
+
+        .showbox {
+            width: 100%;
+            height: 500px;
+            display: flex;
+            white-space: nowrap;
+        }
+
+        .jiedianwords {
+            width: 100%;
+            height: 500px;
+            font-size: 17px;
+        }
+
+        .wordsbox {
+            width: 70%;
+            height: 500px;
+            border: 1px solid black;
+            position: absolute;
+            right: 0%;
+            top: 15%;
+        }
+
+            .wordsbox::-webkit-scrollbar {
+                display: none
+            }
+
+        .anjiansss {
+            display: none;
+            margin: 0 auto;
+            width: 300px;
+            height: 80px;
+            text-align: center;
+            font-weight: bold;
+            font-size: 20px;
+            border-radius: 10px;
+            line-height: 80px;
+            border: 1px solid black;
+        }
+
+        .firststep div {
+            user-select: none;
+        }
+
+        .rightmousemenu {
+            width: 200px;
+            height: auto;
+            border: 1px solid black;
+            position: absolute;
+            background-color: burlywood;
+            left: 50px;
+            display: none;
+        }
+
+            .rightmousemenu div {
+                width: 100%;
+                height: 40px;
+                line-height: 40px;
+                border-bottom: 1px solid black;
+                user-select: none;
+                white-space: nowrap;
+                text-align: center;
+            }
+
+        .changeMuluColor {
+            border: none;
+        }
+
+        .bianxierule {
+            display: none;
+            width: 600px;
+            margin: 2% auto;
+            padding: 5%;
+            background-color: antiquewhite;
+            border-radius: 20px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="box">拖拽外部文件至此</div>
+    <div class="anjiansss">
+        <div class="loadssss">点击加载</div>
+    </div>
+    <div class="addButtons">
+        <button class="addNewMuluButton">点击添加新目录</button>
+        <button class="addNewPotsButton">点击添加新节点</button>
+        <!--<button class="addNewWordsButton">点击添加节点内容</button>-->
+        <button class="saveButton">保存</button>
+        <button class="loadButton">从文件录入</button>
+        <button class="ruleButton">编写规则/注意事项</button>
+    </div>
+    <div class="bigbox">
+        <span>左键选择/展开目录，右键菜单，双击改名。目录可上下滑动。文件录入界面右键可返回。</span>
+        <div class="showbox">
+            <div class="mulubox">
+                <div class="firststep">
+                    <div class="mulu">目录名</div>
+
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="wordsbox">
+        <textarea class="jiedianwords">
+            我是节点内容 我是节点内容 我是节点内容 我是节点内容  我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容
+        </textarea>
+    </div>
+    <div class="rightmousemenu">
+        <div class="deleteMulu">删除选中目录</div>
+        <div class="changeMuluColor">修改选中目录颜色</div>
+        <div class="showAllMulu">展开所有目录</div>
+        <div class="cutAllMulu">收起所有目录</div>
+        <div class="noneRightMouseMenu">取消</div>
+    </div>
+    <div class="bianxierule">
+        <div><strong>双击可关闭此界面【建议在网页进行编辑】</strong></div>
+        <br />
+        <div>编写/录入时应该避免如下情况：</div>
+        <div>1.目录名/目录id存在特殊字符，目录名/目录id重复。</div>
+        <div>2.编写的第一个目录不以"mulu"作为父目录。</div>
+        <div>3.录入不支持一些特殊文件类型，如jpg等类型</div>
+        <br>
+        <div>编写规则：</div>
+        <div><strong>示例：[["mulu", "目录名", "目录名的class", "节点内容"], ["目录名的class", "目录名2", "目录名2的class", "目录二的节点内容"], ["目录名2的class", "目录名4", "目录名4的class", "目录4的节点内容"], ["mulusv", "目录名6", "目录名6的class", "目录6的节点内容"], ["目录名6的class", "目录名7", "目录名7的class", "目录7的节点内容"], ["目录名6的class", "目录名8", "目录名8的class", "目录8的节点内容"], ["目录名8的class", "目录名9", "目录名9的class", "目录9的节点内容"], ["目录名8的class", "目录名10", "目录名10的class", "目录10的节点内容"]]</strong></div>
+        <br />
+        <div>1.编写的需要是一个<strong>二维数组</strong>格式，并且开头的 [[ 之间<strong>不能有空格或其他符号</strong>，结尾的 ]] 同理。</div>
+        <div>2.二维数组里面的数据须是<strong>长度为4的一维数组</strong>，同时数组与数组之间<strong>必须为], [格式。即一维数组与前一个一维数组的逗号隔一个空格。</strong></div>
+        <div>3.<strong>一维数组编写原理：[父目录的id,该目录的名字,该目录的id，该目录的内容]</strong>，内容需用引号引起来。</div>
+        <div>4.如果父目录的id不存在，则该目录将为最高级的目录</div>
+    </div>
+    <script src="代码块.js"></script>
+    <script>
+        //储存目录文件
+        let mulufile = [["mulu", "目录名", "目录名的class", "节点内容"]];
+
+        //去除默认事件
+        document.oncontextmenu = function () {
+            return false;
+        }
+        //所有物体
+        const body = document.querySelector("body");
+        const allThins = body.querySelectorAll("*");
+        //包裹目录的两个盒子
+        const bigbox = document.querySelector(".bigbox");
+        const showbox = document.querySelector(".showbox");
+        //所有的目录
+        const mulus = document.querySelectorAll(".mulu");
+        //拖动元素的框
+        const box = document.querySelector('.box');
+        //目录容器
+        const firststep = document.querySelector(".firststep");
+
+        //目录主体
+        const mulubox = document.querySelector(".mulubox");
+        //按钮容器
+        const addButtons = document.querySelector(".addButtons");
+        //添加目录
+        const addNewMuluButton = document.querySelector(".addNewMuluButton");
+        //添加新节点
+        const addNewPotsButton = document.querySelector(".addNewPotsButton");
+        //添加节点内容
+        //const addNewWordsButton = document.querySelector(".addNewWordsButton");
+        //保存按钮
+        const saveButton = document.querySelector(".saveButton");
+        //从文件录入按钮
+        const loadButton = document.querySelector(".loadButton");
+        //编写规则按钮
+        const ruleButton = document.querySelector(".ruleButton");
+        //节点内容容器
+        const jiedianwords = document.querySelector(".jiedianwords");
+        //文件录入按键
+        const anjiansss = document.querySelector(".anjiansss");
+        //文件录入加载界面按键
+        const loadssss = document.querySelector(".loadssss");
+        //节点盒子
+        const wordsbox = document.querySelector(".wordsbox");
+        //右键菜单
+        const rightmousemenu = document.querySelector(".rightmousemenu");
+        //右键-删除
+        const deleteMulu = document.querySelector(".deleteMulu");
+        //右键-改变颜色
+        const changeMuluColor = document.querySelector(".changeMuluColor");
+        //右键-取消
+        const noneRightMouseMenu = document.querySelector(".noneRightMouseMenu");
+        //右键-展开所有目录
+        const showAllMulu = document.querySelector(".showAllMulu");
+        //右键-收缩所有目录
+        const cutAllMulu = document.querySelector(".cutAllMulu");
+
+
+        //规则/注意事项
+        const bianxierule = document.querySelector(".bianxierule");
+
+        //新/旧的目录名
+        let newName, oldName;
+        //所选择的目录
+        let currentMuluName;
+        ////快捷按键
+        //let ADD, REMOVE, SAVE;
+
+        //快捷键（暂时停用
+        //window.onkeyup = function () {
+        //    if ((event.key == "a" && event.ctrlKey) || (event.key == "A" && event.ctrlKey)) {
+        //        event.preventDefault();
+        //        addNewMuluButton.click();
+        //    }
+        //}
+        AddListStyleForFolder();
+        //区分文件夹和文件
+        function AddListStyleForFolder() {
+            let allparentmulu = [];
+            let foldermuluchild;
+            let childs = firststep.children;
+            for (let i = 0; i < childs.length; i++) {
+                if (allparentmulu.indexOf(childs[i].classList[1]) == -1) {
+                    foldermuluchild = document.getElementsByClassName(childs[i].classList[1]);
+                    if (foldermuluchild.length > 1) {
+                        allparentmulu.push(childs[i].classList[1]);
+                    }
+                }
+            }
+            for (let i = 0; i < allparentmulu.length; i++) {
+                let nowchilds = document.getElementsByClassName(allparentmulu[i]);
+
+                nowchilds[0].style.fontStyle = "italic";
+
+
+            }
+        }
+
+        //编写规则
+        ruleButton.addEventListener("click", function () {
+            box.style.display = "none";
+            anjiansss.style.display = "none";
+            addButtons.style.display = "none";
+            bigbox.style.display = "none";
+            wordsbox.style.display = "none";
+            bianxierule.style.display = "block";
+        })
+
+        bianxierule.addEventListener("dblclick", function () {
+            addButtons.style.display = "block";
+            bigbox.style.display = "block";
+            wordsbox.style.display = "block";
+            bianxierule.style.display = "none";
+        })
+
+        //文件录入
+        loadButton.addEventListener("click", function () {
+            box.style.display = "block";
+            anjiansss.style.display = "block";
+            addButtons.style.display = "none";
+            bigbox.style.display = "none";
+            wordsbox.style.display = "none";
+
+        })
+        box.addEventListener("mouseup", function () {
+            if (event.button == 2) {
+                box.style.display = "none";
+                addButtons.style.display = "block";
+                wordsbox.style.display = "block";
+                anjiansss.style.display = "none";
+                bigbox.style.display = "block";
+            }
+        })
+        //节点内容改变时改变储存
+        jiedianwords.addEventListener("change", function () {
+            let changedmulu = document.querySelector(`#${currentMuluName}`);
+            let classnamelist = changedmulu.classList;
+            for (let i = 0; i < mulufile.length; i++) {
+                if (mulufile[i][0] == classnamelist[1] && mulufile[i][2] == classnamelist[2] && mulufile[i][1] == changedmulu.innerHTML) {
+                    mulufile[i][3] = jiedianwords.value;
+                    return;
+                } else if (mulufile[i][0] == "mulu" && mulufile[i][2] == classnamelist[1] && mulufile[i][1] == changedmulu.innerHTML) {
+                    mulufile[i][3] = jiedianwords.value;
+                    return;
+                }
+            }
+        })
+
+        //加载目录
+        function LoadMulu() {
+            let error = 0;
+            let warning = 0;
+            if (mulufile[0][0] != "mulu" && false) {
+                alert("所传输的文件编写形式错误");
+            } else {
+                let idName
+                let muluss = document.querySelectorAll(".mulu");
+                for (let i = 0; i < muluss.length; i++) {
+                    muluss[i].remove();
+                }
+                for (let i = 0; i < mulufile.length; i++) {
+                    if (mulufile[i].length == 4) {
+                        if (mulufile[i][2] == "mulufirststep" || mulufile[i][0] == "mulufirststep") {
+                            warning++;
+                        }
+                        if (i == 0) {
+                            idName = creatDivByClass("firststep", getOneId(10, 0), `mulu ${mulufile[i][2]}`);
+                        } else {
+                            if (getDomNumb(mulufile[i][0]) > 0) {
+                                idName = creatDivByClassBefore(mulufile[i][0], getOneId(10, 0), `mulu ${mulufile[i][0]} ${mulufile[i][2]}`, (getDomNumb(mulufile[i][0]) - 1));
+                            } else {
+
+                                idName = creatDivByClass("firststep", getOneId(10, 0), `mulu ${mulufile[i][0]} ${mulufile[i][2]}`);
+
+                            }
+                        }
+                        let newMulu = document.querySelector(`#${idName}`);
+                        newMulu.innerHTML = mulufile[i][1];
+                        newMulu.addEventListener("mouseup", function () {
+                            if (event.button == 0) {
+                                currentMuluName = newMulu.id;
+                                RemoveOtherSelect();
+                                newMulu.classList += " select";
+                                jiedianwords.value = mulufile[i][3];
+                                //展示/隐藏子目录
+                                let currentchilds;
+                                if (getDomNumb(mulufile[i][2]) > 1) {
+                                    currentchilds = document.getElementsByClassName(mulufile[i][2]);
+                                    ReturnAllChild(mulufile[i][2], !(document.getElementsByClassName(currentchilds[1].classList[2])[0].style.display == "block"));
+
+                                } else if (getDomNumb(mulufile[i][0]) > 1 && getDomNumb(mulufile[i][2]) != 1) {
+                                    currentchilds = document.getElementsByClassName(mulufile[i][0]);
+                                    ReturnAllChild(mulufile[i][0], !(document.getElementsByClassName(currentchilds[1].classList[2])[0].style.display == "block"));
+                                }
+
+
+
+                            } else if (event.button == 2) {
+                                currentMuluName = newMulu.id;
+                                RemoveOtherSelect();
+                                newMulu.classList += " select";
+                                jiedianwords.value = mulufile[i][3];
+
+                                rightMouseMenu();
+
+                            }
+                        })
+                        newMulu.addEventListener("dblclick", function () {
+                            oldName = newMulu.innerHTML;
+                            newName = prompt("新的名字");
+                            if (newName.length == 0) {
+                                newMulu.innerHTML = oldName;
+
+                            } else {
+                                let arrs;
+                                let newclassname;
+                                ChangeChildName(newMulu.id, newName);
+
+                                if (newMulu.classList[2] != "select") {
+                                    arrs = [newMulu.classList[1], newMulu.innerHTML, newMulu.classList[2], jiedianwords.value];
+                                    newclassname = [newMulu.classList[1], newName, `mulu${newName}`, jiedianwords.value]
+                                    mulufile[findArrayIndex(mulufile, arrs)] = newclassname;
+                                    newMulu.classList.replace(newMulu.classList[2], `mulu${newName}`);
+
+                                } else {
+                                    arrs = ["mulu", newMulu.innerHTML, newMulu.classList[1], jiedianwords.value];
+                                    newclassname = ["mulu", newName, `mulu${newName}`, jiedianwords.value]
+                                    mulufile[findArrayIndex(mulufile, arrs)] = newclassname;
+
+                                    newMulu.classList.replace(newMulu.classList[1], `mulu${newName}`);
+
+                                }
+
+                                newMulu.innerHTML = newName;
+
+                                console.log(mulufile);
+                            }
+                        })
+
+
+
+                    } else {
+                        error++;
+                    }
+                }
+                DuplicateMuluHints();
+                if (error == 0 && warning == 0) {
+                    console.log(`error:${error},warning:${warning}`);
+                } else {
+                    console.warn(`error:${error},warning:${warning}`);
+
+                }
+            }
+        }
+        //加载所有元素后执行
+        document.addEventListener("DOMContentLoaded", function () {
+            //给所有body里的东西添加id
+            for (let i = 0; i < allThins.length; i++) {
+                allThins[i].id = getOneId(10, 0);
+            }
+            LoadMulu();
+            NoneChildMulu();
+            Colors();
+        })
+
+        //初始隐藏子目录
+        function NoneChildMulu() {
+            cutAllMulu.click();
+        }
+
+        //添加目录
+        addNewMuluButton.addEventListener("click", function () {
+            if (!checkid(currentMuluName, 1)) {
+                alert("未选中目录");
+            } else {
+                let nMulu, newMuLuName;
+                nMulu = prompt("输入目录名");
+                newMuLuName = `mulu${nMulu}`;
+                if (nMulu == "" || nMulu == null) {
+                    alert("已取消添加");
+                } else {
+                    let idName;
+
+                    let currentchilds;
+                    currentchilds = document.getElementsByClassName(document.getElementById(currentMuluName).classList[2]);
+
+
+                    let allparentmulu = [];
+                    let childs = currentchilds;
+                    for (let i = 0; i < childs.length; i++) {
+                        if (allparentmulu.indexOf(childs[i].classList[2]) == -1) {
+                            if (childs[i].classList[2] == "select") {
+                                allparentmulu.push(childs[i].classList[1]);
+                            } else {
+                                allparentmulu.push(childs[i].classList[2]);
+                            }
+                        }
+                    }
+                    if (document.getElementById(currentMuluName).classList[2] != "select") {
+                        idName = creatDivByClassBefore(allparentmulu[allparentmulu.length - 1], getOneId(10, 0), `mulu ${document.getElementById(currentMuluName).classList[1]} ${newMuLuName}`, document.getElementsByClassName(allparentmulu[allparentmulu.length - 1]).length - 1);
+                        mulufile.push([document.getElementById(currentMuluName).classList[1], nMulu, newMuLuName, `${nMulu}`]);
+
+                    } else {
+                        idName = creatDivByClassBefore(allparentmulu[allparentmulu.length - 1], getOneId(10, 0), `mulu  ${newMuLuName}`, document.getElementsByClassName(allparentmulu[allparentmulu.length - 1]).length - 1);
+                        mulufile.push(["mulu", nMulu, newMuLuName, `${nMulu}`]);
+
+                    }
+
+
+
+                    let newMulu = document.querySelector(`#${idName}`);
+                    newMulu.innerHTML = nMulu;
+                    if (currentchilds[0]) {
+                        newMulu.style.backgroundColor = currentchilds[0].style.backgroundColor;
+                        newMulu.style.display = currentchilds[0].style.display;
+
+                    } else {
+                        newMulu.style.backgroundColor = getColor();
+                        newMulu.style.display = "block";
+
+                    }
+                    newMulu.addEventListener("mouseup", function () {
+                        if (event.button == 0) {
+                            currentMuluName = newMulu.id;
+                            RemoveOtherSelect();
+                            newMulu.classList += " select";
+                            let onearr;
+                            if (document.getElementById(currentMuluName).classList[2] != "select") {
+                                onearr = [newMulu.classList[1], newMulu.innerHTML, newMulu.classList[2], nMulu];
+                            } else {
+                                onearr = ["mulu", newMulu.innerHTML, newMulu.classList[1], `${nMulu}`];
+
+                            }
+                            jiedianwords.value = mulufile[findArrayIndexCutLast(mulufile, onearr)][3];
+
+
+
+                            //展示/隐藏子目录
+                            let currentchilds;
+                            if (getDomNumb(newMuLuName) > 1) {
+                                currentchilds = document.getElementsByClassName(newMuLuName);
+                                ReturnAllChild(newMuLuName,!(document.getElementsByClassName(currentchilds[1].classList[2])[0].style.display == "block"));
+                            } else if (getDomNumb(newMulu.classList[1]) > 1 && getDomNumb(newMulu.classList[2]) != 1) {
+                                currentchilds = document.getElementsByClassName(newMulu.classList[1]);
+                                ReturnAllChild(newMulu.classList[1], !(document.getElementsByClassName(currentchilds[1].classList[2])[0].style.display == "block"));
+                            }
+                        } else if (event.button == 2) {
+                            currentMuluName = newMulu.id;
+                            RemoveOtherSelect();
+                            newMulu.classList += " select";
+                            rightMouseMenu();
+                            let onearr;
+                            if (document.getElementById(currentMuluName).classList[2] != "select") {
+                                onearr = [newMulu.classList[1], newMulu.innerHTML, newMulu.classList[2], nMulu];
+                            } else {
+                                onearr = ["mulu", newMulu.innerHTML, newMulu.classList[1], nMulu];
+
+                            }
+                            jiedianwords.value = mulufile[findArrayIndexCutLast(mulufile, onearr)][3];
+
+
+                        }
+                    })
+                    newMulu.addEventListener("dblclick", function () {
+                        oldName = newMulu.innerHTML;
+                        newName = prompt("新的名字");
+                        if (newName.length == 0) {
+                            newMulu.innerHTML = oldName;
+
+                        } else {
+                            let arrs;
+                            let newclassname;
+                            ChangeChildName(currentMuluName, newName);
+
+
+                            if (newMulu.classList[2] != "select") {
+                                arrs = [newMulu.classList[1], newMulu.innerHTML, newMulu.classList[2], jiedianwords.value];
+                                newclassname = [newMulu.classList[1], newName, `mulu${newName}`, jiedianwords.value]
+                                mulufile[findArrayIndex(mulufile, arrs)] = newclassname;
+                                newMulu.classList.replace(newMulu.classList[2], `mulu${newName}`);
+
+                            } else {
+                                arrs = ["mulu", newMulu.innerHTML, newMulu.classList[1], jiedianwords.value];
+                                newclassname = ["mulu", newName, `mulu${newName}`, jiedianwords.value]
+                                mulufile[findArrayIndex(mulufile, arrs)] = newclassname;
+
+                                newMulu.classList.replace(newMulu.classList[1], `mulu${newName}`);
+
+                            }
+
+                            newMulu.innerHTML = newName;
+                            console.log(mulufile);
+
+                        }
+                    })
+                    AddListStyleForFolder();
+                    DuplicateMuluHints();
+                }
+            }
+        })
+
+        //添加节点
+        addNewPotsButton.addEventListener("click", function () {
+            if (!checkid(currentMuluName, 1)) {
+                alert("未选中目录");
+            } else {
+                let nMulu, newMuLuName;
+                nMulu = prompt("输入节点名");
+                newMuLuName = `mulu${nMulu}`;
+                if (nMulu == "" || nMulu == null) {
+                    alert("已取消添加");
+                } else {
+                    let idName;
+                    if (document.getElementById(currentMuluName).classList[2] != "select") {
+                        idName = creatDivByIdBefore(currentMuluName, getOneId(10, 0), `mulu ${document.getElementById(currentMuluName).classList[2]} ${newMuLuName}`);
+                        mulufile.push([document.getElementById(currentMuluName).classList[2], nMulu, newMuLuName, `${nMulu}`]);
+
+                    } else {
+                        idName = creatDivByIdBefore(currentMuluName, getOneId(10, 0), `mulu ${document.getElementById(currentMuluName).classList[1]} ${newMuLuName}`);
+                        mulufile.push([document.getElementById(currentMuluName).classList[1], nMulu, newMuLuName, `${nMulu}`]);
+
+                    }
+                    let newMulu = document.querySelector(`#${idName}`);
+                    newMulu.innerHTML = nMulu;
+                    let nowchild;
+                    if (document.getElementById(currentMuluName).classList[2] != "select") {
+                        nowchild = document.getElementsByClassName(document.getElementById(currentMuluName).classList[2])[2];
+                    } else {
+                        nowchild = document.getElementsByClassName(document.getElementById(currentMuluName).classList[1])[2];
+
+                    }
+                    if (nowchild) {
+                        newMulu.style.backgroundColor = nowchild.style.backgroundColor;
+                        newMulu.style.display = nowchild.style.display;
+
+                    } else {
+                        newMulu.style.backgroundColor = getColor();
+                        newMulu.style.display = "block";
+                    }
+                    newMulu.addEventListener("mouseup", function () {
+                        if (event.button == 0) {
+                            currentMuluName = newMulu.id;
+                            RemoveOtherSelect();
+                            newMulu.classList += " select";
+                            let onearr;
+                            if (document.getElementById(currentMuluName).classList[2] != "select") {
+                                onearr = [newMulu.classList[1], newMulu.innerHTML, newMulu.classList[2], nMulu];
+                            } else {
+                                onearr = ["mulu", newMulu.innerHTML, newMulu.classList[1], nMulu];
+
+                            }
+                            jiedianwords.value = mulufile[findArrayIndexCutLast(mulufile, onearr)][3];
+
+                            //展示/隐藏子目录
+                            let currentchilds;
+                            if (getDomNumb(newMuLuName) > 1) {
+                                currentchilds = document.getElementsByClassName(newMuLuName);
+                                ReturnAllChild(newMuLuName,!(document.getElementsByClassName(currentchilds[1].classList[2])[0].style.display == "block"));
+                            } else if (getDomNumb(newMulu.classList[1]) > 1 && getDomNumb(newMulu.classList[2]) != 1) {
+                                currentchilds = document.getElementsByClassName(newMulu.classList[1]);
+                                ReturnAllChild(newMulu.classList[1], !(document.getElementsByClassName(currentchilds[1].classList[2])[0].style.display == "block"));
+                            }
+
+                        } else if (event.button == 2) {
+                            currentMuluName = newMulu.id;
+                            RemoveOtherSelect();
+                            newMulu.classList += " select";
+                            let onearr;
+                            if (document.getElementById(currentMuluName).classList[2] != "select") {
+                                onearr = [newMulu.classList[1], newMulu.innerHTML, newMulu.classList[2], nMulu];
+                            } else {
+                                onearr = ["mulu", newMulu.innerHTML, newMulu.classList[1], nMulu];
+
+                            }
+                            jiedianwords.value = mulufile[findArrayIndexCutLast(mulufile, onearr)][3];
+
+                            rightMouseMenu();
+
+                        }
+                    })
+                    newMulu.addEventListener("dblclick", function () {
+                        oldName = newMulu.innerHTML;
+                        newName = prompt("新的名字");
+                        if (newName.length == 0) {
+                            newMulu.innerHTML = oldName;
+
+                        } else {
+                            let arrs;
+                            let newclassname;
+                            ChangeChildName(currentMuluName, newName);
+
+                            if (newMulu.classList[2] != "select") {
+                                arrs = [newMulu.classList[1], newMulu.innerHTML, newMulu.classList[2], jiedianwords.value];
+                                newclassname = [newMulu.classList[1], newName, `mulu${newName}`, jiedianwords.value]
+                                mulufile[findArrayIndex(mulufile, arrs)] = newclassname;
+                                newMulu.classList.replace(newMulu.classList[2], `mulu${newName}`);
+
+                            } else {
+                                arrs = ["mulu", newMulu.innerHTML, newMulu.classList[1], jiedianwords.value];
+                                newclassname = ["mulu", newName, `mulu${newName}`, jiedianwords.value]
+                                mulufile[findArrayIndex(mulufile, arrs)] = newclassname;
+
+                                newMulu.classList.replace(newMulu.classList[1], `mulu${newName}`);
+
+                            }
+
+                            newMulu.innerHTML = newName;
+                            console.log(mulufile);
+                        }
+                    })
+                    AddListStyleForFolder();
+                    DuplicateMuluHints();
+                }
+            }
+        })
+
+
+        //给不同类名添加不同颜色
+        function Colors() {
+            let allparentmulu = [];
+            let childs = firststep.children;
+            for (let i = 0; i < childs.length; i++) {
+                if (allparentmulu.indexOf(childs[i].classList[1]) == -1) {
+                    allparentmulu.push(childs[i].classList[1]);
+                }
+            }
+            for (let i = 0; i < allparentmulu.length; i++) {
+                let nowchilds = document.getElementsByClassName(allparentmulu[i]);
+                let color = getColor();
+                for (let y = 0; y < nowchilds.length - 1; y++) {
+                    nowchilds[y + 1].style.backgroundColor = color;
+                    //nowchilds[y + 1].style.color = rgbToHexadecimal(FindColorByRGB(hexadecimalToRgb(color)));
+                }
+
+            }
+        }
+
+
+        //显示右键菜单
+        function rightMouseMenu() {
+            rightmousemenu.style.display = "block";
+            rightmousemenu.style.left = `${event.clientX}px`;
+            rightmousemenu.style.top = `${event.clientY}px`;
+        }
+        //失去焦点后隐藏
+        document.addEventListener('click', function () {
+            noneRightMouseMenu.click();
+
+        })
+
+        //右键-取消
+        noneRightMouseMenu.addEventListener("click", function () {
+            rightmousemenu.style.display = "none";
+        })
+
+        //右键-删除
+        deleteMulu.addEventListener("click", function () {
+            if (confirm("是否删除此目录？")) {
+                let nowchild = document.getElementById(currentMuluName);
+                let onarr;
+                let nowchilds = document.getElementsByClassName(document.getElementById(currentMuluName).classList[1]);
+                for (let y = 0; y < nowchilds.length - 1; y++) {
+                    nowchilds[y + 1].style.display = "block";
+                }
+                if (nowchild.classList[2] != "select") {
+                    onarr = [nowchild.classList[1], nowchild.innerHTML, nowchild.classList[2], jiedianwords.value];
+                } else {
+                    onarr = ["mulu", nowchild.innerHTML, nowchild.classList[1], jiedianwords.value];
+
+                }
+                mulufile.splice(findArrayIndex(mulufile, onarr), 1);
+                nowchild.remove();
+                AddListStyleForFolder();
+            }
+            noneRightMouseMenu.click();
+
+        })
+
+        //右键-修改颜色
+        changeMuluColor.addEventListener("click", function () {
+            let nowcildss = document.getElementById(currentMuluName);
+            let allchangemulus = document.getElementsByClassName(nowcildss.classList[1]);
+            let color = getColor();
+
+            for (let i = 0; i < allchangemulus.length - 1; i++) {
+                allchangemulus[i + 1].style.backgroundColor = color;
+            }
+            noneRightMouseMenu.click();
+        })
+
+        //右键-展开目录
+        showAllMulu.addEventListener("click", function () {
+            let allparentmulu = [];
+            let childs = firststep.children;
+            for (let i = 0; i < childs.length; i++) {
+                if (allparentmulu.indexOf(childs[i].classList[1]) == -1) {
+                    allparentmulu.push(childs[i].classList[1]);
+                }
+            }
+            for (let i = 0; i < allparentmulu.length; i++) {
+                let nowchilds = document.getElementsByClassName(allparentmulu[i]);
+                for (let y = 0; y < nowchilds.length - 1; y++) {
+                    nowchilds[y + 1].style.display = "block";
+                }
+
+            }
+        })
+
+        //右键-收起目录
+        cutAllMulu.addEventListener("click", function () {
+            let allparentmulu = [];
+            let childs = firststep.children;
+            for (let i = 0; i < childs.length; i++) {
+                if (allparentmulu.indexOf(childs[i].classList[1]) == -1) {
+                    allparentmulu.push(childs[i].classList[1]);
+                }
+            }
+            for (let i = 0; i < allparentmulu.length; i++) {
+                let nowchilds = document.getElementsByClassName(allparentmulu[i]);
+                for (let y = 0; y < nowchilds.length - 1; y++) {
+                    nowchilds[y + 1].style.display = "none";
+                }
+
+            }
+        });
+
+        //添加select分类
+        function RemoveOtherSelect() {
+            let mulus = document.querySelectorAll(".mulu");
+
+            for (let i = 0; i < mulus.length; i++) {
+                mulus[i].classList.remove("select");
+
+            }
+        }
+
+        //重复目录名提示
+        function DuplicateMuluHints() {
+            let allparentmulu = [];
+            let allparentmuluID = [];
+            let duplicateMulu = [];
+            let duplicateMuluID = [];
+            let childs = firststep.children;
+
+            for (let i = 0; i < childs.length; i++) {
+                allparentmulu.push(document.getElementById(childs[i].id).innerHTML);
+                allparentmuluID.push(childs[i].id);
+            }
+            const elementCount = {};
+
+            // 遍历数组并计数
+            for (let i = 0; i < allparentmulu.length; i++) {
+                const element = allparentmulu[i];
+                if (elementCount[element]) {
+                    duplicateMuluID.push(allparentmuluID[i]);
+                    elementCount[element]++;
+                } else {
+                    elementCount[element] = 1;
+                }
+            }
+            // 找出重复的元素
+            for (let key in elementCount) {
+                if (elementCount[key] > 1) {
+                    duplicateMulu.push(key); // 转换为整数，如果元素是字符串的话
+                }
+            }
+            // 显示结果
+            if (duplicateMulu.length != 0) {
+                for (let i = 0; i < duplicateMulu.length; i++) {
+                    console.warn(`重复目录名：${duplicateMulu[i]}    重复数量：${elementCount[duplicateMulu[i]] - 1}   其ID为：${duplicateMuluID[i]}    所在位置（悬浮显示）：`);
+                    console.warn(document.getElementById(duplicateMuluID[i]));
+                }
+                alert(`重复目录名（按F12 > 控制台了解详情）: ${duplicateMulu.join(` , `)}`);
+                return true;
+            } else {
+                console.log("无重复目录");
+                return false;
+            }
+
+        }
+
+        //改名之后修改子目录的索引***********************************************************未完成
+        function ChangeChildName(idname = "", newName = "") {
+            //alert("改名系统正在维护中");
+            if (1) {
+                let parentmulu;
+                if (document.getElementById(idname).classList[2] != "select") {
+                    parentmulu = document.getElementById(idname).classList[2];
+                } else {
+                    parentmulu = document.getElementById(idname).classList[1];
+
+                }
+                let childsmulu = document.getElementsByClassName(parentmulu);
+                let arrs;
+                let newclassname;
+                let childindex;
+                if (document.getElementById(idname).classList[2] != "select") {
+                for (let i = 1; i < childsmulu.length; i++) {
+                    arrs = [childsmulu[i].classList[1], childsmulu[i].innerHTML, childsmulu[i].classList[2]];
+
+                    console.log(i);
+                    console.log(newName);
+                    console.log(childsmulu[i]);
+                    console.log(mulufile);
+                    console.log(findArrayIndexCutLast(mulufile, arrs));
+                    for (let y = 0; y < mulufile.length; y++) {
+                        console.log(mulufile[y]);
+                        console.log(arrs);
+                        console.log(y);
+                    }
+                    childindex = findArrayIndexCutLast(mulufile, arrs);
+                    mulufile[childindex] = [childsmulu[0].classList[2], mulufile[childindex][1], mulufile[childindex][2], mulufile[childindex][3]]
+                    childsmulu[i].classList.replace(childsmulu[i].classList[1], childsmulu[0].classList[2]);
+                    childsmulu[i].className = `mulu mulu${newName} ${childsmulu[i].classList[2]}`;
+
+                }
+                //console.log(mulufile);
+                } else {
+                    for (let i = 1; i < childsmulu.length; i++) {
+                        arrs = [childsmulu[i].classList[1], childsmulu[i].innerHTML, childsmulu[i].classList[2], jiedianwords.value];
+                        newclassname = [childsmulu[0].classList[1], childsmulu[i].innerHTML, childsmulu[i].classList[2], jiedianwords.value]
+                        mulufile[findArrayIndex(mulufile, arrs)] = newclassname;
+
+                        childsmulu[i].classList.replace(childsmulu[i].classList[1], childsmulu[0].classList[1]);
+                    }
+                }
+            }
+
+
+
+
+
+
+
+
+        }
+
+        //从文件录入
+        if (1) {
+
+            //解决一旦拖拽外部文件就覆盖掉当前页面的问题
+            //  解决：给document绑定drop事件
+            //  drop事件默认触发不了，需要在dragover事件里面阻止默认事件
+            document.ondrop = function (e) {
+                e.preventDefault();
+            }
+            // 这个阻止默认事件是为了让drop事件得以触发
+            document.ondragover = function (e) {
+                e.preventDefault();
+            }
+
+            box.ondragenter = function () {
+                box.style.boxShadow = '0 0 10px 5px rgba(255,0,0,.8)';
+            }
+
+            box.ondrop = function (e) {
+                // console.log(e);
+                // 得到拖拽过来的文件
+                let dataFile = e.dataTransfer.files[0];
+
+                // FileReader实例化
+                let fr = new FileReader();
+                // 异步读取文件
+                fr.readAsText(dataFile);
+                // 读取完毕之后执行
+                fr.onload = function () {
+                    // 获取得到的结果
+                    let data = fr.result;
+
+                    const ta = document.createElement('textarea');
+                    ta.value = data;
+                    ta.setAttribute("class", 'entity');
+
+                    box.innerHTML = '';
+                    box.appendChild(ta);
+
+                }
+            }
+            loadssss.addEventListener("click", function () {
+                //***************这里记得写字符串变成二维数组的函数******************************************************************** */
+                mulufile = stringToArr(document.querySelector(".box > .entity").value);
+                // mulufile = document.querySelector(".box > .entity").value;
+                LoadMulu();
+                NoneChildMulu();
+                Colors();
+                AddListStyleForFolder();
+                box.style.display = "none";
+                addButtons.style.display = "block";
+                wordsbox.style.display = "block";
+                anjiansss.style.display = "none";
+                bigbox.style.display = "block";
+            })
+        }
+
+        //保存为文件
+        saveButton.addEventListener("click", function () {
+            let zidingyi = confirm("是否生成默认文件格式（.txt）");
+            let filename;
+            let filenames;
+            if (zidingyi) {
+                filename = "soralistForLoad.txt"
+                filenames = "soralistForShow.txt"
+            } else {
+                filename = prompt("输入你要保存的文件的名字和文件类型（部分文件类型将不支持录入，如：.jpg等）");
+                filenames = `${filename.slice(0, filename.indexOf(`.`) - filename.length)}ForShow${filename.slice(filename.indexOf(`.`) - filename.length)}`;
+
+            }
+            // 要保存的字符串
+            let stringData = mulufile;
+            let ShowData = JSON.stringify(mulufile,null,2);
+            // dada 表示要转换的字符串数据，type 表示要转换的数据格式
+            const blob = new Blob([stringData], {
+                type: "application/json;charset=utf-8"
+            });
+            const blobs = new Blob([ShowData], {
+                type: "application/json;charset=utf-8"
+            });
+            // 根据 blob生成 url链接
+            const objectURL = URL.createObjectURL(blob)
+            const objectURLs = URL.createObjectURL(blobs)
+
+            // 创建一个 a 标签Tag
+            const aTag = document.createElement('a')
+            const aTags = document.createElement('a')
+            // 设置文件的下载地址
+            aTag.href = objectURL
+            aTags.href = objectURLs
+            // 设置保存后的文件名称
+            aTag.download = filename;
+            aTags.download = filenames;
+            // 给 a 标签添加点击事件
+            aTag.click()
+            aTags.click()
+            // 释放一个之前已经存在的、通过调用 URL.createObjectURL() 创建的 URL 对象。
+            // 结束使用某个 URL 对象之后，通过调用这个方法来让浏览器知道不用在内存中继续保留对这个文件的引用了
+            URL.revokeObjectURL(objectURL)
+            URL.revokeObjectURL(objectURLs)
+        })
+
+    </script>
+</body>
+</html>
