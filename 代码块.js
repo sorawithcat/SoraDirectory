@@ -358,7 +358,7 @@ function rgbToHexadecimal(red = 0, green = 0, blue = 0) {
 
 /**
  * 将十六进制转换为RGB,返回一个数组，数组元素从左至右分别为红，绿，蓝。
- * @param {string} hexadecimal - 颜色-十六进制，默认为“#000000”。需传入无误的十六进制，否则会在末尾加0补齐（过短）/截取一段重新传参（过长）/智能修改传参（传参格式错误，注：字符、字母、空格不会被修改）/返回false（其他错误）
+ * @param {string} hexadecimal - 颜色-十六进制，默认为"#000000"。需传入无误的十六进制，否则会在末尾加0补齐（过短）/截取一段重新传参（过长）/智能修改传参（传参格式错误，注：字符、字母、空格不会被修改）/返回false（其他错误）
  */
 function hexadecimalToRgb(hexadecimal = "#000000") {
     let oldname = hexadecimal
@@ -1613,20 +1613,25 @@ function exchangeClassNameExist(_className = "", _exchangeClassName = "") {
 /**
  * 显示/隐藏所有子目录
  * @param {any} _firstName -首次点击的目录的ID类名
+ * @param {boolean} _setDisplay - true为显示，false为隐藏
  */
-function ReturnAllChild(_firstName,_setDisplay) {
-    if (getDomNumb(_firstName) > 1) {
-        let currentchilds = document.getElementsByClassName(_firstName);
-        for (let i = 1; i < getDomNumb(_firstName); i++) {
-i            if (currentchilds[i].style.display == "none" && _setDisplay) {
-                currentchilds[i].style.display = "block";
-            } else if (currentchilds[i].style.display == "block" && !_setDisplay) {
-                currentchilds[i].style.display = "none";
+function ReturnAllChild(_firstName, _setDisplay) {
+    if (!_firstName || getDomNumb(_firstName) <= 1) {
+        return;
+    }
+    
+    let currentchilds = document.getElementsByClassName(_firstName);
+    for (let i = 1; i < currentchilds.length; i++) {
+        if (currentchilds[i].style.display == "none" && _setDisplay) {
+            currentchilds[i].style.display = "block";
+        } else if (currentchilds[i].style.display == "block" && !_setDisplay) {
+            currentchilds[i].style.display = "none";
+        }
 
-            }
-
-            ReturnAllChild(currentchilds[i].classList[2], _setDisplay);
-
+        // 只有当子目录有子目录时才递归
+        let childClass = currentchilds[i].classList[2];
+        if (childClass && childClass !== "select" && getDomNumb(childClass) > 1) {
+            ReturnAllChild(childClass, _setDisplay);
         }
     }
 }
