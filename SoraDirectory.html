@@ -5,6 +5,10 @@
     <meta charset="utf-8" />
     <title>SoraList</title>
     <style>
+        :root {
+            --toolbar-height: 80px; /* 初始工具栏高度，JavaScript会动态更新 */
+        }
+        
         * {
             margin: 0;
             padding: 0;
@@ -36,71 +40,482 @@
             width:100%;
         }
 
-        .addButtons {
-            width: 1000px;
-            margin: 3% auto;
-            height: auto;
-            overflow: hidden;
-            text-align: center;
+        /* 顶部固定工具栏 */
+        .top-toolbar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            min-height: 60px;
+            background-color: #f5f5f5;
+            border-bottom: 1px solid #ddd;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            padding: 10px 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            flex-wrap: wrap;
+            gap: 10px;
         }
-
-            .addButtons button {
-                line-height: 300%;
-                background-color: antiquewhite;
-                width: 16%;
-                border-radius: 10px;
-            }
+        
+        .top-toolbar-group {
+            display: flex;
+            align-items: center;
+            margin-right: 20px;
+            padding-right: 20px;
+            border-right: 1px solid #ddd;
+        }
+        
+        .top-toolbar-group:last-child {
+            border-right: none;
+            margin-right: 0;
+            padding-right: 0;
+        }
+        
+        .top-toolbar-btn {
+            padding: 8px 12px;
+            margin: 0 4px;
+            background-color: #fff;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        
+        .top-toolbar-btn:hover {
+            background-color: #f0f0f0;
+            border-color: #999;
+        }
+        
+        .top-toolbar-btn.active {
+            background-color: #0066cc;
+            color: #fff;
+            border-color: #0066cc;
+        }
+        
+        .top-toolbar-label {
+            font-size: 12px;
+            color: #666;
+            margin-right: 8px;
+        }
+        
 
         .mulu {
-            width: 99%;
-            height: 30px;
+            min-width: 100%; /* 最小宽度为容器宽度，但可以超出 */
+            min-height: 30px;
             line-height: 30px;
-            border: 2px solid black;
-            text-align: center;
-            overflow: hidden;
-            text-overflow: ellipsis; /*文字溢出时用省略号显示*/
+            border: 1px solid #ccc;
+            text-align: left;
+            overflow: visible; /* 允许内容超出 */
+            text-overflow: ellipsis;
             white-space: nowrap;
+            position: relative;
+            padding-left: 20px; /* 基础偏移，会被setLevelPadding覆盖 */
+            cursor: pointer;
+            background-color: #f9f9f9;
+            margin: 1px 0;
+        }
+        
+        .mulu:hover {
+            background-color: #e9e9e9;
         }
 
         .select {
             font-weight: bolder;
         }
-
-        .bigbox {
-            width: 20%;
-            height: 500px;
-            overflow-y: auto;
+        
+        /* 折叠三角 - 使用CSS实现 */
+        .mulu::before {
+            content: '';
+            position: absolute;
+            left: 5px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 0;
+            height: 0;
+            border-left: 5px solid #666;
+            border-top: 4px solid transparent;
+            border-bottom: 4px solid transparent;
+            transition: transform 0.2s;
+        }
+        
+        /* 有子目录的目录样式 */
+        .mulu.has-children::before {
+            border-left: 5px solid transparent;
+            border-top: 5px solid #666;
+            border-right: 4px solid transparent;
+            border-bottom: 0;
+            transform: translateY(-50%) rotate(0deg);
+        }
+        
+        /* 展开状态的三角 */
+        .mulu.has-children.expanded::before {
+            transform: translateY(-50%) rotate(90deg);
+        }
+        
+        /* 没有子目录的目录 - 显示小圆点 */
+        .mulu:not(.has-children)::before {
+            content: '•';
+            border: none;
+            color: #999;
+            font-size: 12px;
+            width: auto;
+            height: auto;
+            transform: translateY(-50%);
+        }
+        
+        /* 目录列表使用flex布局 */
+        .firststep {
+            display: flex;
+            flex-direction: column;
+        }
+        
+        /* 子目录缩进 */
+        .firststep > .mulu {
+            padding-left: 20px;
         }
 
-            .bigbox::-webkit-scrollbar {
-                display: none
-            }
+        .bigbox {
+            position: fixed;
+            left: 0;
+            top: var(--toolbar-height, 60px); /* 顶部工具栏高度 */
+            width: 20%;
+            height: calc(100vh - var(--toolbar-height, 60px)); /* 视口高度减去工具栏高度 */
+            overflow-y: auto;
+            overflow-x: auto;
+            background-color: #fff;
+            border-right: 1px solid #ddd;
+            z-index: 999;
+            transition: top 0.2s ease, height 0.2s ease;
+        }
+            
+        .mulubox {
+            min-width: 100%; /* 确保内容可以超出容器宽度 */
+            width: max-content; /* 根据内容自动调整宽度 */
+        }
 
         .showbox {
             width: 100%;
-            height: 500px;
+            height: auto;
             display: flex;
             white-space: nowrap;
         }
 
-        .jiedianwords {
-            width: 100%;
-            height: 500px;
-            font-size: 17px;
-        }
-
         .wordsbox {
-            width: 70%;
-            height: 500px;
+            position: fixed;
+            left: 20%; /* 为左侧目录留出空间 */
+            top: var(--toolbar-height, 80px); /* 为顶部工具栏留出空间 */
+            width: calc(100% - 20%); /* 占据除目录区域外的全部空间 */
+            height: calc(100vh - var(--toolbar-height, 80px)); /* 视口高度减去工具栏高度 */
+            transition: top 0.2s ease, height 0.2s ease;
             border: 1px solid black;
-            position: absolute;
-            right: 0%;
-            top: 15%;
+            display: flex;
+            flex-direction: column;
+            background-color: #fff;
+            overflow: hidden;
         }
 
             .wordsbox::-webkit-scrollbar {
                 display: none
             }
+            
+        /* Markdown 编辑器容器 */
+        .markdown-editor-container {
+            display: flex;
+            height: 100%;
+            width: 100%;
+            position: relative; /* 为悬浮工具栏提供定位参考 */
+        }
+        
+        /* Markdown 编辑区域（隐藏） */
+        .jiedianwords {
+            display: none; /* 隐藏原始编辑器 */
+        }
+        
+        /* Markdown 预览/编辑区域（可编辑） */
+        .markdown-preview {
+            width: 100%;
+            height: 100%;
+            padding: 15px;
+            overflow-y: auto;
+            overflow-x: auto;
+            background-color: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            outline: none;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            box-sizing: border-box;
+        }
+        
+        .markdown-preview:focus {
+            outline: 2px solid #0066cc;
+            outline-offset: -2px;
+        }
+        
+        .markdown-preview[contenteditable="true"] {
+            cursor: text;
+        }
+        
+        .markdown-preview[contenteditable="true"]:empty:before {
+            content: attr(placeholder);
+            color: #999;
+            pointer-events: none;
+        }
+        
+        .markdown-preview::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        .markdown-preview::-webkit-scrollbar-thumb {
+            background-color: #ccc;
+            border-radius: 4px;
+        }
+        
+        /* Markdown 样式 */
+        .markdown-preview h1, .markdown-preview h2, .markdown-preview h3,
+        .markdown-preview h4, .markdown-preview h5, .markdown-preview h6 {
+            margin-top: 1em;
+            margin-bottom: 0.5em;
+            font-weight: bold;
+        }
+        
+        .markdown-preview h1 { font-size: 2em; border-bottom: 2px solid #eee; padding-bottom: 0.3em; }
+        .markdown-preview h2 { font-size: 1.5em; border-bottom: 1px solid #eee; padding-bottom: 0.3em; }
+        .markdown-preview h3 { font-size: 1.25em; }
+        .markdown-preview h4 { font-size: 1.1em; }
+        .markdown-preview h5 { font-size: 1em; }
+        .markdown-preview h6 { font-size: 0.9em; color: #777; }
+        
+        .markdown-preview p { margin: 1em 0; }
+        .markdown-preview ul, .markdown-preview ol { margin: 1em 0; padding-left: 2em; }
+        .markdown-preview li { margin: 0.5em 0; }
+        .markdown-preview blockquote {
+            border-left: 4px solid #ddd;
+            padding-left: 1em;
+            margin: 1em 0;
+            color: #666;
+        }
+        .markdown-preview code {
+            background-color: #f4f4f4;
+            padding: 2px 4px;
+            border-radius: 3px;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+        .markdown-preview pre {
+            background-color: #f4f4f4;
+            padding: 1em;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+        .markdown-preview pre code {
+            background-color: transparent;
+            padding: 0;
+        }
+        .markdown-preview img {
+            /* 保持原图大小 */
+            width: auto;
+            height: auto;
+            max-width: none;
+            max-height: none;
+            border-radius: 5px;
+            margin: 1em 0;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        
+        .markdown-preview img:hover {
+            opacity: 0.8;
+        }
+        
+        /* 图片展开查看的遮罩层 */
+        .image-viewer-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.9);
+            z-index: 10000;
+            display: none;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+        }
+        
+        .image-viewer-overlay.active {
+            display: flex;
+        }
+        
+        .image-viewer-overlay img {
+            max-width: 90%;
+            max-height: 90%;
+            width: auto;
+            height: auto;
+            border-radius: 5px;
+            box-shadow: 0 0 20px rgba(255, 255, 255, 0.3);
+        }
+        .markdown-preview table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 1em 0;
+        }
+        .markdown-preview figure {
+            margin: 1em 0;
+            text-align: center;
+        }
+        
+        .markdown-preview figure img {
+            display: block;
+            margin: 0 auto;
+        }
+        
+        .markdown-preview figcaption {
+            margin-top: 0.5em;
+            font-size: 0.9em;
+            color: #666;
+            font-style: italic;
+            text-align: center;
+        }
+        
+        .markdown-preview p {
+            margin: 1em 0;
+        }
+        
+        .markdown-preview ul,
+        .markdown-preview ol {
+            margin: 1em 0;
+            padding-left: 2em;
+        }
+        
+        .markdown-preview li {
+            margin: 0.5em 0;
+        }
+        
+        .markdown-preview blockquote {
+            margin: 1em 0;
+            padding: 0.5em 1em;
+            border-left: 4px solid #ddd;
+            background-color: #f5f5f5;
+            color: #666;
+        }
+        
+        .markdown-preview hr {
+            margin: 2em 0;
+            border: none;
+            border-top: 2px solid #ddd;
+        }
+        
+        .markdown-preview mark {
+            background-color: #ffeb3b;
+            padding: 2px 4px;
+            border-radius: 2px;
+        }
+        
+        .markdown-preview sup {
+            font-size: 0.8em;
+            vertical-align: super;
+        }
+        
+        .markdown-preview sub {
+            font-size: 0.8em;
+            vertical-align: sub;
+        }
+        
+        .markdown-preview .contains-task-list {
+            list-style: none;
+            padding-left: 0;
+        }
+        
+        .markdown-preview .task-list-item {
+            list-style: none;
+            padding-left: 0;
+        }
+        
+        .markdown-preview .task-list-item-checkbox {
+            margin-right: 8px;
+        }
+        
+        .markdown-preview table th,
+        .markdown-preview table td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        .markdown-preview table th {
+            background-color: #f4f4f4;
+            font-weight: bold;
+        }
+        .markdown-preview a {
+            color: #0066cc;
+            text-decoration: none;
+        }
+        .markdown-preview a:hover {
+            text-decoration: underline;
+        }
+        
+        /* 悬浮工具栏 */
+        .text-format-toolbar {
+            position: fixed;
+            display: none;
+            background-color: #333;
+            border-radius: 5px;
+            padding: 5px;
+            z-index: 10001;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            flex-wrap: wrap;
+        }
+        
+        /* 仅在有选中文字时显示的按钮 */
+        .format-btn-selection {
+            display: none;
+        }
+        
+        .text-format-toolbar.has-selection .format-btn-selection {
+            display: inline-block;
+        }
+        
+        .text-format-toolbar button {
+            background-color: #444;
+            color: #fff;
+            border: none;
+            padding: 8px 12px;
+            margin: 0 2px;
+            cursor: pointer;
+            border-radius: 3px;
+            font-size: 14px;
+        }
+        
+        .text-format-toolbar button:hover {
+            background-color: #555;
+        }
+        
+        .text-format-toolbar button.active {
+            background-color: #0066cc;
+        }
+        
+        /* 图片上传按钮 */
+        .image-upload-btn {
+            background-color: #0066cc;
+            color: #fff;
+            border: none;
+            padding: 8px 12px;
+            margin: 0 2px;
+            cursor: pointer;
+            border-radius: 3px;
+            font-size: 14px;
+        }
+        
+        .image-upload-btn:hover {
+            background-color: #0052a3;
+        }
+        
+        /* 隐藏的文件输入 */
+        #imageFileInput {
+            display: none;
+        }
 
         .anjiansss {
             display: none;
@@ -139,1112 +554,285 @@
                 text-align: center;
             }
 
-        .changeMuluColor {
-            border: none;
-        }
 
-        .bianxierule {
+        /* 自定义对话框样式 */
+        .custom-dialog-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            z-index: 10000;
             display: none;
-            width: 600px;
-            margin: 2% auto;
-            padding: 5%;
-            background-color: antiquewhite;
-            border-radius: 20px;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .custom-dialog-overlay.active {
+            display: flex;
+        }
+        
+        .custom-dialog {
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            min-width: 300px;
+            max-width: 500px;
+            max-height: 80vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            animation: dialogSlideIn 0.3s ease-out;
+        }
+        
+        @keyframes dialogSlideIn {
+            from {
+                transform: scale(0.9);
+                opacity: 0;
+            }
+            to {
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+        
+        .custom-dialog-header {
+            padding: 15px 20px;
+            background-color: #f5f5f5;
+            border-bottom: 1px solid #ddd;
+            font-weight: bold;
+            font-size: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .custom-dialog-close {
+            background: none;
+            border: none;
+            font-size: 20px;
+            cursor: pointer;
+            color: #999;
+            padding: 0;
+            width: 24px;
+            height: 24px;
+            line-height: 24px;
+            text-align: center;
+        }
+        
+        .custom-dialog-close:hover {
+            color: #333;
+        }
+        
+        .custom-dialog-body {
+            padding: 20px;
+            overflow-y: auto;
+            flex: 1;
+        }
+        
+        .custom-dialog-input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            margin-top: 10px;
+            box-sizing: border-box;
+        }
+        
+        .custom-dialog-input:focus {
+            outline: none;
+            border-color: #0066cc;
+        }
+        
+        .custom-dialog-footer {
+            padding: 15px 20px;
+            background-color: #f5f5f5;
+            border-top: 1px solid #ddd;
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+        
+        .custom-dialog-btn {
+            padding: 8px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        
+        .custom-dialog-btn-primary {
+            background-color: #0066cc;
+            color: #fff;
+        }
+        
+        .custom-dialog-btn-primary:hover {
+            background-color: #0052a3;
+        }
+        
+        .custom-dialog-btn-secondary {
+            background-color: #f0f0f0;
+            color: #333;
+        }
+        
+        .custom-dialog-btn-secondary:hover {
+            background-color: #e0e0e0;
+        }
+        
+        .custom-dialog-btn-danger {
+            background-color: #dc3545;
+            color: #fff;
+        }
+        
+        .custom-dialog-btn-danger:hover {
+            background-color: #c82333;
         }
     </style>
 </head>
 <body>
 
+    <!-- 顶部固定工具栏 -->
+    <div class="top-toolbar" id="topToolbar">
+        <div class="top-toolbar-group">
+            <span class="top-toolbar-label">文件</span>
+            <button class="top-toolbar-btn" id="newBtn" title="新建">新建</button>
+            <button class="top-toolbar-btn" id="saveBtn" title="保存 (Ctrl+S)">保存</button>
+            <button class="top-toolbar-btn" id="saveAsBtn" title="另存为">另存为</button>
+            <button class="top-toolbar-btn" id="loadBtn" title="加载">加载</button>
+        </div>
+        <div class="top-toolbar-group">
+            <span class="top-toolbar-label">格式</span>
+            <button class="top-toolbar-btn format-toolbar-btn" data-command="h1" title="标题 1">H1</button>
+            <button class="top-toolbar-btn format-toolbar-btn" data-command="h2" title="标题 2">H2</button>
+            <button class="top-toolbar-btn format-toolbar-btn" data-command="h3" title="标题 3">H3</button>
+            <button class="top-toolbar-btn format-toolbar-btn" data-command="h4" title="标题 4">H4</button>
+            <button class="top-toolbar-btn format-toolbar-btn" data-command="h5" title="标题 5">H5</button>
+            <button class="top-toolbar-btn format-toolbar-btn" data-command="h6" title="标题 6">H6</button>
+            <button class="top-toolbar-btn format-toolbar-btn" data-command="bold" title="粗体 (Ctrl+B)"><strong>B</strong></button>
+            <button class="top-toolbar-btn format-toolbar-btn" data-command="italic" title="斜体 (Ctrl+I)"><em>I</em></button>
+            <button class="top-toolbar-btn format-toolbar-btn" data-command="underline" title="下划线 (Ctrl+U)"><u>U</u></button>
+            <button class="top-toolbar-btn format-toolbar-btn" data-command="strikethrough" title="删除线"><s>S</s></button>
+            <button class="top-toolbar-btn format-toolbar-btn" data-command="code" title="行内代码">&lt;/&gt;</button>
+            <button class="top-toolbar-btn format-toolbar-btn" data-command="code-block" title="代码块">代码块</button>
+            <button class="top-toolbar-btn format-toolbar-btn" data-command="link" id="topLinkBtn" title="链接">🔗</button>
+            <button class="top-toolbar-btn" id="topImageUploadBtn" title="插入图片">🖼️</button>
+            <button class="top-toolbar-btn format-toolbar-btn" data-command="unordered-list" title="无序列表">• 列表</button>
+            <button class="top-toolbar-btn format-toolbar-btn" data-command="ordered-list" title="有序列表">1. 列表</button>
+            <button class="top-toolbar-btn format-toolbar-btn" data-command="task-list" title="任务列表">☑ 任务</button>
+            <button class="top-toolbar-btn format-toolbar-btn" data-command="quote" title="引用">" 引用</button>
+            <button class="top-toolbar-btn format-toolbar-btn" data-command="table" title="表格">表格</button>
+            <button class="top-toolbar-btn format-toolbar-btn" data-command="hr" title="水平线">—</button>
+            <button class="top-toolbar-btn format-toolbar-btn" data-command="highlight" title="高亮">高亮</button>
+            <button class="top-toolbar-btn format-toolbar-btn" data-command="superscript" title="上标">x²</button>
+            <button class="top-toolbar-btn format-toolbar-btn" data-command="subscript" title="下标">x₂</button>
+        </div>
+        <div class="top-toolbar-group">
+            <span class="top-toolbar-label">目录</span>
+            <button class="top-toolbar-btn addNewMuluButton" title="添加目录">添加目录</button>
+            <button class="top-toolbar-btn addNewPotsButton" title="添加节点">添加节点</button>
+            <button class="top-toolbar-btn" id="expandAllBtn" title="展开全部">展开全部</button>
+            <button class="top-toolbar-btn" id="collapseAllBtn" title="收起全部">收起全部</button>
+        </div>
+        <div class="top-toolbar-group">
+            <span class="top-toolbar-label">视图</span>
+            <button class="top-toolbar-btn" id="toggleSidebarBtn" title="切换侧边栏">切换侧边栏</button>
+            <button class="top-toolbar-btn" id="fullscreenBtn" title="全屏">全屏</button>
+        </div>
+    </div>
+    
     <div class="box">拖拽外部文件至此</div>
     <div class="anjiansss">
         <div class="loadssss">点击加载</div>
     </div>
-    <div class="addButtons">
-        <button class="addNewMuluButton">点击添加新目录</button>
-        <button class="addNewPotsButton">点击添加新节点</button>
-        <!--<button class="addNewWordsButton">点击添加节点内容</button>-->
-        <button class="saveButton">保存</button>
-        <button class="loadButton">从文件录入</button>
-        <button class="ruleButton">编写规则/注意事项</button>
-    </div>
     <div class="bigbox">
-        <span>左键选择/展开目录，右键菜单，双击改名。目录可上下滑动。文件录入界面右键可返回。</span>
+        <div style="padding: 10px; background-color: #f9f9f9; border-bottom: 1px solid #ddd; font-size: 12px; color: #666;">
+            左键选择/展开目录，右键菜单，双击改名。目录可上下滑动。
+        </div>
         <div class="showbox">
             <div class="mulubox">
                 <div class="firststep">
-                    <div class="mulu">目录名</div>
-
                 </div>
             </div>
         </div>
     </div>
     <div class="wordsbox">
-        <textarea class="jiedianwords">
-            我是节点内容 我是节点内容 我是节点内容 我是节点内容  我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容 我是节点点内容 我是节点内容 我是节点内容 我是节点内容 我是节点内容
-        </textarea>
+        <div class="markdown-editor-container">
+            <textarea class="jiedianwords" placeholder="在此输入 Markdown 内容..."></textarea>
+            <div class="markdown-preview" contenteditable="true"></div>
+        </div>
     </div>
+    <div class="text-format-toolbar">
+        <button class="format-btn format-btn-selection" data-command="h1" title="标题 1">H1</button>
+        <button class="format-btn format-btn-selection" data-command="h2" title="标题 2">H2</button>
+        <button class="format-btn format-btn-selection" data-command="h3" title="标题 3">H3</button>
+        <button class="format-btn format-btn-selection" data-command="bold" title="粗体 (Ctrl+B)"><strong>B</strong></button>
+        <button class="format-btn format-btn-selection" data-command="italic" title="斜体 (Ctrl+I)"><em>I</em></button>
+        <button class="format-btn format-btn-selection" data-command="underline" title="下划线 (Ctrl+U)"><u>U</u></button>
+        <button class="format-btn format-btn-selection" data-command="strikethrough" title="删除线"><s>S</s></button>
+        <button class="format-btn format-btn-selection" data-command="code" title="行内代码">&lt;/&gt;</button>
+        <button class="format-btn format-btn-selection" data-command="code-block" title="代码块">代码块</button>
+        <button class="format-btn format-btn-selection" data-command="highlight" title="高亮">高亮</button>
+        <button class="format-btn format-btn-selection" data-command="superscript" title="上标">x²</button>
+        <button class="format-btn format-btn-selection" data-command="subscript" title="下标">x₂</button>
+        <button class="format-btn" data-command="link" id="linkBtn" title="链接 (Ctrl+单击打开)">🔗</button>
+        <button class="format-btn" id="imageUploadBtn" title="插入图片">🖼️</button>
+        <button class="format-btn" data-command="paragraph" title="段落">¶</button>
+        <button class="format-btn" data-command="unordered-list" title="无序列表">• 列表</button>
+        <button class="format-btn" data-command="ordered-list" title="有序列表">1. 列表</button>
+        <button class="format-btn" data-command="task-list" title="任务列表">☑ 任务</button>
+        <button class="format-btn" data-command="quote" title="引用">" 引用</button>
+        <button class="format-btn" data-command="table" title="表格">表格</button>
+        <button class="format-btn" data-command="hr" title="水平线">—</button>
+    </div>
+    <input type="file" id="imageFileInput" accept="image/*" style="display: none;">
     <div class="rightmousemenu">
         <div class="deleteMulu">删除选中目录</div>
-        <div class="changeMuluColor">修改选中目录颜色</div>
         <div class="showAllMulu">展开所有目录</div>
         <div class="cutAllMulu">收起所有目录</div>
         <div class="noneRightMouseMenu">取消</div>
     </div>
-    <div class="bianxierule">
-        <div><strong>双击可关闭此界面【建议在网页进行编辑】</strong></div>
-        <br />
-        <div>编写/录入时应该避免如下情况：</div>
-        <div>1.目录名/目录id存在特殊字符，目录名/目录id重复。</div>
-        <div>2.编写的第一个目录不以"mulu"作为父目录。</div>
-        <div>3.录入不支持一些特殊文件类型，如jpg等类型</div>
-        <br>
-        <div>编写规则：</div>
-        <div><strong>示例：[["mulu", "目录名", "目录名的class", "节点内容"], ["目录名的class", "目录名2", "目录名2的class", "目录二的节点内容"], ["目录名2的class", "目录名4", "目录名4的class", "目录4的节点内容"], ["mulusv", "目录名6", "目录名6的class", "目录6的节点内容"], ["目录名6的class", "目录名7", "目录名7的class", "目录7的节点内容"], ["目录名6的class", "目录名8", "目录名8的class", "目录8的节点内容"], ["目录名8的class", "目录名9", "目录名9的class", "目录9的节点内容"], ["目录名8的class", "目录名10", "目录名10的class", "目录10的节点内容"]]</strong></div>
-        <br />
-        <div>1.编写的需要是一个<strong>二维数组</strong>格式，并且开头的 [[ 之间<strong>不能有空格或其他符号</strong>，结尾的 ]] 同理。</div>
-        <div>2.二维数组里面的数据须是<strong>长度为4的一维数组</strong>，同时数组与数组之间<strong>必须为], [格式。即一维数组与前一个一维数组的逗号隔一个空格。</strong></div>
-        <div>3.<strong>一维数组编写原理：[父目录的id,该目录的名字,该目录的id，该目录的内容]</strong>，内容需用引号引起来。</div>
-        <div>4.如果父目录的id不存在，则该目录将为最高级的目录</div>
+    <!-- 自定义对话框 -->
+    <div class="custom-dialog-overlay" id="customDialogOverlay">
+        <div class="custom-dialog" id="customDialog">
+            <div class="custom-dialog-header">
+                <span id="customDialogTitle">提示</span>
+                <button class="custom-dialog-close" id="customDialogClose">&times;</button>
+            </div>
+            <div class="custom-dialog-body" id="customDialogBody">
+                <div id="customDialogMessage"></div>
+                <input type="text" class="custom-dialog-input" id="customDialogInput" style="display: none;" />
+            </div>
+            <div class="custom-dialog-footer" id="customDialogFooter">
+            </div>
+        </div>
     </div>
-    <script src="代码块.js"></script>
-    <script>
-        //储存目录文件
-        let mulufile = [["mulu", "目录名", "目录名的class", "节点内容"]];
+    
+    <script src="SoraDirectoryJS.js"></script>
+    <!-- Markdown 处理库 - 使用 npm 安装的本地包 -->
+    <script src="node_modules/marked/marked.min.js"></script>
+    <script src="node_modules/turndown/dist/turndown.js"></script>
+    <script src="node_modules/turndown-plugin-gfm/dist/turndown-plugin-gfm.js"></script>
+    <script src="node_modules/dompurify/dist/purify.min.js"></script>
+    <!-- 模块化脚本 -->
+    <script src="js/dialog.js"></script>
+    <script src="js/globals.js"></script>
+    <script src="js/directoryUtils.js"></script>
+    <script src="js/markdown.js"></script>
+    <script src="js/preview.js"></script>
+    <script src="js/formatToolbar.js"></script>
+    <script src="js/imageHandler.js"></script>
+    <script src="js/directoryCore.js"></script>
+    <script src="js/directoryOperations.js"></script>
+    <script src="js/contextMenu.js"></script>
+    <script src="js/toolbar.js"></script>
+    <script src="js/fileOperations.js"></script>
+    <script src="js/main.js"></script>
+    
+    <!-- 自动化测试脚本（可选，用于测试目录内容保存） -->
+    <!-- <script src="test-auto-directory-content.js"></script> -->
 
-        //去除默认事件
-        document.oncontextmenu = function () {
-            return false;
-        }
-        //所有物体
-        const body = document.querySelector("body");
-        const allThins = body.querySelectorAll("*");
-        //包裹目录的两个盒子
-        const bigbox = document.querySelector(".bigbox");
-        const showbox = document.querySelector(".showbox");
-        //所有的目录
-        const mulus = document.querySelectorAll(".mulu");
-        //拖动元素的框
-        const box = document.querySelector('.box');
-        //目录容器
-        const firststep = document.querySelector(".firststep");
-
-        //目录主体
-        const mulubox = document.querySelector(".mulubox");
-        //按钮容器
-        const addButtons = document.querySelector(".addButtons");
-        //添加目录
-        const addNewMuluButton = document.querySelector(".addNewMuluButton");
-        //添加新节点
-        const addNewPotsButton = document.querySelector(".addNewPotsButton");
-        //添加节点内容
-        //const addNewWordsButton = document.querySelector(".addNewWordsButton");
-        //保存按钮
-        const saveButton = document.querySelector(".saveButton");
-        //从文件录入按钮
-        const loadButton = document.querySelector(".loadButton");
-        //编写规则按钮
-        const ruleButton = document.querySelector(".ruleButton");
-        //节点内容容器
-        const jiedianwords = document.querySelector(".jiedianwords");
-        //文件录入按键
-        const anjiansss = document.querySelector(".anjiansss");
-        //文件录入加载界面按键
-        const loadssss = document.querySelector(".loadssss");
-        //节点盒子
-        const wordsbox = document.querySelector(".wordsbox");
-        //右键菜单
-        const rightmousemenu = document.querySelector(".rightmousemenu");
-        //右键-删除
-        const deleteMulu = document.querySelector(".deleteMulu");
-        //右键-改变颜色
-        const changeMuluColor = document.querySelector(".changeMuluColor");
-        //右键-取消
-        const noneRightMouseMenu = document.querySelector(".noneRightMouseMenu");
-        //右键-展开所有目录
-        const showAllMulu = document.querySelector(".showAllMulu");
-        //右键-收缩所有目录
-        const cutAllMulu = document.querySelector(".cutAllMulu");
-
-
-        //规则/注意事项
-        const bianxierule = document.querySelector(".bianxierule");
-
-        //新/旧的目录名
-        let newName, oldName;
-        //所选择的目录
-        let currentMuluName;
-        ////快捷按键
-        //let ADD, REMOVE, SAVE;
-
-        //快捷键（暂时停用
-        //window.onkeyup = function () {
-        //    if ((event.key == "a" && event.ctrlKey) || (event.key == "A" && event.ctrlKey)) {
-        //        event.preventDefault();
-        //        addNewMuluButton.click();
-        //    }
-        //}
-        AddListStyleForFolder();
-        //区分文件夹和文件
-        function AddListStyleForFolder() {
-            let allparentmulu = [];
-            let foldermuluchild;
-            let childs = firststep.children;
-            for (let i = 0; i < childs.length; i++) {
-                if (allparentmulu.indexOf(childs[i].classList[1]) == -1) {
-                    foldermuluchild = document.getElementsByClassName(childs[i].classList[1]);
-                    if (foldermuluchild.length > 1) {
-                        allparentmulu.push(childs[i].classList[1]);
-                    }
-                }
-            }
-            for (let i = 0; i < allparentmulu.length; i++) {
-                let nowchilds = document.getElementsByClassName(allparentmulu[i]);
-                nowchilds[0].style.fontStyle = "italic";
-            }
-        }
-
-        //编写规则
-        ruleButton.addEventListener("click", function () {
-            box.style.display = "none";
-            anjiansss.style.display = "none";
-            addButtons.style.display = "none";
-            bigbox.style.display = "none";
-            wordsbox.style.display = "none";
-            bianxierule.style.display = "block";
-        })
-
-        bianxierule.addEventListener("dblclick", function () {
-            addButtons.style.display = "block";
-            bigbox.style.display = "block";
-            wordsbox.style.display = "block";
-            bianxierule.style.display = "none";
-        })
-
-        //文件录入
-        loadButton.addEventListener("click", function () {
-            box.style.display = "block";
-            anjiansss.style.display = "block";
-            addButtons.style.display = "none";
-            bigbox.style.display = "none";
-            wordsbox.style.display = "none";
-
-        })
-        box.addEventListener("mouseup", function () {
-            if (event.button == 2) {
-                box.style.display = "none";
-                addButtons.style.display = "block";
-                wordsbox.style.display = "block";
-                anjiansss.style.display = "none";
-                bigbox.style.display = "block";
-            }
-        })
-        //节点内容改变时改变储存
-        jiedianwords.addEventListener("change", function () {
-            let changedmulu = document.querySelector(`#${currentMuluName}`);
-            let classnamelist = changedmulu.classList;
-            for (let i = 0; i < mulufile.length; i++) {
-                if (mulufile[i][0] == classnamelist[1] && mulufile[i][2] == classnamelist[2] && mulufile[i][1] == changedmulu.innerHTML) {
-                    mulufile[i][3] = jiedianwords.value;
-                    return;
-                } else if (mulufile[i][0] == "mulu" && mulufile[i][2] == classnamelist[1] && mulufile[i][1] == changedmulu.innerHTML) {
-                    mulufile[i][3] = jiedianwords.value;
-                    return;
-                }
-            }
-        })
-
-        //加载目录
-        function LoadMulu() {
-            if (!Array.isArray(mulufile) || mulufile.length === 0) {
-                alert("无效的文件格式");
-                return;
-            }
-            if (mulufile[0][0] !== "mulu") {
-                alert("文件格式错误：第一个目录必须以'mulu'开头");
-                return;
-            }
-            let error = 0;
-            let warning = 0;
-            let idName
-            let muluss = document.querySelectorAll(".mulu");
-            for (let i = 0; i < muluss.length; i++) {
-                muluss[i].remove();
-            }
-            for (let i = 0; i < mulufile.length; i++) {
-                if (mulufile[i].length == 4) {
-                    if (mulufile[i][2] == "mulufirststep" || mulufile[i][0] == "mulufirststep") {
-                        warning++;
-                    }
-                    if (i == 0) {
-                        idName = creatDivByClass("firststep", getOneId(10, 0), `mulu ${mulufile[i][2]}`);
-                    } else {
-                        if (getDomNumb(mulufile[i][0]) > 0) {
-                            idName = creatDivByClassBefore(mulufile[i][0], getOneId(10, 0), `mulu ${mulufile[i][0]} ${mulufile[i][2]}`, (getDomNumb(mulufile[i][0]) - 1));
-                        } else {
-
-                            idName = creatDivByClass("firststep", getOneId(10, 0), `mulu ${mulufile[i][0]} ${mulufile[i][2]}`);
-
-                        }
-                    }
-                    let newMulu = document.querySelector(`#${idName}`);
-                    newMulu.innerHTML = mulufile[i][1];
-                    newMulu.addEventListener("mouseup", function (e) {
-                        if (e.detail === 2) return; // 如果是双击,直接返回
-                        if (event.button == 0) {
-                            currentMuluName = newMulu.id;
-                            RemoveOtherSelect();
-                            newMulu.classList += " select";
-                            jiedianwords.value = mulufile[i][3];
-                            //展示/隐藏子目录
-                            let currentchilds;
-                            if (getDomNumb(mulufile[i][2]) > 1) {
-                                currentchilds = document.getElementsByClassName(mulufile[i][2]);
-                                ReturnAllChild(mulufile[i][2], !(document.getElementsByClassName(currentchilds[1].classList[2])[0].style.display == "block"));
-
-                            } else if (getDomNumb(mulufile[i][0]) > 1 && getDomNumb(mulufile[i][2]) != 1) {
-                                currentchilds = document.getElementsByClassName(mulufile[i][0]);
-                                ReturnAllChild(mulufile[i][0], !(document.getElementsByClassName(currentchilds[1].classList[2])[0].style.display == "block"));
-                            }
-
-
-
-                        } else if (event.button == 2) {
-                            currentMuluName = newMulu.id;
-                            RemoveOtherSelect();
-                            newMulu.classList += " select";
-                            jiedianwords.value = mulufile[i][3];
-
-                            rightMouseMenu();
-
-                        }
-                    })
-                    newMulu.addEventListener("dblclick", function (e) {
-                        e.preventDefault(); // 阻止默认事件
-                        e.stopPropagation(); // 阻止事件冒泡
-                        oldName = newMulu.innerHTML;
-                        newName = prompt("新的名字");
-                        if (newName && newName.length > 0) {
-                            if (!ChangeChildName(currentMuluName, newName)) {
-                                return; // 如果改名失败，直接返回
-                            }
-                            newMulu.innerHTML = newName;
-                            console.log(mulufile);
-                        } else {
-                            newMulu.innerHTML = oldName;
-                        }
-                    })
-
-
-
-                } else {
-                    error++;
-                }
-            }
-            DuplicateMuluHints();
-            if (error == 0 && warning == 0) {
-                console.log(`error:${error},warning:${warning}`);
-            } else {
-                console.warn(`error:${error},warning:${warning}`);
-
-            }
-        }
-        //加载所有元素后执行
-        document.addEventListener("DOMContentLoaded", function () {
-            //给所有body里的东西添加id
-            for (let i = 0; i < allThins.length; i++) {
-                allThins[i].id = getOneId(10, 0);
-            }
-            LoadMulu();
-            NoneChildMulu();
-            Colors();
-        })
-
-        //初始隐藏子目录
-        function NoneChildMulu() {
-            cutAllMulu.click();
-        }
-
-        //检查目录名是否重复
-        function isDuplicateName(name) {
-            let allNames = [];
-            let mulus = document.querySelectorAll(".mulu");
-            for (let i = 0; i < mulus.length; i++) {
-                allNames.push(mulus[i].innerHTML);
-            }
-            return allNames.includes(name);
-        }
-
-        //添加目录
-        addNewMuluButton.addEventListener("click", function () {
-            if (!checkid(currentMuluName, 1)) {
-                alert("未选中目录");
-            } else {
-                let nMulu, newMuLuName;
-                nMulu = prompt("输入目录名");
-                if (nMulu == "" || nMulu == null) {
-                    alert("已取消添加");
-                    return;
-                }
-                if (isDuplicateName(nMulu)) {
-                    alert("目录名已存在，请使用其他名称");
-                    return;
-                }
-                newMuLuName = `mulu${nMulu}`;
-                let idName;
-
-                let currentchilds;
-                currentchilds = document.getElementsByClassName(document.getElementById(currentMuluName).classList[2]);
-
-
-                let allparentmulu = [];
-                let childs = currentchilds;
-                for (let i = 0; i < childs.length; i++) {
-                    if (allparentmulu.indexOf(childs[i].classList[2]) == -1) {
-                        if (childs[i].classList[2] == "select") {
-                            allparentmulu.push(childs[i].classList[1]);
-                        } else {
-                            allparentmulu.push(childs[i].classList[2]);
-                        }
-                    }
-                }
-                if (document.getElementById(currentMuluName).classList[2] != "select") {
-                    idName = creatDivByClassBefore(allparentmulu[allparentmulu.length - 1], getOneId(10, 0), `mulu ${document.getElementById(currentMuluName).classList[1]} ${newMuLuName}`, document.getElementsByClassName(allparentmulu[allparentmulu.length - 1]).length - 1);
-                    mulufile.push([document.getElementById(currentMuluName).classList[1], nMulu, newMuLuName, `${nMulu}`]);
-
-                } else {
-                    idName = creatDivByClassBefore(allparentmulu[allparentmulu.length - 1], getOneId(10, 0), `mulu  ${newMuLuName}`, document.getElementsByClassName(allparentmulu[allparentmulu.length - 1]).length - 1);
-                    mulufile.push(["mulu", nMulu, newMuLuName, `${nMulu}`]);
-
-                }
-
-
-
-                let newMulu = document.querySelector(`#${idName}`);
-                newMulu.innerHTML = nMulu;
-                if (currentchilds[0]) {
-                    newMulu.style.backgroundColor = currentchilds[0].style.backgroundColor;
-                    newMulu.style.color = currentchilds[0].style.color;
-                    newMulu.style.display = currentchilds[0].style.display;
-                } else {
-                    newMulu.style.backgroundColor = getColor();
-                    newMulu.style.color = '#000000';
-                    newMulu.style.display = "block";
-                }
-                newMulu.addEventListener("mouseup", function () {
-                    if (event.button == 0) {
-                        currentMuluName = newMulu.id;
-                        RemoveOtherSelect();
-                        newMulu.classList += " select";
-                        let onearr;
-                        if (document.getElementById(currentMuluName).classList[2] != "select") {
-                            onearr = [newMulu.classList[1], newMulu.innerHTML, newMulu.classList[2], nMulu];
-                        } else {
-                            onearr = ["mulu", newMulu.innerHTML, newMulu.classList[1], `${nMulu}`];
-                        }
-                        jiedianwords.value = mulufile[findArrayIndexCutLast(mulufile, onearr)][3];
-
-                        //展示/隐藏子目录
-                        let currentchilds;
-                        if (getDomNumb(newMuLuName) > 1) {
-                            currentchilds = document.getElementsByClassName(newMuLuName);
-                            ReturnAllChild(newMuLuName,!(document.getElementsByClassName(currentchilds[1].classList[2])[0].style.display == "block"));
-                        } else if (getDomNumb(newMulu.classList[1]) > 1 && getDomNumb(newMulu.classList[2]) != 1) {
-                            currentchilds = document.getElementsByClassName(newMulu.classList[1]);
-                            ReturnAllChild(newMulu.classList[1], !(document.getElementsByClassName(currentchilds[1].classList[2])[0].style.display == "block"));
-                        }
-                    } else if (event.button == 2) {
-                        currentMuluName = newMulu.id;
-                        RemoveOtherSelect();
-                        newMulu.classList += " select";
-                        rightMouseMenu();
-                        let onearr;
-                        if (document.getElementById(currentMuluName).classList[2] != "select") {
-                            onearr = [newMulu.classList[1], newMulu.innerHTML, newMulu.classList[2], nMulu];
-                        } else {
-                            onearr = ["mulu", newMulu.innerHTML, newMulu.classList[1], nMulu];
-                        }
-                        jiedianwords.value = mulufile[findArrayIndexCutLast(mulufile, onearr)][3];
-                    }
-                });
-                newMulu.addEventListener("dblclick", function (e) {
-                    e.preventDefault(); // 阻止默认事件
-                    e.stopPropagation(); // 阻止事件冒泡
-                    oldName = newMulu.innerHTML;
-                    newName = prompt("新的名字");
-                    if (newName && newName.length > 0) {
-                        if (!ChangeChildName(currentMuluName, newName)) {
-                            return; // 如果改名失败，直接返回
-                        }
-                        newMulu.innerHTML = newName;
-                        console.log(mulufile);
-                    } else {
-                        newMulu.innerHTML = oldName;
-                    }
-                })
-                AddListStyleForFolder();
-                DuplicateMuluHints();
-            }
-        })
-
-        //添加节点
-        addNewPotsButton.addEventListener("click", function () {
-            if (!checkid(currentMuluName, 1)) {
-                alert("未选中目录");
-            } else {
-                let nMulu, newMuLuName;
-                nMulu = prompt("输入节点名");
-                if (nMulu == "" || nMulu == null) {
-                    alert("已取消添加");
-                    return;
-                }
-                if (isDuplicateName(nMulu)) {
-                    alert("目录名已存在，请使用其他名称");
-                    return;
-                }
-                newMuLuName = `mulu${nMulu}`;
-                let idName;
-                if (document.getElementById(currentMuluName).classList[2] != "select") {
-                    idName = creatDivByIdBefore(currentMuluName, getOneId(10, 0), `mulu ${document.getElementById(currentMuluName).classList[2]} ${newMuLuName}`);
-                    mulufile.push([document.getElementById(currentMuluName).classList[2], nMulu, newMuLuName, `${nMulu}`]);
-
-                } else {
-                    idName = creatDivByIdBefore(currentMuluName, getOneId(10, 0), `mulu ${document.getElementById(currentMuluName).classList[1]} ${newMuLuName}`);
-                    mulufile.push([document.getElementById(currentMuluName).classList[1], nMulu, newMuLuName, `${nMulu}`]);
-
-                }
-                let newMulu = document.querySelector(`#${idName}`);
-                newMulu.innerHTML = nMulu;
-                let nowchild;
-                if (document.getElementById(currentMuluName).classList[2] != "select") {
-                    nowchild = document.getElementsByClassName(document.getElementById(currentMuluName).classList[2])[2];
-                } else {
-                    nowchild = document.getElementsByClassName(document.getElementById(currentMuluName).classList[1])[2];
-
-                }
-                if (nowchild) {
-                    newMulu.style.backgroundColor = nowchild.style.backgroundColor;
-                    newMulu.style.color = nowchild.style.color;
-                    newMulu.style.display = nowchild.style.display;
-
-                } else {
-                    newMulu.style.backgroundColor = getColor();
-                    newMulu.style.color = '#000000';
-                    newMulu.style.display = "block";
-                }
-                newMulu.addEventListener("mouseup", function () {
-                    if (event.button == 0) {
-                        currentMuluName = newMulu.id;
-                        RemoveOtherSelect();
-                        newMulu.classList += " select";
-                        let onearr;
-                        if (document.getElementById(currentMuluName).classList[2] != "select") {
-                            onearr = [newMulu.classList[1], newMulu.innerHTML, newMulu.classList[2], nMulu];
-                        } else {
-                            onearr = ["mulu", newMulu.innerHTML, newMulu.classList[1], `${nMulu}`];
-                        }
-                        jiedianwords.value = mulufile[findArrayIndexCutLast(mulufile, onearr)][3];
-
-                        //展示/隐藏子目录
-                        let currentchilds;
-                        if (getDomNumb(newMuLuName) > 1) {
-                            currentchilds = document.getElementsByClassName(newMuLuName);
-                            ReturnAllChild(newMuLuName,!(document.getElementsByClassName(currentchilds[1].classList[2])[0].style.display == "block"));
-                        } else if (getDomNumb(newMulu.classList[1]) > 1 && getDomNumb(newMulu.classList[2]) != 1) {
-                            currentchilds = document.getElementsByClassName(newMulu.classList[1]);
-                            ReturnAllChild(newMulu.classList[1], !(document.getElementsByClassName(currentchilds[1].classList[2])[0].style.display == "block"));
-                        }
-                    } else if (event.button == 2) {
-                        currentMuluName = newMulu.id;
-                        RemoveOtherSelect();
-                        newMulu.classList += " select";
-                        rightMouseMenu();
-                        let onearr;
-                        if (document.getElementById(currentMuluName).classList[2] != "select") {
-                            onearr = [newMulu.classList[1], newMulu.innerHTML, newMulu.classList[2], nMulu];
-                        } else {
-                            onearr = ["mulu", newMulu.innerHTML, newMulu.classList[1], nMulu];
-                        }
-                        jiedianwords.value = mulufile[findArrayIndexCutLast(mulufile, onearr)][3];
-                    }
-                });
-                newMulu.addEventListener("dblclick", function (e) {
-                    e.preventDefault(); // 阻止默认事件
-                    e.stopPropagation(); // 阻止事件冒泡
-                    oldName = newMulu.innerHTML;
-                    newName = prompt("新的名字");
-                    if (newName && newName.length > 0) {
-                        if (!ChangeChildName(currentMuluName, newName)) {
-                            return; // 如果改名失败，直接返回
-                        }
-                        newMulu.innerHTML = newName;
-                        console.log(mulufile);
-                    } else {
-                        newMulu.innerHTML = oldName;
-                    }
-                })
-                AddListStyleForFolder();
-                DuplicateMuluHints();
-            }
-        })
-
-
-        //给不同类名添加不同颜色
-        function Colors() {
-            let allparentmulu = [];
-            let childs = firststep.children;
-            for (let i = 0; i < childs.length; i++) {
-                if (allparentmulu.indexOf(childs[i].classList[1]) == -1) {
-                    allparentmulu.push(childs[i].classList[1]);
-                }
-            }
-            for (let i = 0; i < allparentmulu.length; i++) {
-                let nowchilds = document.getElementsByClassName(allparentmulu[i]);
-                let color = getColor();
-                for (let y = 0; y < nowchilds.length - 1; y++) {
-                    nowchilds[y + 1].style.backgroundColor = color;
-                    //nowchilds[y + 1].style.color = rgbToHexadecimal(FindColorByRGB(hexadecimalToRgb(color)));
-                }
-
-            }
-        }
-
-
-        //显示右键菜单
-        function rightMouseMenu() {
-            rightmousemenu.style.display = "block";
-            rightmousemenu.style.left = `${event.clientX}px`;
-            rightmousemenu.style.top = `${event.clientY}px`;
-        }
-        //失去焦点后隐藏
-        document.addEventListener('click', function () {
-            noneRightMouseMenu.click();
-
-        })
-
-        //右键-取消
-        noneRightMouseMenu.addEventListener("click", function () {
-            rightmousemenu.style.display = "none";
-        })
-
-        //右键-删除
-        deleteMulu.addEventListener("click", function () {
-            if (confirm("是否删除此目录？")) {
-                let nowchild = document.getElementById(currentMuluName);
-                if (!nowchild) return;
-                
-                // 获取当前目录的类名
-                let currentClass = nowchild.classList[2] != "select" ? nowchild.classList[2] : nowchild.classList[1];
-                
-                // 递归删除所有子目录
-                function deleteAllChildren(parentClass) {
-                    let children = document.getElementsByClassName(parentClass);
-                    for (let i = 1; i < children.length; i++) {
-                        let child = children[i];
-                        if (child === nowchild) continue;
-                        
-                        // 获取子目录的类名
-                        let childClass = child.classList[2] != "select" ? child.classList[2] : child.classList[1];
-                        
-                        // 递归删除子目录的子目录
-                        deleteAllChildren(childClass);
-                        
-                        // 从mulufile中删除子目录数据
-                        let childData = [child.classList[1], child.innerHTML, child.classList[2], jiedianwords.value];
-                        let index = findArrayIndex(mulufile, childData);
-                        if (index !== -1) {
-                            mulufile.splice(index, 1);
-                        }
-                        
-                        // 删除DOM元素
-                        child.remove();
-                    }
-                }
-                
-                // 开始递归删除
-                deleteAllChildren(currentClass);
-                
-                // 删除当前目录
-                let currentData;
-                if (nowchild.classList[2] != "select") {
-                    currentData = [nowchild.classList[1], nowchild.innerHTML, nowchild.classList[2], jiedianwords.value];
-                } else {
-                    currentData = ["mulu", nowchild.innerHTML, nowchild.classList[1], jiedianwords.value];
-                }
-                
-                // 从mulufile中删除当前目录数据
-                let deleteIndex = findArrayIndex(mulufile, currentData);
-                if (deleteIndex !== -1) {
-                    mulufile.splice(deleteIndex, 1);
-                }
-                
-                // 删除DOM元素
-                nowchild.remove();
-                
-                // 重置状态
-                currentMuluName = null;
-                jiedianwords.value = "";
-                
-                // 更新UI
-                AddListStyleForFolder();
-                DuplicateMuluHints();
-            }
-            noneRightMouseMenu.click();
-        })
-
-        //右键-修改颜色
-        changeMuluColor.addEventListener("click", function () {
-            let nowcildss = document.getElementById(currentMuluName);
-            let allchangemulus = document.getElementsByClassName(nowcildss.classList[1]);
-            
-            // 保存原始颜色
-            let originalBgColors = [];
-            let originalTextColors = [];
-            for (let i = 0; i < allchangemulus.length - 1; i++) {
-                originalBgColors.push(allchangemulus[i + 1].style.backgroundColor);
-                originalTextColors.push(allchangemulus[i + 1].style.color);
-            }
-            
-            // 创建颜色选择器容器
-            let colorPickerContainer = document.createElement('div');
-            colorPickerContainer.style.position = 'absolute';
-            colorPickerContainer.style.left = rightmousemenu.style.left;
-            colorPickerContainer.style.top = rightmousemenu.style.top;
-            colorPickerContainer.style.zIndex = '1000';
-            colorPickerContainer.style.backgroundColor = 'burlywood';
-            colorPickerContainer.style.padding = '10px';
-            colorPickerContainer.style.border = '1px solid black';
-            colorPickerContainer.style.borderRadius = '5px';
-            colorPickerContainer.style.cursor = 'move';
-            
-            // 添加标题栏
-            let titleBar = document.createElement('div');
-            titleBar.innerHTML = '选择颜色';
-            titleBar.style.textAlign = 'center';
-            titleBar.style.marginBottom = '5px';
-            titleBar.style.fontWeight = 'bold';
-            titleBar.style.cursor = 'move';
-            titleBar.style.padding = '5px';
-            titleBar.style.backgroundColor = 'rgba(0,0,0,0.1)';
-            titleBar.style.borderRadius = '3px';
-            
-            // 创建背景颜色选择器
-            let bgColorLabel = document.createElement('div');
-            bgColorLabel.innerHTML = '背景颜色:';
-            bgColorLabel.style.marginBottom = '5px';
-            
-            let bgColorPicker = document.createElement('input');
-            bgColorPicker.type = 'color';
-            // 获取当前背景颜色,如果没有则使用白色
-            let currentBgColor = allchangemulus[1].style.backgroundColor;
-            if (!currentBgColor) {
-                currentBgColor = '#ffffff';
-            } else if (currentBgColor.startsWith('rgb')) {
-                // 将rgb格式转换为hex格式
-                let rgb = currentBgColor.match(/\d+/g);
-                currentBgColor = '#' + rgb.map(x => {
-                    const hex = parseInt(x).toString(16);
-                    return hex.length === 1 ? '0' + hex : hex;
-                }).join('');
-            }
-            bgColorPicker.value = currentBgColor;
-            bgColorPicker.style.width = '100%';
-            bgColorPicker.style.height = '30px';
-            bgColorPicker.style.cursor = 'pointer';
-            bgColorPicker.style.marginBottom = '10px';
-            
-            // 创建文字颜色选择器
-            let textColorLabel = document.createElement('div');
-            textColorLabel.innerHTML = '文字颜色:';
-            textColorLabel.style.marginBottom = '5px';
-            
-            let textColorPicker = document.createElement('input');
-            textColorPicker.type = 'color';
-            // 获取当前文字颜色,如果没有则使用黑色
-            let currentTextColor = allchangemulus[1].style.color;
-            if (!currentTextColor) {
-                currentTextColor = '#000000';
-            } else if (currentTextColor.startsWith('rgb')) {
-                // 将rgb格式转换为hex格式
-                let rgb = currentTextColor.match(/\d+/g);
-                currentTextColor = '#' + rgb.map(x => {
-                    const hex = parseInt(x).toString(16);
-                    return hex.length === 1 ? '0' + hex : hex;
-                }).join('');
-            }
-            textColorPicker.value = currentTextColor;
-            textColorPicker.style.width = '100%';
-            textColorPicker.style.height = '30px';
-            textColorPicker.style.cursor = 'pointer';
-            textColorPicker.style.marginBottom = '10px';
-            
-            // 添加按钮容器
-            let buttonContainer = document.createElement('div');
-            buttonContainer.style.display = 'flex';
-            buttonContainer.style.gap = '5px';
-            
-            // 添加确认按钮
-            let confirmButton = document.createElement('button');
-            confirmButton.innerHTML = '确认';
-            confirmButton.style.flex = '1';
-            confirmButton.style.cursor = 'pointer';
-            confirmButton.onclick = function() {
-                colorPickerContainer.remove();
-            };
-            
-            // 添加取消按钮
-            let cancelButton = document.createElement('button');
-            cancelButton.innerHTML = '取消';
-            cancelButton.style.flex = '1';
-            cancelButton.style.cursor = 'pointer';
-            cancelButton.onclick = function() {
-                // 恢复原始颜色
-                for (let i = 0; i < allchangemulus.length - 1; i++) {
-                    allchangemulus[i + 1].style.backgroundColor = originalBgColors[i];
-                    allchangemulus[i + 1].style.color = originalTextColors[i];
-                }
-                colorPickerContainer.remove();
-            };
-            
-            // 组装按钮容器
-            buttonContainer.appendChild(confirmButton);
-            buttonContainer.appendChild(cancelButton);
-            
-            // 组装组件
-            colorPickerContainer.appendChild(titleBar);
-            colorPickerContainer.appendChild(bgColorLabel);
-            colorPickerContainer.appendChild(bgColorPicker);
-            colorPickerContainer.appendChild(textColorLabel);
-            colorPickerContainer.appendChild(textColorPicker);
-            colorPickerContainer.appendChild(buttonContainer);
-            document.body.appendChild(colorPickerContainer);
-            
-            // 拖动功能
-            let isDragging = false;
-            let currentX;
-            let currentY;
-            let initialX;
-            let initialY;
-            let xOffset = 0;
-            let yOffset = 0;
-            
-            titleBar.addEventListener("mousedown", dragStart);
-            document.addEventListener("mousemove", drag);
-            document.addEventListener("mouseup", dragEnd);
-            
-            function dragStart(e) {
-                initialX = e.clientX - xOffset;
-                initialY = e.clientY - yOffset;
-                
-                if (e.target === titleBar) {
-                    isDragging = true;
-                }
-            }
-            
-            function drag(e) {
-                if (isDragging) {
-                    e.preventDefault();
-                    
-                    currentX = e.clientX - initialX;
-                    currentY = e.clientY - initialY;
-                    
-                    xOffset = currentX;
-                    yOffset = currentY;
-                    
-                    setTranslate(currentX, currentY, colorPickerContainer);
-                }
-            }
-            
-            function dragEnd(e) {
-                initialX = currentX;
-                initialY = currentY;
-                isDragging = false;
-            }
-            
-            function setTranslate(xPos, yPos, el) {
-                el.style.transform = "translate3d(" + xPos + "px, " + yPos + "px, 0)";
-            }
-            
-            // 监听颜色变化
-            bgColorPicker.addEventListener('input', function() {
-                let selectedColor = bgColorPicker.value;
-                for (let i = 0; i < allchangemulus.length - 1; i++) {
-                    allchangemulus[i + 1].style.backgroundColor = selectedColor;
-                }
-            });
-            
-            textColorPicker.addEventListener('input', function() {
-                let selectedColor = textColorPicker.value;
-                for (let i = 0; i < allchangemulus.length - 1; i++) {
-                    allchangemulus[i + 1].style.color = selectedColor;
-                }
-            });
-            
-            // 添加失焦关闭功能
-            function handleClickOutside(event) {
-                if (!colorPickerContainer.contains(event.target)) {
-                    colorPickerContainer.remove();
-                    document.removeEventListener('mousedown', handleClickOutside);
-                }
-            }
-            
-            // 延迟添加点击事件监听器,避免立即触发
-            setTimeout(() => {
-                document.addEventListener('mousedown', handleClickOutside);
-            }, 0);
-            
-            noneRightMouseMenu.click();
-        });
-
-        //右键-展开目录
-        showAllMulu.addEventListener("click", function () {
-            let allparentmulu = [];
-            let childs = firststep.children;
-            for (let i = 0; i < childs.length; i++) {
-                if (allparentmulu.indexOf(childs[i].classList[1]) == -1) {
-                    allparentmulu.push(childs[i].classList[1]);
-                }
-            }
-            for (let i = 0; i < allparentmulu.length; i++) {
-                let nowchilds = document.getElementsByClassName(allparentmulu[i]);
-                for (let y = 0; y < nowchilds.length - 1; y++) {
-                    nowchilds[y + 1].style.display = "block";
-                }
-
-            }
-        })
-
-        //右键-收起目录
-        cutAllMulu.addEventListener("click", function () {
-            let allparentmulu = [];
-            let childs = firststep.children;
-            for (let i = 0; i < childs.length; i++) {
-                if (allparentmulu.indexOf(childs[i].classList[1]) == -1) {
-                    allparentmulu.push(childs[i].classList[1]);
-                }
-            }
-            for (let i = 0; i < allparentmulu.length; i++) {
-                let nowchilds = document.getElementsByClassName(allparentmulu[i]);
-                for (let y = 0; y < nowchilds.length - 1; y++) {
-                    nowchilds[y + 1].style.display = "none";
-                }
-
-            }
-        });
-
-        //添加select分类
-        function RemoveOtherSelect() {
-            let mulus = document.querySelectorAll(".mulu");
-
-            for (let i = 0; i < mulus.length; i++) {
-                mulus[i].classList.remove("select");
-
-            }
-        }
-
-        //重复目录名提示
-        function DuplicateMuluHints() {
-            let allparentmulu = [];
-            let allparentmuluID = [];
-            let duplicateMulu = [];
-            let duplicateMuluID = [];
-            let childs = firststep.children;
-
-            for (let i = 0; i < childs.length; i++) {
-                allparentmulu.push(document.getElementById(childs[i].id).innerHTML);
-                allparentmuluID.push(childs[i].id);
-            }
-            const elementCount = {};
-
-            // 遍历数组并计数
-            for (let i = 0; i < allparentmulu.length; i++) {
-                const element = allparentmulu[i];
-                if (elementCount[element]) {
-                    duplicateMuluID.push(allparentmuluID[i]);
-                    elementCount[element]++;
-                } else {
-                    elementCount[element] = 1;
-                }
-            }
-            // 找出重复的元素
-            for (let key in elementCount) {
-                if (elementCount[key] > 1) {
-                    duplicateMulu.push(key); // 转换为整数，如果元素是字符串的话
-                }
-            }
-            // 显示结果
-            if (duplicateMulu.length != 0) {
-                for (let i = 0; i < duplicateMulu.length; i++) {
-                    console.warn(`重复目录名：${duplicateMulu[i]}    重复数量：${elementCount[duplicateMulu[i]] - 1}   其ID为：${duplicateMuluID[i]}    所在位置（悬浮显示）：`);
-                    console.warn(document.getElementById(duplicateMuluID[i]));
-                }
-                alert(`重复目录名（按F12 > 控制台了解详情）: ${duplicateMulu.join(` , `)}`);
-                return true;
-            } else {
-                console.log("无重复目录");
-                return false;
-            }
-
-        }
-
-        //修改目录名
-        function ChangeChildName(idname = "", newName = "") {
-            // 检查新名称是否与当前目录名相同
-            let currentMulu = document.getElementById(idname);
-            if (currentMulu.innerHTML === newName) {
-                return false; // 如果新名称与当前名称相同，返回false
-            }
-            
-            // 检查新名称是否与其他目录重复
-            if (isDuplicateName(newName)) {
-                alert("目录名已存在，请使用其他名称");
-                return false; // 如果重名，返回false
-            }
-            
-            let parentmulu;
-            if (document.getElementById(idname).classList[2] != "select") {
-                parentmulu = document.getElementById(idname).classList[2];
-            } else {
-                parentmulu = document.getElementById(idname).classList[1];
-            }
-            let childsmulu = document.getElementsByClassName(parentmulu);
-            let arrs;
-            let newclassname;
-            let childindex;
-            if (document.getElementById(idname).classList[2] != "select") {
-                for (let i = 1; i < childsmulu.length; i++) {
-                    arrs = [childsmulu[i].classList[1], childsmulu[i].innerHTML, childsmulu[i].classList[2]];
-                    childindex = findArrayIndexCutLast(mulufile, arrs);
-                    if (childindex !== -1) {
-                        mulufile[childindex] = [childsmulu[0].classList[2], mulufile[childindex][1], mulufile[childindex][2], mulufile[childindex][3]];
-                        childsmulu[i].classList.replace(childsmulu[i].classList[1], childsmulu[0].classList[2]);
-                        childsmulu[i].className = `mulu mulu${newName} ${childsmulu[i].classList[2]}`;
-                    }
-                }
-            } else {
-                for (let i = 1; i < childsmulu.length; i++) {
-                    arrs = [childsmulu[i].classList[1], childsmulu[i].innerHTML, childsmulu[i].classList[2], jiedianwords.value];
-                    newclassname = [childsmulu[0].classList[1], childsmulu[i].innerHTML, childsmulu[i].classList[2], jiedianwords.value];
-                    let index = findArrayIndex(mulufile, arrs);
-                    if (index !== -1) {
-                        mulufile[index] = newclassname;
-                        childsmulu[i].classList.replace(childsmulu[i].classList[1], childsmulu[0].classList[1]);
-                    }
-                }
-            }
-            return true; // 改名成功返回true
-        }
-
-        //从文件录入
-        if (1) {
-
-            //解决一旦拖拽外部文件就覆盖掉当前页面的问题
-            //  解决：给document绑定drop事件
-            //  drop事件默认触发不了，需要在dragover事件里面阻止默认事件
-            document.ondrop = function () {
-                return false;
-            }
-            // 这个阻止默认事件是为了让drop事件得以触发
-            document.ondragover = function () {
-                return false;
-            }
-
-            box.ondragenter = function () {
-                box.style.boxShadow = '0 0 10px 5px rgba(255,0,0,.8)';
-            }
-
-            box.ondrop = function (e) {
-                // console.log(e);
-                // 得到拖拽过来的文件
-                let dataFile = e.dataTransfer.files[0];
-
-                // FileReader实例化
-                let fr = new FileReader();
-                // 异步读取文件
-                fr.readAsText(dataFile);
-                // 读取完毕之后执行
-                fr.onload = function () {
-                    // 获取得到的结果
-                    let data = fr.result;
-
-                    const ta = document.createElement('textarea');
-                    ta.value = data;
-                    ta.setAttribute("class", 'entity');
-
-                    box.innerHTML = '';
-                    box.appendChild(ta);
-
-                }
-            }
-            loadssss.addEventListener("click", function () {
-                //***************这里记得写字符串变成二维数组的函数******************************************************************** */
-                mulufile = stringToArr(document.querySelector(".box > .entity").value);
-                // mulufile = document.querySelector(".box > .entity").value;
-                LoadMulu();
-                NoneChildMulu();
-                Colors();
-                AddListStyleForFolder();
-                box.style.display = "none";
-                addButtons.style.display = "block";
-                wordsbox.style.display = "block";
-                anjiansss.style.display = "none";
-                bigbox.style.display = "block";
-            })
-        }
-
-        //保存为文件
-        saveButton.addEventListener("click", function () {
-            let zidingyi = confirm("是否生成默认文件格式（.txt）");
-            let filename;
-            let filenames;
-            if (zidingyi) {
-                filename = "soralistForLoad.txt"
-                filenames = "soralistForShow.txt"
-            } else {
-                filename = prompt("输入你要保存的文件的名字和文件类型（部分文件类型将不支持录入，如：.jpg等）");
-                if (!filename) {
-                    alert("已取消保存");
-                    return;
-                }
-                filenames = `${filename.slice(0, filename.indexOf(`.`) - filename.length)}ForShow${filename.slice(filename.indexOf(`.`) - filename.length)}`;
-            }
-
-            // 准备要保存的数据
-            let stringData = JSON.stringify(mulufile);
-            let ShowData = JSON.stringify(mulufile, null, 2);
-            
-            // 创建Blob对象
-            const blob = new Blob([stringData], {
-                type: "text/plain;charset=utf-8"
-            });
-            const blobs = new Blob([ShowData], {
-                type: "text/plain;charset=utf-8"
-            });
-            
-            // 创建下载链接
-            const objectURL = URL.createObjectURL(blob);
-            const objectURLs = URL.createObjectURL(blobs);
-
-            // 创建下载链接元素
-            const aTag = document.createElement('a');
-            const aTags = document.createElement('a');
-            
-            // 设置下载属性
-            aTag.href = objectURL;
-            aTags.href = objectURLs;
-            aTag.download = filename;
-            aTags.download = filenames;
-            
-            // 触发下载
-            aTag.click();
-            aTags.click();
-            
-            // 清理URL对象
-            URL.revokeObjectURL(objectURL);
-            URL.revokeObjectURL(objectURLs);
-            
-            alert("文件保存成功！");
-        })
-
-    </script>
 </body>
 </html>
