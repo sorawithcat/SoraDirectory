@@ -2,6 +2,59 @@
 // imageHandler 模块 (imageHandler.js)
 // ============================================
 
+// 图片大小限制配置（如果 preview.js 已定义，则使用已存在的值）
+if (typeof MAX_IMAGE_WIDTH === 'undefined') {
+    var MAX_IMAGE_WIDTH = 800;  // 最大宽度（像素）
+    var MAX_IMAGE_HEIGHT = 600;  // 最大高度（像素）
+}
+
+// 辅助函数：限制图片大小但保持比例（如果 preview.js 已定义，则使用已存在的函数）
+if (typeof limitImageSize === 'undefined') {
+    function limitImageSize(img, maxWidth = MAX_IMAGE_WIDTH, maxHeight = MAX_IMAGE_HEIGHT) {
+        return new Promise((resolve) => {
+            const applySizeLimit = () => {
+            const width = img.naturalWidth;
+            const height = img.naturalHeight;
+            
+            if (width === 0 || height === 0) {
+                resolve();
+                return;
+            }
+            
+            // 计算缩放比例
+            const widthRatio = maxWidth / width;
+            const heightRatio = maxHeight / height;
+            const ratio = Math.min(widthRatio, heightRatio, 1); // 不超过1，即不放大
+            
+            // 如果图片超过限制，设置尺寸
+            if (ratio < 1) {
+                img.style.width = (width * ratio) + 'px';
+                img.style.height = 'auto'; // 保持比例
+            } else {
+                // 如果图片在限制内，只设置最大宽度为100%
+                img.style.maxWidth = '100%';
+                img.style.height = 'auto';
+            }
+            
+            resolve();
+        };
+        
+            // 如果图片已经加载完成
+            if (img.complete && img.naturalWidth > 0) {
+                applySizeLimit();
+            } else {
+                // 等待图片加载完成
+                img.onload = applySizeLimit;
+                
+                // 如果图片加载失败，也resolve
+                img.onerror = function() {
+                    resolve();
+                };
+            }
+        });
+    }
+}
+
 // 图片上传（通过按钮、拖拽或粘贴）
 if (imageUploadBtn) {
     imageUploadBtn.addEventListener('click', function(e) {
@@ -37,7 +90,9 @@ if (imageFileInput) {
             if (caption) {
                 img.title = caption;
             }
-            // 保持原图大小，不设置 max-width
+            
+            // 限制图片大小但保持比例
+            limitImageSize(img);
             
             // 添加点击展开功能
             img.addEventListener('click', function() {
@@ -187,6 +242,10 @@ if (markdownPreview) {
                         if (caption) {
                             img.title = caption;
                         }
+                        
+                        // 限制图片大小但保持比例
+                        limitImageSize(img);
+                        
                         img.setAttribute('data-click-attached', 'true');
                         img.addEventListener('click', function(ev) {
                             ev.stopPropagation();

@@ -2,6 +2,59 @@
 // preview 模块 (preview.js)
 // ============================================
 
+// 图片大小限制配置（如果 imageHandler.js 未加载，则使用此配置）
+if (typeof MAX_IMAGE_WIDTH === 'undefined') {
+    var MAX_IMAGE_WIDTH = 800;  // 最大宽度（像素）
+    var MAX_IMAGE_HEIGHT = 600;  // 最大高度（像素）
+}
+
+// 辅助函数：限制图片大小但保持比例（如果 imageHandler.js 未加载，则使用此函数）
+if (typeof limitImageSize === 'undefined') {
+    function limitImageSize(img, maxWidth = MAX_IMAGE_WIDTH, maxHeight = MAX_IMAGE_HEIGHT) {
+        return new Promise((resolve) => {
+            const applySizeLimit = () => {
+                const width = img.naturalWidth;
+                const height = img.naturalHeight;
+                
+                if (width === 0 || height === 0) {
+                    resolve();
+                    return;
+                }
+                
+                // 计算缩放比例
+                const widthRatio = maxWidth / width;
+                const heightRatio = maxHeight / height;
+                const ratio = Math.min(widthRatio, heightRatio, 1); // 不超过1，即不放大
+                
+                // 如果图片超过限制，设置尺寸
+                if (ratio < 1) {
+                    img.style.width = (width * ratio) + 'px';
+                    img.style.height = 'auto'; // 保持比例
+                } else {
+                    // 如果图片在限制内，只设置最大宽度为100%
+                    img.style.maxWidth = '100%';
+                    img.style.height = 'auto';
+                }
+                
+                resolve();
+            };
+            
+            // 如果图片已经加载完成
+            if (img.complete && img.naturalWidth > 0) {
+                applySizeLimit();
+            } else {
+                // 等待图片加载完成
+                img.onload = applySizeLimit;
+                
+                // 如果图片加载失败，也resolve
+                img.onerror = function() {
+                    resolve();
+                };
+            }
+        });
+    }
+}
+
 // 同步预览区域内容到隐藏的 textarea
 function syncPreviewToTextarea() {
     if (markdownPreview && jiedianwords) {
@@ -190,6 +243,36 @@ if (markdownPreview) {
     
 }
 
+// 复制事件（需要在 markdownPreview 存在时绑定）
+if (markdownPreview) {
+    markdownPreview.addEventListener("copy", function(e) {
+        const selection = window.getSelection();
+        if (selection.rangeCount === 0) return;
+        
+        const range = selection.getRangeAt(0);
+        
+        // 检查选中范围是否在预览区域内
+        if (!markdownPreview.contains(range.commonAncestorContainer) && 
+            !range.commonAncestorContainer.contains(markdownPreview)) {
+            return; // 如果不在预览区域内，使用默认行为
+        }
+        
+        // 获取选中内容的HTML和纯文本
+        const contents = range.cloneContents();
+        const tempDiv = document.createElement('div');
+        tempDiv.appendChild(contents);
+        const html = tempDiv.innerHTML;
+        const text = range.toString();
+        
+        // 将HTML和文本都放入剪贴板
+        e.clipboardData.setData('text/html', html);
+        e.clipboardData.setData('text/plain', text);
+        
+        // 阻止默认行为，使用我们设置的数据
+        e.preventDefault();
+    });
+}
+
 // 粘贴事件（需要在 markdownPreview 存在时绑定）
 if (markdownPreview) {
     markdownPreview.addEventListener("paste", function(e) {
@@ -217,6 +300,10 @@ if (markdownPreview) {
                     if (caption) {
                         img.title = caption;
                     }
+                    
+                    // 限制图片大小但保持比例
+                    limitImageSize(img);
+                    
                     img.setAttribute('data-click-attached', 'true');
                     img.addEventListener('click', function(ev) {
                         ev.stopPropagation();
@@ -257,10 +344,57 @@ if (markdownPreview) {
             }
         }
         
-        // 如果没有图片，粘贴文本
+        // 如果没有图片，粘贴文本或HTML
         if (!hasImage) {
+            const selection = window.getSelection();
+            if (selection.rangeCount === 0) return;
+            
+            const range = selection.getRangeAt(0);
+            
+            // 优先使用HTML格式，如果没有HTML格式则使用纯文本
+            let html = clipboardData.getData('text/html');
             const text = clipboardData.getData('text/plain');
-            document.execCommand('insertText', false, text);
+            
+            if (html && html.trim()) {
+                // 有HTML格式，直接插入HTML
+                range.deleteContents();
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = html;
+                
+                // 将HTML内容插入到选中位置
+                const fragment = document.createDocumentFragment();
+                let lastNode = null;
+                while (tempDiv.firstChild) {
+                    const node = tempDiv.firstChild;
+                    fragment.appendChild(node);
+                    lastNode = node;
+                }
+                range.insertNode(fragment);
+                
+                // 将光标移动到插入内容的末尾
+                const newRange = document.createRange();
+                if (lastNode) {
+                    // 找到最后一个节点的末尾位置
+                    if (lastNode.nodeType === Node.TEXT_NODE) {
+                        newRange.setStart(lastNode, lastNode.textContent.length);
+                        newRange.setEnd(lastNode, lastNode.textContent.length);
+                    } else {
+                        // 如果是元素节点，在元素之后
+                        newRange.setStartAfter(lastNode);
+                        newRange.setEndAfter(lastNode);
+                    }
+                } else {
+                    // 如果没有节点，使用原位置
+                    newRange.setStart(range.startContainer, range.startOffset);
+                    newRange.collapse(true);
+                }
+                selection.removeAllRanges();
+                selection.addRange(newRange);
+            } else if (text) {
+                // 没有HTML格式，使用纯文本
+                document.execCommand('insertText', false, text);
+            }
+            
             setTimeout(() => {
                 syncPreviewToTextarea();
             }, 10);

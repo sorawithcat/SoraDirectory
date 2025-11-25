@@ -235,6 +235,14 @@ async function applyFormat(command) {
     
     if (!range) return;
     
+    // 辅助函数：提取选中范围的完整HTML内容（保留嵌套格式）
+    function getRangeHtml(range) {
+        const contents = range.cloneContents();
+        const tempDiv = document.createElement('div');
+        tempDiv.appendChild(contents);
+        return tempDiv.innerHTML;
+    }
+    
     // 辅助函数：检查选中范围是否完全在指定的格式标签内
     function isWrappedInTag(range, tagNames) {
         if (!range || !selectedText) return false;
@@ -330,6 +338,9 @@ async function applyFormat(command) {
     let shouldUnwrap = false;
     let unwrapTag = null;
     
+    // 获取选中范围的完整HTML内容（保留嵌套格式）
+    const selectedHtml = selectedText ? getRangeHtml(range) : '';
+    
     switch(command) {
         // 标题 H1-H6
         case 'h1':
@@ -338,7 +349,7 @@ async function applyFormat(command) {
             if (unwrapTag) {
                 shouldUnwrap = true;
             } else {
-                formattedHtml = '<h1>' + selectedText + '</h1>';
+                formattedHtml = '<h1>' + selectedHtml + '</h1>';
             }
             break;
         case 'h2':
@@ -347,7 +358,7 @@ async function applyFormat(command) {
             if (unwrapTag) {
                 shouldUnwrap = true;
             } else {
-                formattedHtml = '<h2>' + selectedText + '</h2>';
+                formattedHtml = '<h2>' + selectedHtml + '</h2>';
             }
             break;
         case 'h3':
@@ -356,7 +367,7 @@ async function applyFormat(command) {
             if (unwrapTag) {
                 shouldUnwrap = true;
             } else {
-                formattedHtml = '<h3>' + selectedText + '</h3>';
+                formattedHtml = '<h3>' + selectedHtml + '</h3>';
             }
             break;
         case 'h4':
@@ -365,7 +376,7 @@ async function applyFormat(command) {
             if (unwrapTag) {
                 shouldUnwrap = true;
             } else {
-                formattedHtml = '<h4>' + selectedText + '</h4>';
+                formattedHtml = '<h4>' + selectedHtml + '</h4>';
             }
             break;
         case 'h5':
@@ -374,7 +385,7 @@ async function applyFormat(command) {
             if (unwrapTag) {
                 shouldUnwrap = true;
             } else {
-                formattedHtml = '<h5>' + selectedText + '</h5>';
+                formattedHtml = '<h5>' + selectedHtml + '</h5>';
             }
             break;
         case 'h6':
@@ -383,7 +394,7 @@ async function applyFormat(command) {
             if (unwrapTag) {
                 shouldUnwrap = true;
             } else {
-                formattedHtml = '<h6>' + selectedText + '</h6>';
+                formattedHtml = '<h6>' + selectedHtml + '</h6>';
             }
             break;
         // 文本格式
@@ -393,7 +404,7 @@ async function applyFormat(command) {
             if (unwrapTag) {
                 shouldUnwrap = true;
             } else {
-                formattedHtml = '<strong>' + selectedText + '</strong>';
+                formattedHtml = '<strong>' + selectedHtml + '</strong>';
             }
             break;
         case 'italic':
@@ -402,7 +413,7 @@ async function applyFormat(command) {
             if (unwrapTag) {
                 shouldUnwrap = true;
             } else {
-                formattedHtml = '<em>' + selectedText + '</em>';
+                formattedHtml = '<em>' + selectedHtml + '</em>';
             }
             break;
         case 'underline':
@@ -411,7 +422,7 @@ async function applyFormat(command) {
             if (unwrapTag) {
                 shouldUnwrap = true;
             } else {
-                formattedHtml = '<u>' + selectedText + '</u>';
+                formattedHtml = '<u>' + selectedHtml + '</u>';
             }
             break;
         case 'strikethrough':
@@ -420,7 +431,7 @@ async function applyFormat(command) {
             if (unwrapTag) {
                 shouldUnwrap = true;
             } else {
-                formattedHtml = '<s>' + selectedText + '</s>';
+                formattedHtml = '<s>' + selectedHtml + '</s>';
             }
             break;
         case 'code':
@@ -429,7 +440,8 @@ async function applyFormat(command) {
             if (unwrapTag && !unwrapTag.closest('pre')) {
                 shouldUnwrap = true;
             } else {
-                formattedHtml = '<code>' + selectedText + '</code>';
+                // code标签内不应该有HTML，使用纯文本
+                formattedHtml = '<code>' + escapeHtml(selectedText) + '</code>';
             }
             break;
         case 'code-block':
@@ -446,7 +458,7 @@ async function applyFormat(command) {
             if (unwrapTag) {
                 shouldUnwrap = true;
             } else {
-                formattedHtml = '<mark>' + selectedText + '</mark>';
+                formattedHtml = '<mark>' + selectedHtml + '</mark>';
             }
             break;
         case 'superscript':
@@ -455,7 +467,7 @@ async function applyFormat(command) {
             if (unwrapTag) {
                 shouldUnwrap = true;
             } else {
-                formattedHtml = '<sup>' + selectedText + '</sup>';
+                formattedHtml = '<sup>' + selectedHtml + '</sup>';
             }
             break;
         case 'subscript':
@@ -464,7 +476,7 @@ async function applyFormat(command) {
             if (unwrapTag) {
                 shouldUnwrap = true;
             } else {
-                formattedHtml = '<sub>' + selectedText + '</sub>';
+                formattedHtml = '<sub>' + selectedHtml + '</sub>';
             }
             break;
         // 链接和图片
@@ -473,7 +485,7 @@ async function applyFormat(command) {
             if (!url) return;
             
             if (selectedText) {
-                formattedHtml = '<a href="' + escapeHtml(url) + '" target="_blank">' + selectedText + '</a>';
+                formattedHtml = '<a href="' + escapeHtml(url) + '" target="_blank">' + selectedHtml + '</a>';
             } else {
                 formattedHtml = '<a href="' + escapeHtml(url) + '" target="_blank">' + escapeHtml(url) + '</a>';
             }
@@ -516,14 +528,14 @@ async function applyFormat(command) {
         // 其他块级元素
         case 'quote':
             if (selectedText) {
-                formattedHtml = '<blockquote>' + selectedText + '</blockquote>';
+                formattedHtml = '<blockquote>' + selectedHtml + '</blockquote>';
             } else {
                 formattedHtml = '<blockquote><br></blockquote>';
             }
             break;
         case 'paragraph':
             if (selectedText) {
-                formattedHtml = '<p>' + selectedText + '</p>';
+                formattedHtml = '<p>' + selectedHtml + '</p>';
             } else {
                 formattedHtml = '<p><br></p>';
             }
