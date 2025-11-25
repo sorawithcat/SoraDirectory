@@ -780,8 +780,8 @@
         <button class="format-btn" data-command="link" id="linkBtn" title="链接 (Ctrl+单击打开)">🔗</button>
         <button class="format-btn" id="imageUploadBtn" title="插入图片">🖼️</button>
         <button class="format-btn" data-command="paragraph" title="段落">¶</button>
-        <button class="format-btn" data-command="unordered-list" title="无序列表">• 列表</button>
-        <button class="format-btn" data-command="ordered-list" title="有序列表">1. 列表</button>
+        <button class="format-btn" data-command="unordered-list" title="无序列表">无须列表</button>
+        <button class="format-btn" data-command="ordered-list" title="有序列表">有序列表</button>
         <button class="format-btn" data-command="task-list" title="任务列表">☑ 任务</button>
         <button class="format-btn" data-command="quote" title="引用">" 引用</button>
         <button class="format-btn" data-command="table" title="表格">表格</button>
@@ -811,16 +811,10 @@
     </div>
     
     <script src="SoraDirectoryJS.js"></script>
-    <!-- Markdown 处理库 - 使用 npm 安装的本地包 -->
-    <script src="node_modules/marked/marked.min.js"></script>
-    <script src="node_modules/turndown/dist/turndown.js"></script>
-    <script src="node_modules/turndown-plugin-gfm/dist/turndown-plugin-gfm.js"></script>
-    <script src="node_modules/dompurify/dist/purify.min.js"></script>
     <!-- 模块化脚本 -->
     <script src="js/dialog.js"></script>
     <script src="js/globals.js"></script>
     <script src="js/directoryUtils.js"></script>
-    <script src="js/markdown.js"></script>
     <script src="js/preview.js"></script>
     <script src="js/formatToolbar.js"></script>
     <script src="js/imageHandler.js"></script>
@@ -830,9 +824,5 @@
     <script src="js/toolbar.js"></script>
     <script src="js/fileOperations.js"></script>
     <script src="js/main.js"></script>
-    
-    <!-- 自动化测试脚本（可选，用于测试目录内容保存） -->
-    <!-- <script src="test-auto-directory-content.js"></script> -->
-
 </body>
 </html>

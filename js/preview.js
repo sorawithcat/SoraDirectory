@@ -6,26 +6,25 @@
 function syncPreviewToTextarea() {
     if (markdownPreview && jiedianwords) {
         const html = markdownPreview.innerHTML;
-        const markdown = htmlToMarkdown(html);
         isUpdating = true;
-        jiedianwords.value = markdown;
+        jiedianwords.value = html;
         isUpdating = false;
         
         // 更新数据
         if (currentMuluName) {
             let changedmulu = document.querySelector(`#${currentMuluName}`);
             if (changedmulu) {
-                updateMulufileData(changedmulu, markdown);
+                updateMulufileData(changedmulu, html);
             }
         }
     }
 }
 
-// 更新 Markdown 预览（从 textarea 同步到预览区域）
+// 更新预览（从 textarea 同步到预览区域）
 function updateMarkdownPreview() {
     if (markdownPreview && jiedianwords) {
         isUpdating = true;
-        markdownPreview.innerHTML = parseMarkdown(jiedianwords.value);
+        markdownPreview.innerHTML = jiedianwords.value || '';
         isUpdating = false;
     }
 }

@@ -273,7 +273,7 @@ async function handleSave() {
         return;
     }
     
-    let filename, filenames, format, mimeType;
+    let filename, format, mimeType;
     let baseName = "soralist";
     
     // 判断用户输入
@@ -283,22 +283,18 @@ async function handleSave() {
         switch(choice) {
             case 1:
                 filename = `${baseName}ForLoad.json`;
-                filenames = `${baseName}ForShow.json`;
                 format = 'json';
                 break;
             case 2:
                 filename = `${baseName}ForLoad.txt`;
-                filenames = `${baseName}ForShow.txt`;
                 format = 'txt';
                 break;
             case 3:
                 filename = `${baseName}ForLoad.xml`;
-                filenames = `${baseName}ForShow.xml`;
                 format = 'xml';
                 break;
             case 4:
                 filename = `${baseName}ForLoad.csv`;
-                filenames = `${baseName}ForShow.csv`;
                 format = 'csv';
                 break;
             case 5:
@@ -309,10 +305,7 @@ async function handleSave() {
                     return;
                 }
                 filename = customName;
-                let nameWithoutExt = customName.substring(0, customName.lastIndexOf('.'));
-                let ext = customName.substring(customName.lastIndexOf('.'));
-                filenames = `${nameWithoutExt}ForShow${ext}`;
-                format = ext.substring(1).toLowerCase();
+                format = customName.substring(customName.lastIndexOf('.') + 1).toLowerCase();
                 break;
             default:
                 customAlert("无效的选择");
@@ -327,7 +320,6 @@ async function handleSave() {
             customAlert("文件名格式错误，请包含扩展名（如：data.json）");
             return;
         }
-        filenames = `${nameWithoutExt}ForShow${ext}`;
         format = ext.substring(1).toLowerCase();
     }
     
@@ -335,48 +327,37 @@ async function handleSave() {
     mimeType = getMimeType(filename);
     
     // 根据格式准备数据
-    let stringData, showData;
+    let stringData;
     if (format === 'json') {
-        // JSON格式：压缩版和格式化版
-        stringData = JSON.stringify(mulufile);
-        showData = JSON.stringify(mulufile, null, 2);
+        // JSON格式：使用格式化版本
+        stringData = JSON.stringify(mulufile, null, 2);
     } else {
-        // 其他格式：都使用格式化版本
+        // 其他格式：使用格式化版本
         stringData = formatDataByExtension(mulufile, filename);
-        showData = formatDataByExtension(mulufile, filenames);
     }
     
     // 创建Blob对象，使用正确的MIME类型
     const blob = new Blob([stringData], {
         type: `${mimeType};charset=utf-8`
     });
-    const blobs = new Blob([showData], {
-        type: `${mimeType};charset=utf-8`
-    });
     
     // 创建下载链接
     const objectURL = URL.createObjectURL(blob);
-    const objectURLs = URL.createObjectURL(blobs);
 
     // 创建下载链接元素
     const aTag = document.createElement('a');
-    const aTags = document.createElement('a');
     
     // 设置下载属性
     aTag.href = objectURL;
-    aTags.href = objectURLs;
     aTag.download = filename;
-    aTags.download = filenames;
     
     // 触发下载
     aTag.click();
-    aTags.click();
     
     // 清理URL对象
     URL.revokeObjectURL(objectURL);
-    URL.revokeObjectURL(objectURLs);
     
-    customAlert(`文件保存成功！\n已保存：${filename} 和 ${filenames}`);
+    customAlert(`文件保存成功！\n已保存：${filename}`);
 }
 
 // 另存为功能
@@ -395,49 +376,37 @@ async function handleSaveAs(customName) {
         return;
     }
     
-    let filenames = `${nameWithoutExt}ForShow${ext}`;
     let format = ext.substring(1).toLowerCase();
     let mimeType = getMimeType(filename);
     
     // 根据格式准备数据
-    let stringData, showData;
+    let stringData;
     if (format === 'json') {
-        stringData = JSON.stringify(mulufile);
-        showData = JSON.stringify(mulufile, null, 2);
+        stringData = JSON.stringify(mulufile, null, 2);
     } else {
         stringData = formatDataByExtension(mulufile, filename);
-        showData = formatDataByExtension(mulufile, filenames);
     }
     
     // 创建Blob对象
     const blob = new Blob([stringData], {
         type: `${mimeType};charset=utf-8`
     });
-    const blobs = new Blob([showData], {
-        type: `${mimeType};charset=utf-8`
-    });
     
     // 创建下载链接
     const objectURL = URL.createObjectURL(blob);
-    const objectURLs = URL.createObjectURL(blobs);
     
     // 创建下载链接元素
     const aTag = document.createElement('a');
-    const aTags = document.createElement('a');
     
     // 设置下载属性
     aTag.href = objectURL;
-    aTags.href = objectURLs;
     aTag.download = filename;
-    aTags.download = filenames;
     
     // 触发下载
     aTag.click();
-    aTags.click();
     
     // 清理URL对象
     URL.revokeObjectURL(objectURL);
-    URL.revokeObjectURL(objectURLs);
     
-    customAlert(`文件另存为成功！\n已保存：${filename} 和 ${filenames}`);
+    customAlert(`文件另存为成功！\n已保存：${filename}`);
 }

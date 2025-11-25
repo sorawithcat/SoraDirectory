@@ -34,8 +34,12 @@ function setLevelPadding(element, level) {
 
 //加载目录
 function LoadMulu() {
-    if (!Array.isArray(mulufile) || mulufile.length === 0) {
+    if (!Array.isArray(mulufile)) {
         customAlert("无效的文件格式");
+        return;
+    }
+    if (mulufile.length === 0) {
+        // 空数组，不加载任何目录
         return;
     }
     if (mulufile[0][0] !== "mulu") {
