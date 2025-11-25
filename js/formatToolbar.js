@@ -502,14 +502,15 @@ async function applyFormat(command) {
                     const trimmed = line.trim();
                     // 检查是否已经是任务项格式
                     if (trimmed.startsWith('- [ ]') || trimmed.startsWith('- [x]') || trimmed.startsWith('- [X]')) {
+                        const content = trimmed.replace(/^-\s*\[[ xX]\]\s*/, '');
                         return '<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"' + 
                                (trimmed.startsWith('- [x]') || trimmed.startsWith('- [X]') ? ' checked' : '') + 
-                               ' disabled> ' + trimmed.replace(/^-\s*\[[ xX]\]\s*/, '') + '</li>';
+                               ' disabled> ' + content + '</li>';
                     }
                     return '<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled> ' + trimmed + '</li>';
                 }).join('') + '</ul>';
             } else {
-                formattedHtml = '<ul class="contains-task-list"><li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled> </li></ul>';
+                formattedHtml = '<ul class="contains-task-list"><li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled> <br></li></ul>';
             }
             break;
         // 其他块级元素
@@ -661,19 +662,84 @@ async function applyFormat(command) {
         const newRange = document.createRange();
         const selection = window.getSelection();
         
+        // 辅助函数：检查节点是否在格式标签内
+        function isInFormatTag(node) {
+            const formatTags = ['EM', 'I', 'STRONG', 'B', 'U', 'S', 'STRIKE', 'DEL', 'CODE', 'MARK', 'SUP', 'SUB'];
+            let parent = node.nodeType === Node.TEXT_NODE ? node.parentNode : node;
+            while (parent && parent !== markdownPreview) {
+                if (parent.nodeType === Node.ELEMENT_NODE && formatTags.includes(parent.tagName)) {
+                    return true;
+                }
+                parent = parent.parentNode;
+            }
+            return false;
+        }
+        
+        // 辅助函数：找到最近的块级元素
+        function findBlockParent(node) {
+            const blockTags = ['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'TD', 'TH', 'BLOCKQUOTE', 'UL', 'OL', 'PRE'];
+            let parent = node.nodeType === Node.TEXT_NODE ? node.parentNode : node;
+            while (parent && parent !== markdownPreview) {
+                if (parent.nodeType === Node.ELEMENT_NODE && blockTags.includes(parent.tagName)) {
+                    return parent;
+                }
+                parent = parent.parentNode;
+            }
+            return markdownPreview;
+        }
+        
         if (insertedElement) {
             const parent = insertedElement.parentNode;
             if (parent) {
-                // 在格式化元素之后创建一个文本节点用于放置光标
-                const textNode = document.createTextNode('');
-                if (insertedElement.nextSibling) {
-                    parent.insertBefore(textNode, insertedElement.nextSibling);
+                // 检查插入的元素是否是行内格式标签
+                const inlineFormatTags = ['EM', 'I', 'STRONG', 'B', 'U', 'S', 'STRIKE', 'DEL', 'CODE', 'MARK', 'SUP', 'SUB', 'A'];
+                const isInlineFormat = inlineFormatTags.includes(insertedElement.tagName);
+                
+                if (isInlineFormat) {
+                    // 对于行内格式，需要将光标放在格式标签外部
+                    // 在格式标签之后创建一个文本节点用于放置光标
+                    const textNode = document.createTextNode('\u200B'); // 零宽空格
+                    if (insertedElement.nextSibling) {
+                        parent.insertBefore(textNode, insertedElement.nextSibling);
+                    } else {
+                        parent.appendChild(textNode);
+                    }
+                    
+                    // 检查文本节点是否在格式标签内（理论上不应该，但检查一下）
+                    if (isInFormatTag(textNode)) {
+                        // 如果还在格式标签内，向上移动到块级元素
+                        const blockParent = findBlockParent(textNode);
+                        // 移除刚才创建的文本节点
+                        textNode.remove();
+                        // 在块级元素中创建新的文本节点
+                        const newTextNode = document.createTextNode('\u200B');
+                        blockParent.appendChild(newTextNode);
+                        newRange.setStart(newTextNode, 0);
+                        newRange.setEnd(newTextNode, 0);
+                    } else {
+                        newRange.setStart(textNode, 0);
+                        newRange.setEnd(textNode, 0);
+                    }
                 } else {
-                    parent.appendChild(textNode);
+                    // 对于块级元素，检查是否是列表
+                    if (insertedElement.tagName === 'UL' || insertedElement.tagName === 'OL') {
+                        // 对于列表，光标应该放在第一个列表项内部
+                        const firstLi = insertedElement.querySelector('li');
+                        if (firstLi) {
+                            // 将光标放在第一个li内部，让浏览器自然处理
+                            newRange.setStart(firstLi, 0);
+                            newRange.setEnd(firstLi, 0);
+                        } else {
+                            // 如果没有li，在列表之后放置光标
+                            newRange.setStartAfter(insertedElement);
+                            newRange.setEndAfter(insertedElement);
+                        }
+                    } else {
+                        // 对于其他块级元素，在元素之后放置光标
+                        newRange.setStartAfter(insertedElement);
+                        newRange.setEndAfter(insertedElement);
+                    }
                 }
-                // 将光标设置在文本节点上（位置0，即节点开始）
-                newRange.setStart(textNode, 0);
-                newRange.setEnd(textNode, 0);
             } else {
                 // 如果找不到父节点，直接放在元素之后
                 newRange.setStartAfter(insertedElement);
@@ -684,7 +750,7 @@ async function applyFormat(command) {
             if (range.startContainer && range.startContainer.parentNode) {
                 const parent = range.startContainer.parentNode;
                 // 创建一个文本节点用于放置光标
-                const textNode = document.createTextNode('');
+                const textNode = document.createTextNode('\u200B');
                 if (range.startContainer.nextSibling) {
                     parent.insertBefore(textNode, range.startContainer.nextSibling);
                 } else {
@@ -694,8 +760,10 @@ async function applyFormat(command) {
                 newRange.setEnd(textNode, 0);
             } else {
                 // 最后备用：光标放在预览区域末尾
-                newRange.setStart(markdownPreview, markdownPreview.childNodes.length);
-                newRange.setEnd(markdownPreview, markdownPreview.childNodes.length);
+                const textNode = document.createTextNode('\u200B');
+                markdownPreview.appendChild(textNode);
+                newRange.setStart(textNode, 0);
+                newRange.setEnd(textNode, 0);
             }
         }
         
@@ -705,6 +773,42 @@ async function applyFormat(command) {
         
         // 确保预览区域获得焦点
         markdownPreview.focus();
+        
+        // 使用 execCommand 清除格式状态，避免后续输入继承格式
+        // 这会清除浏览器的格式状态，但不会影响已插入的HTML元素
+        try {
+            document.execCommand('removeFormat', false, null);
+        } catch (e) {
+            // 如果 execCommand 失败，忽略错误
+        }
+        
+        // 再次确保光标位置正确（因为 removeFormat 可能会改变光标位置）
+        setTimeout(() => {
+            const currentSelection = window.getSelection();
+            if (currentSelection.rangeCount > 0) {
+                const currentRange = currentSelection.getRangeAt(0);
+                // 检查光标是否在格式标签内
+                let container = currentRange.startContainer;
+                let node = container.nodeType === Node.TEXT_NODE ? container.parentNode : container;
+                const formatTags = ['EM', 'I', 'STRONG', 'B', 'U', 'S', 'STRIKE', 'DEL', 'CODE', 'MARK', 'SUP', 'SUB'];
+                
+                while (node && node !== markdownPreview) {
+                    if (node.nodeType === Node.ELEMENT_NODE && formatTags.includes(node.tagName)) {
+                        // 光标仍在格式标签内，移出
+                        const blockParent = findBlockParent(node);
+                        const textNode = document.createTextNode('\u200B');
+                        blockParent.appendChild(textNode);
+                        const finalRange = document.createRange();
+                        finalRange.setStart(textNode, 0);
+                        finalRange.setEnd(textNode, 0);
+                        currentSelection.removeAllRanges();
+                        currentSelection.addRange(finalRange);
+                        break;
+                    }
+                    node = node.parentNode;
+                }
+            }
+        }, 0);
         
         // 同步到 textarea
         syncPreviewToTextarea();

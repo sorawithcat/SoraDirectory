@@ -29,7 +29,8 @@ addNewMuluButton.addEventListener("click", async function () {
     let parentIdForFile = "mulu";
     let newLevel = 0;
     
-    if (checkid(currentMuluName, 1) && hasAnyMulu) {
+    // 检查 currentMuluName 是否存在且有效
+    if (currentMuluName && checkid(currentMuluName, 1) && hasAnyMulu) {
         // 有选中目录，在当前目录的同级创建
         currentElement = document.getElementById(currentMuluName);
         currentDirId = currentElement.getAttribute("data-dir-id");
@@ -236,7 +237,8 @@ addNewPotsButton.addEventListener("click", async function () {
     let parentIdForFile = "mulu";
     let newLevel = 0;
     
-    if (checkid(currentMuluName, 1) && hasAnyMulu) {
+    // 检查 currentMuluName 是否存在且有效
+    if (currentMuluName && checkid(currentMuluName, 1) && hasAnyMulu) {
         // 有选中目录，作为子目录添加
         currentElement = document.getElementById(currentMuluName);
         currentDirId = currentElement.getAttribute("data-dir-id");

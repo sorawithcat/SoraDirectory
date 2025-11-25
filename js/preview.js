@@ -89,8 +89,76 @@ if (markdownPreview) {
         }
     });
     
-    markdownPreview.addEventListener("input", function () {
+    markdownPreview.addEventListener("input", function (e) {
         if (isUpdating) return;
+        
+        // 检查光标是否在格式标签内，如果是则移出
+        const selection = window.getSelection();
+        if (selection.rangeCount > 0) {
+            const range = selection.getRangeAt(0);
+            const formatTags = ['EM', 'I', 'STRONG', 'B', 'U', 'S', 'STRIKE', 'DEL', 'CODE', 'MARK', 'SUP', 'SUB'];
+            
+            // 检查光标位置是否在格式标签内
+            let container = range.startContainer;
+            let node = container.nodeType === Node.TEXT_NODE ? container.parentNode : container;
+            
+            // 向上查找格式标签
+            while (node && node !== markdownPreview) {
+                if (node.nodeType === Node.ELEMENT_NODE && formatTags.includes(node.tagName)) {
+                    // 光标在格式标签内，需要移出
+                    // 找到块级父元素
+                    const blockTags = ['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'TD', 'TH', 'BLOCKQUOTE', 'UL', 'OL', 'PRE'];
+                    let blockParent = node.parentNode;
+                    while (blockParent && blockParent !== markdownPreview) {
+                        if (blockParent.nodeType === Node.ELEMENT_NODE && blockTags.includes(blockParent.tagName)) {
+                            break;
+                        }
+                        blockParent = blockParent.parentNode;
+                    }
+                    
+                    if (!blockParent) blockParent = markdownPreview;
+                    
+                    // 在格式标签之后创建文本节点并移动光标
+                    const textNode = document.createTextNode('');
+                    if (node.nextSibling) {
+                        node.parentNode.insertBefore(textNode, node.nextSibling);
+                    } else {
+                        node.parentNode.appendChild(textNode);
+                    }
+                    
+                    // 如果文本节点仍在格式标签内，移到块级元素
+                    let checkNode = textNode.parentNode;
+                    let stillInFormat = false;
+                    while (checkNode && checkNode !== markdownPreview) {
+                        if (checkNode.nodeType === Node.ELEMENT_NODE && formatTags.includes(checkNode.tagName)) {
+                            stillInFormat = true;
+                            break;
+                        }
+                        checkNode = checkNode.parentNode;
+                    }
+                    
+                    if (stillInFormat) {
+                        textNode.remove();
+                        const newTextNode = document.createTextNode('');
+                        blockParent.appendChild(newTextNode);
+                        const newRange = document.createRange();
+                        newRange.setStart(newTextNode, 0);
+                        newRange.setEnd(newTextNode, 0);
+                        selection.removeAllRanges();
+                        selection.addRange(newRange);
+                    } else {
+                        const newRange = document.createRange();
+                        newRange.setStart(textNode, textNode.textContent.length);
+                        newRange.setEnd(textNode, textNode.textContent.length);
+                        selection.removeAllRanges();
+                        selection.addRange(newRange);
+                    }
+                    
+                    break;
+                }
+                node = node.parentNode;
+            }
+        }
         
         // 将普通的 <div> 替换为 <p>（排除列表、表格等特殊元素）
         const divs = markdownPreview.querySelectorAll('div');

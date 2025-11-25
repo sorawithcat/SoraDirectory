@@ -542,7 +542,14 @@ function minToMaxStr(arr = [""]) {
  * @param {string[]} arr - 任意数组，默认为[""]
  */
 function minToMaxStred(arr = [""]) {
+    // 过滤掉 null、undefined 和非字符串值
+    arr = arr.filter(item => item != null && typeof item === 'string');
+    
     arr.sort(function (a, b) {
+        // 确保 a 和 b 都是字符串
+        if (typeof a !== 'string') a = String(a || '');
+        if (typeof b !== 'string') b = String(b || '');
+        
         // 按照每个字符的顺序进行比较
         for (let i = 0; i < Math.min(a.length, b.length); i++) {
             // 按照字符的Unicode编码进行比较
@@ -578,6 +585,15 @@ function allId() {
  * @param {number} findway - 寻找方式，默认为0，其他数字为按首字母和长度查询（不推荐）
  */
 function checkid(idname, fanhui = 0, findway = 0) {
+    // 如果 idname 为 null 或 undefined，直接返回 false
+    if (idname == null || idname === undefined) {
+        if (fanhui == 0) {
+            return false;
+        } else {
+            return false;
+        }
+    }
+    
     let ids = allId()
     if (ids.indexOf(idname) >= 0) {
         console.log(`存在此id名："${idname}"`)
