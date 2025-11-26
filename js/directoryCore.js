@@ -79,9 +79,9 @@ function LoadMulu() {
     
     // 遍历数据创建目录
     for (let i = 0; i < mulufile.length; i++) {
-        if (mulufile[i].length == 4) {
+        if (mulufile[i].length === 4) {
             // 检查保留字
-            if (mulufile[i][2] == "mulufirststep" || mulufile[i][0] == "mulufirststep") {
+            if (mulufile[i][2] === "mulufirststep" || mulufile[i][0] === "mulufirststep") {
                 warning++;
             }
             
@@ -95,7 +95,7 @@ function LoadMulu() {
             }
             
             // 创建目录元素
-            if (i == 0) {
+            if (i === 0) {
                 // 第一个目录，直接添加到 firststep
                 idName = creatDivByClass("firststep", getOneId(10, 0), "mulu");
             } else {
@@ -154,7 +154,7 @@ function LoadMulu() {
     DuplicateMuluHints();
     
     // 输出加载结果
-    if (error == 0 && warning == 0) {
+    if (error === 0 && warning === 0) {
         console.log(`加载完成 - 错误: ${error}, 警告: ${warning}`);
     } else {
         console.warn(`加载完成 - 错误: ${error}, 警告: ${warning}`);

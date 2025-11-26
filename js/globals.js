@@ -9,6 +9,19 @@
 /** 图片最大宽度（像素） */
 const MAX_IMAGE_WIDTH = 800;
 
+// -------------------- 公共工具函数 --------------------
+
+/**
+ * HTML 转义（防止 XSS）
+ * @param {string} text - 原始文本
+ * @returns {string} - 转义后的文本
+ */
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 /** 图片最大高度（像素） */
 const MAX_IMAGE_HEIGHT = 600;
 

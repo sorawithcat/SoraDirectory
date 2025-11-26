@@ -713,14 +713,7 @@ function replaceAll() {
     performSearch();
 }
 
-/**
- * HTML转义
- */
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
+// 注意：escapeHtml 函数已移至 globals.js
 
 // -------------------- 对话框拖动功能 --------------------
 

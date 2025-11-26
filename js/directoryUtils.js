@@ -253,7 +253,7 @@ function DuplicateMuluHints() {
     }
     
     // 显示重复提示（使用 toast）
-    if (duplicateMulu.length != 0) {
+    if (duplicateMulu.length !== 0) {
         for (let i = 0; i < duplicateMulu.length; i++) {
             console.warn(`重复目录名：${duplicateMulu[i]}    重复数量：${elementCount[duplicateMulu[i]] - 1}   其ID为：${duplicateMuluID[i]}    所在位置（悬浮显示）：`);
             console.warn(document.getElementById(duplicateMuluID[i]));
@@ -349,7 +349,7 @@ function bindMuluEvents(muluElement, mulufileIndex = -1) {
     
     // 鼠标点击事件
     muluElement.addEventListener("mouseup", function(e) {
-        if (e.button == 0) {
+        if (e.button === 0) {
             // === 左键点击 ===
             
             // 检查是否点击在三角区域（左侧 20px 内）
@@ -407,7 +407,7 @@ function bindMuluEvents(muluElement, mulufileIndex = -1) {
                 clickTimer = null;
             }, 300);
 
-        } else if (e.button == 2) {
+        } else if (e.button === 2) {
             // === 右键点击 ===
             
             if (clickTimer) {

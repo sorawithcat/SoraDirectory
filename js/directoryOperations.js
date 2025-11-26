@@ -5,113 +5,136 @@
 // ============================================
 
 /**
- * 添加目录按钮点击事件
- * 在当前选中目录的同级位置创建新目录
+ * 创建新目录的核心函数
+ * @param {string} name - 目录名称
+ * @param {boolean} asChild - true: 作为子目录添加, false: 作为同级目录添加
+ * @returns {HTMLElement|null} - 新创建的目录元素，失败返回 null
  */
-addNewMuluButton.addEventListener("click", async function () {
-    // 获取用户输入
-    let nMulu = await customPrompt("输入目录名", "");
-    if (nMulu == "" || nMulu == null) {
-        customAlert("已取消添加");
-        return;
-    }
-    
+function createNewDirectory(name, asChild = false) {
     // 检查重复（仅提示，不阻止）
-    let hasDuplicate = isDuplicateName(nMulu);
+    const hasDuplicate = isDuplicateName(name);
     
-    // 使用随机ID而不是基于名称的ID，避免同名目录冲突
-    let newMuLuName = `mulu_${getOneId(8, 2)}`;
-    let idName;
+    // 使用随机ID避免同名目录冲突
+    const newMuLuName = `mulu_${getOneId(8, 2)}`;
     
     // 获取当前状态
-    let allMulus = document.querySelectorAll(".mulu");
-    let hasAnyMulu = allMulus.length > 0;
+    const allMulus = document.querySelectorAll(".mulu");
+    const hasAnyMulu = allMulus.length > 0;
     
     let currentElement = null;
     let currentDirId = null;
     let currentParentId = null;
     let parentIdForFile = "mulu";
     let newLevel = 0;
+    let idName;
     
     // 确定插入位置和层级
     if (currentMuluName && checkid(currentMuluName, 1) && hasAnyMulu) {
-        // 有选中目录，在同级创建
         currentElement = document.getElementById(currentMuluName);
         currentDirId = currentElement.getAttribute("data-dir-id");
         currentParentId = currentElement.getAttribute("data-parent-id");
         
-        parentIdForFile = currentParentId || "mulu";
-        if (currentParentId === "mulu" || !currentParentId) {
-            parentIdForFile = "mulu";
-        }
-        
-        let parentLevel = currentElement.getAttribute("data-level") || 0;
-        newLevel = parseInt(parentLevel);
-    } else {
-        // 没有选中目录，创建根目录
-        parentIdForFile = "mulu";
-        newLevel = 0;
-    }
-    
-    // 查找同级目录，确定插入位置
-    let siblings = [];
-    if (currentParentId && currentElement) {
-        siblings = findChildElementsByParentId(currentParentId);
-    } else {
-        // 顶级目录
-        for (let i = 0; i < allMulus.length; i++) {
-            let pId = allMulus[i].getAttribute("data-parent-id");
-            if (!pId || pId === "mulu") {
-                siblings.push(allMulus[i]);
+        if (asChild) {
+            // 作为子目录添加
+            parentIdForFile = currentDirId || "mulu";
+            const parentLevel = parseInt(currentElement.getAttribute("data-level")) || 0;
+            newLevel = parentLevel + 1;
+        } else {
+            // 作为同级目录添加
+            parentIdForFile = currentParentId || "mulu";
+            if (currentParentId === "mulu" || !currentParentId) {
+                parentIdForFile = "mulu";
             }
+            newLevel = parseInt(currentElement.getAttribute("data-level")) || 0;
         }
     }
     
     // 创建 DOM 元素
-    // 需要找到当前目录及其所有后代的最后一个元素，在其后插入
     if (currentElement) {
-        // 获取当前目录及其所有后代
-        let lastDescendant = currentElement;
-        if (typeof getDescendantElements === 'function') {
-            let descendants = getDescendantElements(currentElement);
-            lastDescendant = descendants[descendants.length - 1];
+        if (asChild) {
+            // 子目录：插入到当前目录后面
+            idName = creatDivByIdBefore(currentMuluName, getOneId(10, 0), "mulu");
+        } else {
+            // 同级目录：插入到当前目录及其所有后代之后
+            let lastDescendant = currentElement;
+            if (typeof getDescendantElements === 'function') {
+                const descendants = getDescendantElements(currentElement);
+                lastDescendant = descendants[descendants.length - 1];
+            }
+            idName = creatDivByIdBefore(lastDescendant.id, getOneId(10, 0), "mulu");
         }
-        idName = creatDivByIdBefore(lastDescendant.id, getOneId(10, 0), "mulu");
     } else {
         idName = creatDivByClass("firststep", getOneId(10, 0), "mulu");
     }
     
     // 添加到数据数组
-    mulufile.push([parentIdForFile, nMulu, newMuLuName, `${nMulu}`]);
+    mulufile.push([parentIdForFile, name, newMuLuName, name]);
 
     // 配置新目录元素
-    let newMulu = document.querySelector(`#${idName}`);
-    newMulu.innerHTML = nMulu;
+    const newMulu = document.querySelector(`#${idName}`);
+    newMulu.innerHTML = name;
     newMulu.setAttribute("data-level", newLevel);
     setLevelPadding(newMulu, newLevel);
     newMulu.setAttribute("data-dir-id", newMuLuName);
-    newMulu.setAttribute("data-parent-id", parentIdForFile);
+    newMulu.setAttribute("data-parent-id", asChild ? (currentDirId || parentIdForFile) : parentIdForFile);
     
     // 设置颜色小球
     setParentColorBall(newMulu);
     
     // 设置显示状态
-    if (siblings.length > 0 && siblings[0] !== newMulu) {
-        newMulu.style.display = siblings[0].style.display || "block";
-    } else {
+    if (asChild) {
+        // 子目录：更新父目录的 has-children 标记并确保展开
+        if (currentElement && currentDirId) {
+            if (!currentElement.classList.contains("has-children")) {
+                currentElement.classList.add("has-children");
+            }
+            if (!currentElement.classList.contains("expanded")) {
+                currentElement.classList.add("expanded");
+                toggleChildDirectories(currentDirId, true);
+            }
+        }
         newMulu.style.display = "block";
+    } else {
+        // 同级目录：继承同级目录的显示状态
+        const siblings = currentParentId && currentElement 
+            ? findChildElementsByParentId(currentParentId)
+            : Array.from(allMulus).filter(m => {
+                const pId = m.getAttribute("data-parent-id");
+                return !pId || pId === "mulu";
+            });
+        
+        if (siblings.length > 0 && siblings[0] !== newMulu) {
+            newMulu.style.display = siblings[0].style.display || "block";
+        } else {
+            newMulu.style.display = "block";
+        }
     }
     
     // 绑定事件
     bindMuluEvents(newMulu);
     
-    // 自动选中新添加的目录
+    // 显示重复提示
+    if (hasDuplicate) {
+        showToast("已存在同名目录", "warning", 2500);
+    }
+    
+    return newMulu;
+}
+
+/**
+ * 选中并显示新创建的目录
+ * @param {HTMLElement} newMulu - 新创建的目录元素
+ */
+function selectNewDirectory(newMulu) {
+    // 保存之前选中目录的内容
     if (currentMuluName) {
-        let oldMulu = document.getElementById(currentMuluName);
+        const oldMulu = document.getElementById(currentMuluName);
         if (oldMulu) {
-            syncPreviewToTextarea(); // 保存之前选中目录的内容
+            syncPreviewToTextarea();
         }
     }
+    
+    // 选中新目录
     RemoveOtherSelect();
     newMulu.classList.add("select");
     currentMuluName = newMulu.id;
@@ -119,10 +142,22 @@ addNewMuluButton.addEventListener("click", async function () {
     isUpdating = true;
     updateMarkdownPreview();
     isUpdating = false;
+}
+
+/**
+ * 添加目录按钮点击事件
+ * 在当前选中目录的同级位置创建新目录
+ */
+addNewMuluButton.addEventListener("click", async function () {
+    const name = await customPrompt("输入目录名", "");
+    if (name === "" || name === null) {
+        customAlert("已取消添加");
+        return;
+    }
     
-    // 显示重复提示（使用 toast）
-    if (hasDuplicate) {
-        showToast("已存在同名目录", "warning", 2500);
+    const newMulu = createNewDirectory(name, false);
+    if (newMulu) {
+        selectNewDirectory(newMulu);
     }
 });
 
@@ -131,102 +166,14 @@ addNewMuluButton.addEventListener("click", async function () {
  * 在当前选中目录下创建子目录
  */
 addNewPotsButton.addEventListener("click", async function () {
-    // 获取用户输入
-    let nMulu = await customPrompt("输入节点名", "");
-    if (nMulu == "" || nMulu == null) {
+    const name = await customPrompt("输入节点名", "");
+    if (name === "" || name === null) {
         customAlert("已取消添加");
         return;
     }
     
-    // 检查重复（仅提示，不阻止）
-    let hasDuplicate = isDuplicateName(nMulu);
-    
-    // 使用随机ID而不是基于名称的ID，避免同名目录冲突
-    let newMuLuName = `mulu_${getOneId(8, 2)}`;
-    let idName;
-    
-    // 获取当前状态
-    let allMulus = document.querySelectorAll(".mulu");
-    let hasAnyMulu = allMulus.length > 0;
-    
-    let currentElement = null;
-    let currentDirId = null;
-    let parentIdForFile = "mulu";
-    let newLevel = 0;
-    
-    // 确定插入位置和层级
-    if (currentMuluName && checkid(currentMuluName, 1) && hasAnyMulu) {
-        // 有选中目录，作为其子目录添加
-        currentElement = document.getElementById(currentMuluName);
-        currentDirId = currentElement.getAttribute("data-dir-id");
-        
-        parentIdForFile = currentDirId || "mulu";
-        
-        let parentLevel = currentElement.getAttribute("data-level") || 0;
-        newLevel = parseInt(parentLevel) + 1;
-    } else {
-        // 没有选中目录，创建根目录
-        parentIdForFile = "mulu";
-        newLevel = 0;
-    }
-    
-    // 创建 DOM 元素
-    if (currentElement) {
-        idName = creatDivByIdBefore(currentMuluName, getOneId(10, 0), "mulu");
-    } else {
-        idName = creatDivByClass("firststep", getOneId(10, 0), "mulu");
-    }
-    
-    // 添加到数据数组
-    mulufile.push([parentIdForFile, nMulu, newMuLuName, `${nMulu}`]);
-    
-    // 配置新目录元素
-    let newMulu = document.querySelector(`#${idName}`);
-    newMulu.innerHTML = nMulu;
-    newMulu.setAttribute("data-level", newLevel);
-    setLevelPadding(newMulu, newLevel);
-    newMulu.setAttribute("data-dir-id", newMuLuName);
-    newMulu.setAttribute("data-parent-id", currentDirId || parentIdForFile);
-    
-    // 设置颜色小球
-    setParentColorBall(newMulu);
-    
-    // 更新父目录的 has-children 标记并确保展开
-    if (currentElement && currentDirId) {
-        if (!currentElement.classList.contains("has-children")) {
-            currentElement.classList.add("has-children");
-        }
-        // 如果父目录是收缩的，展开它
-        if (!currentElement.classList.contains("expanded")) {
-            currentElement.classList.add("expanded");
-            // 展开已有的子目录
-            toggleChildDirectories(currentDirId, true);
-        }
-    }
-        
-    // 新添加的节点始终显示
-    newMulu.style.display = "block";
-    
-    // 绑定事件
-    bindMuluEvents(newMulu);
-    
-    // 自动选中新添加的节点
-    if (currentMuluName) {
-        let oldMulu = document.getElementById(currentMuluName);
-        if (oldMulu) {
-            syncPreviewToTextarea(); // 保存之前选中目录的内容
-        }
-    }
-    RemoveOtherSelect();
-    newMulu.classList.add("select");
-    currentMuluName = newMulu.id;
-    jiedianwords.value = findMulufileData(newMulu);
-    isUpdating = true;
-    updateMarkdownPreview();
-    isUpdating = false;
-    
-    // 显示重复提示（使用 toast）
-    if (hasDuplicate) {
-        showToast("已存在同名目录", "warning", 2500);
+    const newMulu = createNewDirectory(name, true);
+    if (newMulu) {
+        selectNewDirectory(newMulu);
     }
 });
