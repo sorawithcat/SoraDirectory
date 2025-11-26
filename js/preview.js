@@ -164,6 +164,36 @@ if (markdownPreview) {
     });
     
     /**
+     * 防抖的数据同步函数（减少 DOM 操作频率）
+     */
+    const debouncedSync = debounce(syncPreviewToTextarea, 150);
+    
+    /**
+     * 防抖的 DIV 转 P 操作
+     */
+    const debouncedDivToP = debounce(function() {
+        const divs = markdownPreview.querySelectorAll('div:not([class])');
+        divs.forEach(div => {
+            if (div.closest('ul, ol, table, blockquote, h1, h2, h3, h4, h5, h6, pre, code')) {
+                return;
+            }
+            
+            const hasBlockChildren = Array.from(div.children).some(child => 
+                ['DIV', 'P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'UL', 'OL', 'BLOCKQUOTE', 'TABLE', 'PRE', 'CODE'].includes(child.tagName)
+            );
+            
+            if (!hasBlockChildren) {
+                const p = document.createElement('p');
+                Array.from(div.attributes).forEach(attr => {
+                    p.setAttribute(attr.name, attr.value);
+                });
+                p.innerHTML = div.innerHTML;
+                div.parentNode.replaceChild(p, div);
+            }
+        });
+    }, 200);
+    
+    /**
      * 输入事件：处理格式标签和 DIV 转换
      */
     markdownPreview.addEventListener("input", function (e) {
@@ -235,28 +265,11 @@ if (markdownPreview) {
             }
         }
         
-        // 将普通 DIV 替换为 P
-        const divs = markdownPreview.querySelectorAll('div');
-        divs.forEach(div => {
-            if (div.closest('ul, ol, table, blockquote, h1, h2, h3, h4, h5, h6, pre, code')) {
-                return;
-            }
-            
-            const hasBlockChildren = Array.from(div.children).some(child => 
-                ['DIV', 'P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'UL', 'OL', 'BLOCKQUOTE', 'TABLE', 'PRE', 'CODE'].includes(child.tagName)
-            );
-            
-            if (!hasBlockChildren) {
-                const p = document.createElement('p');
-                Array.from(div.attributes).forEach(attr => {
-                    p.setAttribute(attr.name, attr.value);
-                });
-                p.innerHTML = div.innerHTML;
-                div.parentNode.replaceChild(p, div);
-            }
-        });
+        // 使用防抖的 DIV 转 P
+        debouncedDivToP();
         
-        syncPreviewToTextarea();
+        // 使用防抖的数据同步
+        debouncedSync();
     });
     
     /**

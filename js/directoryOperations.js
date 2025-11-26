@@ -69,6 +69,9 @@ function createNewDirectory(name, asChild = false) {
     
     // 添加到数据数组
     mulufile.push([parentIdForFile, name, newMuLuName, name]);
+    
+    // 更新索引缓存
+    mulufileIndex.set(newMuLuName, mulufile.length - 1);
 
     // 配置新目录元素
     const newMulu = document.querySelector(`#${idName}`);

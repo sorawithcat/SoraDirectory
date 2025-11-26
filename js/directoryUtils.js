@@ -114,44 +114,37 @@ function setParentColorBall(element) {
 
 /**
  * 更新目录数据（基于 data-dir-id 查找）
+ * 使用 Map 缓存加速查找
  * @param {HTMLElement} element - 目录 DOM 元素
  * @param {string} newContent - 新的内容
  * @returns {boolean} - 是否更新成功
  */
 function updateMulufileData(element, newContent) {
-    let dirId = element.getAttribute("data-dir-id");
-    
+    const dirId = element.getAttribute("data-dir-id");
     if (!dirId) return false;
     
-    for (let i = 0; i < mulufile.length; i++) {
-        let item = mulufile[i];
-        // 只使用 dirId 查找，因为 dirId 是唯一的
-        if (item.length === 4 && item[2] === dirId) {
-            mulufile[i][3] = newContent;
-            return true;
-        }
+    // 优先使用缓存查找
+    const data = getMulufileByDirId(dirId);
+    if (data) {
+        data[3] = newContent;
+        return true;
     }
     return false;
 }
 
 /**
  * 查找目录数据（基于 data-dir-id 查找）
+ * 使用 Map 缓存加速查找
  * @param {HTMLElement} element - 目录 DOM 元素
  * @returns {string} - 目录内容，未找到返回空字符串
  */
 function findMulufileData(element) {
-    let dirId = element.getAttribute("data-dir-id");
-    
+    const dirId = element.getAttribute("data-dir-id");
     if (!dirId) return "";
     
-    for (let i = 0; i < mulufile.length; i++) {
-        let item = mulufile[i];
-        // 只使用 dirId 查找，因为 dirId 是唯一的
-        if (item.length === 4 && item[2] === dirId) {
-            return item[3];
-        }
-    }
-    return "";
+    // 使用缓存查找
+    const data = getMulufileByDirId(dirId);
+    return data ? data[3] : "";
 }
 
 /**

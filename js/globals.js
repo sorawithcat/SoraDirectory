@@ -22,6 +22,53 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+/**
+ * 防抖函数 - 延迟执行，多次调用只执行最后一次
+ * @param {Function} func - 要执行的函数
+ * @param {number} wait - 等待时间（毫秒）
+ * @returns {Function} - 防抖后的函数
+ */
+function debounce(func, wait = 150) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func.apply(this, args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
+/**
+ * 节流函数 - 限制执行频率
+ * @param {Function} func - 要执行的函数
+ * @param {number} limit - 时间间隔（毫秒）
+ * @returns {Function} - 节流后的函数
+ */
+function throttle(func, limit = 100) {
+    let inThrottle;
+    return function executedFunction(...args) {
+        if (!inThrottle) {
+            func.apply(this, args);
+            inThrottle = true;
+            setTimeout(() => inThrottle = false, limit);
+        }
+    };
+}
+
+/**
+ * 使用 requestAnimationFrame 优化的批量 DOM 更新
+ * @param {Function} callback - 要执行的回调函数
+ */
+function batchDOMUpdate(callback) {
+    if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(callback);
+    } else {
+        setTimeout(callback, 16); // 降级到 ~60fps
+    }
+}
+
 /** 图片最大高度（像素） */
 const MAX_IMAGE_HEIGHT = 600;
 
@@ -77,6 +124,42 @@ function limitImageSize(img, maxWidth = MAX_IMAGE_WIDTH, maxHeight = MAX_IMAGE_H
 
 /** 目录数据数组，格式：[[父ID, 名称, ID, 内容], ...] */
 let mulufile = [];
+
+/** 目录数据索引缓存（通过 dirId 快速查找） */
+const mulufileIndex = new Map();
+
+/**
+ * 重建 mulufile 索引缓存
+ * 在 mulufile 发生变化后调用
+ */
+function rebuildMulufileIndex() {
+    mulufileIndex.clear();
+    for (let i = 0; i < mulufile.length; i++) {
+        if (mulufile[i].length === 4) {
+            mulufileIndex.set(mulufile[i][2], i);
+        }
+    }
+}
+
+/**
+ * 通过 dirId 快速查找 mulufile 中的数据
+ * @param {string} dirId - 目录 ID
+ * @returns {Array|null} - 目录数据或 null
+ */
+function getMulufileByDirId(dirId) {
+    if (!dirId) return null;
+    const index = mulufileIndex.get(dirId);
+    if (index !== undefined && mulufile[index]) {
+        return mulufile[index];
+    }
+    // 降级：遍历查找（缓存可能未更新）
+    for (let i = 0; i < mulufile.length; i++) {
+        if (mulufile[i].length === 4 && mulufile[i][2] === dirId) {
+            return mulufile[i];
+        }
+    }
+    return null;
+}
 
 /** 当前选中的目录元素ID */
 let currentMuluName = null;

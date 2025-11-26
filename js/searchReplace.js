@@ -506,11 +506,13 @@ function highlightTextInElement(element, searchText, caseSensitive, wholeWord, u
         }
     });
     
-    // 滚动到当前高亮项
-    const currentHighlight = element.querySelector('.search-highlight-current');
-    if (currentHighlight) {
-        currentHighlight.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
+    // 使用 requestAnimationFrame 滚动到当前高亮项
+    batchDOMUpdate(() => {
+        const currentHighlight = element.querySelector('.search-highlight-current');
+        if (currentHighlight) {
+            currentHighlight.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    });
 }
 
 /**

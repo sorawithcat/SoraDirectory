@@ -137,6 +137,9 @@ deleteMulu.addEventListener("click", function () {
         // 删除 DOM 元素
         nowchild.remove();
         
+        // 重建索引缓存
+        rebuildMulufileIndex();
+        
         // 重置状态
         currentMuluName = null;
         jiedianwords.value = "";

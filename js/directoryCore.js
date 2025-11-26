@@ -150,6 +150,9 @@ function LoadMulu() {
         }
     }
     
+    // 重建索引缓存
+    rebuildMulufileIndex();
+    
     // 检查重复目录名
     DuplicateMuluHints();
     
