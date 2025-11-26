@@ -264,6 +264,7 @@ if (saveAsBtn) {
         // 另存为格式选项
         const saveAsOptions = [
             { value: 'webpage', label: '网页 (.html) - 独立可浏览的网页' },
+            { value: 'word', label: 'Word 文档 (.docx)（不完善，慎用）' },
             { value: 'custom', label: '自定义文件名 - 手动输入文件名和格式' }
         ];
         
@@ -275,7 +276,10 @@ if (saveAsBtn) {
             return;
         }
         
-        if (saveType === 'webpage') {
+        if (saveType === 'word') {
+            // 导出为 Word 文档
+            await handleExportToWord();
+        } else if (saveType === 'webpage') {
             // 另存为网页
             await handleSaveAsWebpage();
         } else if (saveType === 'custom') {

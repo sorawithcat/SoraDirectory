@@ -1001,3 +1001,1019 @@ async function handleSaveAsWebpage() {
     URL.revokeObjectURL(objectURL);
     showToast(`已导出网页：${filename}`, 'success', 2500);
 }
+
+/**
+ * 导出为 Word 文档
+ * 目录放在最前面，然后是内容
+ */
+async function handleExportToWord() {
+    // 检查 docx 库是否可用
+    if (typeof docx === 'undefined') {
+        showToast('Word 导出功能加载失败，请检查网络连接', 'error', 3000);
+        return;
+    }
+    
+    // 从输入框获取文件名
+    let baseName = (fileNameInput && fileNameInput.value.trim()) || "soralist";
+    baseName = baseName.replace(/\.(json|txt|xml|csv|html|docx)$/i, '');
+    let filename = `${baseName}.docx`;
+    
+    // 解构 docx 库的组件
+    const { Document, Packer, Paragraph, TextRun, HeadingLevel, TableOfContents, 
+            Table, TableRow, TableCell, WidthType, BorderStyle, 
+            AlignmentType, convertInchesToTwip, PageBreak, ExternalHyperlink,
+            ImageRun, HorizontalRule, Bookmark } = docx;
+    
+    // 构建目录树结构
+    function buildDirectoryTree(muluData) {
+        const tree = [];
+        const idMap = {};
+        
+        // 创建ID到数据的映射
+        muluData.forEach((item, index) => {
+            if (item.length === 4) {
+                idMap[item[2]] = {
+                    parentId: item[0],
+                    name: item[1],
+                    id: item[2],
+                    content: item[3],
+                    children: [],
+                    order: index
+                };
+            }
+        });
+        
+        // 构建树形结构
+        Object.values(idMap).forEach(item => {
+            if (item.parentId === 'mulu') {
+                tree.push(item);
+            } else if (idMap[item.parentId]) {
+                idMap[item.parentId].children.push(item);
+            }
+        });
+        
+        return tree;
+    }
+    
+    // 获取所有目录的扁平列表（按树形顺序）
+    function flattenTree(tree, level = 0) {
+        const result = [];
+        tree.forEach(item => {
+            result.push({ ...item, level });
+            if (item.children && item.children.length > 0) {
+                result.push(...flattenTree(item.children, level + 1));
+            }
+        });
+        return result;
+    }
+    
+    // 将 base64 图片数据转换为 Uint8Array
+    function base64ToUint8Array(base64) {
+        // 移除 data URL 前缀
+        const base64Data = base64.replace(/^data:image\/[a-z]+;base64,/, '');
+        const binaryString = atob(base64Data);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+        }
+        return bytes;
+    }
+    
+    // 从 URL 获取图片数据
+    async function fetchImageAsUint8Array(url) {
+        try {
+            const response = await fetch(url);
+            const blob = await response.blob();
+            const arrayBuffer = await blob.arrayBuffer();
+            return new Uint8Array(arrayBuffer);
+        } catch (error) {
+            console.error('获取图片失败:', url, error);
+            return null;
+        }
+    }
+    
+    // 收集所有图片并预加载
+    async function collectAndLoadImages(html) {
+        const imageMap = new Map();
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = html;
+        
+        const images = tempDiv.querySelectorAll('img');
+        const loadPromises = [];
+        
+        for (const img of images) {
+            const src = img.getAttribute('src');
+            if (!src || imageMap.has(src)) continue;
+            
+            if (src.startsWith('data:image/')) {
+                // base64 图片
+                try {
+                    const imageData = base64ToUint8Array(src);
+                    imageMap.set(src, { data: imageData, width: img.naturalWidth || 400, height: img.naturalHeight || 300 });
+                } catch (e) {
+                    console.error('解析 base64 图片失败:', e);
+                }
+            } else {
+                // URL 图片
+                loadPromises.push(
+                    fetchImageAsUint8Array(src).then(data => {
+                        if (data) {
+                            imageMap.set(src, { data: data, width: img.naturalWidth || 400, height: img.naturalHeight || 300 });
+                        }
+                    })
+                );
+            }
+        }
+        
+        await Promise.all(loadPromises);
+        return imageMap;
+    }
+    
+    // 将 HTML 内容转换为 Word 段落
+    async function htmlToWordParagraphs(html, imageMap, baseLevel = 0) {
+        const paragraphs = [];
+        
+        if (!html || html.trim() === '') {
+            paragraphs.push(new Paragraph({ text: '' }));
+            return paragraphs;
+        }
+        
+        // 创建临时 DOM 解析 HTML
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = html;
+        
+        // 解析 CSS 颜色值为十六进制
+        function parseColor(color) {
+            if (!color) return null;
+            // 已经是十六进制
+            if (color.startsWith('#')) {
+                return color.replace('#', '').toUpperCase();
+            }
+            // rgb/rgba 格式
+            const rgbMatch = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+            if (rgbMatch) {
+                const r = parseInt(rgbMatch[1]).toString(16).padStart(2, '0');
+                const g = parseInt(rgbMatch[2]).toString(16).padStart(2, '0');
+                const b = parseInt(rgbMatch[3]).toString(16).padStart(2, '0');
+                return (r + g + b).toUpperCase();
+            }
+            // 命名颜色映射
+            const colorMap = {
+                'red': 'FF0000', 'blue': '0000FF', 'green': '008000', 'yellow': 'FFFF00',
+                'orange': 'FFA500', 'purple': '800080', 'pink': 'FFC0CB', 'black': '000000',
+                'white': 'FFFFFF', 'gray': '808080', 'grey': '808080', 'cyan': '00FFFF',
+                'magenta': 'FF00FF', 'brown': 'A52A2A', 'navy': '000080', 'teal': '008080'
+            };
+            return colorMap[color.toLowerCase()] || null;
+        }
+        
+        // 递归处理 DOM 节点
+        function processNode(node, currentStyles = {}) {
+            const textRuns = [];
+            
+            if (node.nodeType === Node.TEXT_NODE) {
+                const text = node.textContent;
+                if (text.trim() || text.includes(' ')) {
+                    const runOptions = {
+                        text: text,
+                        bold: currentStyles.bold || false,
+                        italics: currentStyles.italic || false,
+                        underline: currentStyles.underline ? {} : undefined,
+                        strike: currentStyles.strikethrough || false,
+                        highlight: currentStyles.highlight ? 'yellow' : undefined,
+                        superScript: currentStyles.superscript || false,
+                        subScript: currentStyles.subscript || false
+                    };
+                    // 添加字体颜色
+                    if (currentStyles.color) {
+                        runOptions.color = currentStyles.color;
+                    }
+                    // 添加字体大小
+                    if (currentStyles.fontSize) {
+                        runOptions.size = currentStyles.fontSize;
+                    }
+                    // 行内代码样式
+                    if (currentStyles.code) {
+                        runOptions.font = { name: 'Consolas' };
+                        runOptions.shading = { fill: 'F0F0F0' };
+                    }
+                    textRuns.push(new TextRun(runOptions));
+                }
+            } else if (node.nodeType === Node.ELEMENT_NODE) {
+                const tagName = node.tagName.toLowerCase();
+                const newStyles = { ...currentStyles };
+                
+                // 从 style 属性解析样式
+                const style = node.style;
+                if (style) {
+                    if (style.color) {
+                        const parsedColor = parseColor(style.color);
+                        if (parsedColor) newStyles.color = parsedColor;
+                    }
+                    if (style.backgroundColor && style.backgroundColor !== 'transparent') {
+                        newStyles.highlight = true;
+                    }
+                    if (style.fontSize) {
+                        // 转换 px 到 half-points (1pt = 2 half-points)
+                        const pxMatch = style.fontSize.match(/(\d+)px/);
+                        if (pxMatch) {
+                            newStyles.fontSize = parseInt(pxMatch[1]) * 1.5; // 近似转换
+                        }
+                    }
+                }
+                
+                // 更新样式
+                switch (tagName) {
+                    case 'strong':
+                    case 'b':
+                        newStyles.bold = true;
+                        break;
+                    case 'em':
+                    case 'i':
+                        newStyles.italic = true;
+                        break;
+                    case 'u':
+                        newStyles.underline = true;
+                        break;
+                    case 's':
+                    case 'del':
+                    case 'strike':
+                        newStyles.strikethrough = true;
+                        break;
+                    case 'mark':
+                        newStyles.highlight = true;
+                        break;
+                    case 'sup':
+                        newStyles.superscript = true;
+                        break;
+                    case 'sub':
+                        newStyles.subscript = true;
+                        break;
+                    case 'code':
+                        // 行内代码（不在 pre 内）
+                        newStyles.code = true;
+                        break;
+                    case 'spoiler':
+                        // spoiler 标签显示为灰色背景
+                        newStyles.highlight = true;
+                        break;
+                    case 'a':
+                        // 链接样式：蓝色下划线
+                        newStyles.color = '0066CC';
+                        newStyles.underline = true;
+                        break;
+                    case 'span':
+                        // span 的样式已在上面通过 style 属性处理
+                        break;
+                    case 'br':
+                        // 换行
+                        textRuns.push(new TextRun({ break: 1 }));
+                        return textRuns;
+                }
+                
+                // 处理子节点
+                for (const child of node.childNodes) {
+                    textRuns.push(...processNode(child, newStyles));
+                }
+            }
+            
+            return textRuns;
+        }
+        
+        // 处理块级元素
+        function processBlockElement(element) {
+            const tagName = element.tagName ? element.tagName.toLowerCase() : '';
+            
+            switch (tagName) {
+                case 'h1':
+                    paragraphs.push(new Paragraph({
+                        children: processNode(element),
+                        heading: HeadingLevel.HEADING_1,
+                        spacing: { before: 400, after: 200 }
+                    }));
+                    break;
+                case 'h2':
+                    paragraphs.push(new Paragraph({
+                        children: processNode(element),
+                        heading: HeadingLevel.HEADING_2,
+                        spacing: { before: 350, after: 150 }
+                    }));
+                    break;
+                case 'h3':
+                    paragraphs.push(new Paragraph({
+                        children: processNode(element),
+                        heading: HeadingLevel.HEADING_3,
+                        spacing: { before: 300, after: 100 }
+                    }));
+                    break;
+                case 'h4':
+                    paragraphs.push(new Paragraph({
+                        children: processNode(element),
+                        heading: HeadingLevel.HEADING_4,
+                        spacing: { before: 250, after: 100 }
+                    }));
+                    break;
+                case 'h5':
+                    paragraphs.push(new Paragraph({
+                        children: processNode(element),
+                        heading: HeadingLevel.HEADING_5,
+                        spacing: { before: 200, after: 100 }
+                    }));
+                    break;
+                case 'h6':
+                    paragraphs.push(new Paragraph({
+                        children: processNode(element),
+                        heading: HeadingLevel.HEADING_6,
+                        spacing: { before: 200, after: 100 }
+                    }));
+                    break;
+                case 'p':
+                    // 检查段落中是否包含图片
+                    const pImages = element.querySelectorAll('img');
+                    if (pImages.length > 0) {
+                        // 如果包含图片，需要分开处理文本和图片
+                        // 先处理图片之前的文本
+                        let currentNode = element.firstChild;
+                        let textRuns = [];
+                        
+                        while (currentNode) {
+                            if (currentNode.nodeType === Node.ELEMENT_NODE && currentNode.tagName.toLowerCase() === 'img') {
+                                // 先添加之前积累的文本
+                                if (textRuns.length > 0) {
+                                    paragraphs.push(new Paragraph({
+                                        children: textRuns,
+                                        spacing: { before: 100, after: 100 }
+                                    }));
+                                    textRuns = [];
+                                }
+                                
+                                // 处理图片
+                                const pImgSrc = currentNode.getAttribute('src');
+                                if (pImgSrc && imageMap.has(pImgSrc)) {
+                                    const pImgInfo = imageMap.get(pImgSrc);
+                                    try {
+                                        let pImgWidth = pImgInfo.width || 400;
+                                        let pImgHeight = pImgInfo.height || 300;
+                                        const pMaxWidth = 500;
+                                        
+                                        if (pImgWidth > pMaxWidth) {
+                                            const ratio = pMaxWidth / pImgWidth;
+                                            pImgWidth = pMaxWidth;
+                                            pImgHeight = Math.round(pImgHeight * ratio);
+                                        }
+                                        
+                                        paragraphs.push(new Paragraph({
+                                            children: [new ImageRun({
+                                                data: pImgInfo.data,
+                                                transformation: {
+                                                    width: pImgWidth,
+                                                    height: pImgHeight
+                                                }
+                                            })],
+                                            alignment: AlignmentType.CENTER,
+                                            spacing: { before: 100, after: 100 }
+                                        }));
+                                    } catch (pImgError) {
+                                        console.error('添加段落内图片到 Word 失败:', pImgError);
+                                    }
+                                }
+                            } else {
+                                // 处理文本或其他元素
+                                textRuns.push(...processNode(currentNode));
+                            }
+                            currentNode = currentNode.nextSibling;
+                        }
+                        
+                        // 添加剩余的文本
+                        if (textRuns.length > 0) {
+                            paragraphs.push(new Paragraph({
+                                children: textRuns,
+                                spacing: { before: 100, after: 100 }
+                            }));
+                        }
+                    } else {
+                        const pChildren = processNode(element);
+                        if (pChildren.length > 0) {
+                            paragraphs.push(new Paragraph({
+                                children: pChildren,
+                                spacing: { before: 100, after: 100 }
+                            }));
+                        }
+                    }
+                    break;
+                case 'ul':
+                case 'ol':
+                    // 处理列表（支持嵌套和任务列表）
+                    function processListItems(listElement, listType, level = 0) {
+                        const items = listElement.querySelectorAll(':scope > li');
+                        items.forEach((li, index) => {
+                            // 检查是否是任务列表项
+                            const checkbox = li.querySelector(':scope > input[type="checkbox"]');
+                            const isTaskItem = checkbox !== null;
+                            const isChecked = checkbox ? checkbox.checked : false;
+                            
+                            let bullet;
+                            if (isTaskItem) {
+                                bullet = isChecked ? '☑ ' : '☐ ';
+                            } else {
+                                bullet = listType === 'ul' ? '• ' : `${index + 1}. `;
+                            }
+                            
+                            // 处理列表项内容（排除嵌套列表）
+                            const liContentRuns = [];
+                            for (const child of li.childNodes) {
+                                if (child.nodeType === Node.ELEMENT_NODE) {
+                                    const childTag = child.tagName.toLowerCase();
+                                    if (childTag === 'ul' || childTag === 'ol') {
+                                        continue; // 嵌套列表单独处理
+                                    }
+                                    if (childTag === 'input' && child.type === 'checkbox') {
+                                        continue; // 跳过 checkbox
+                                    }
+                                }
+                                liContentRuns.push(...processNode(child));
+                            }
+                            
+                            paragraphs.push(new Paragraph({
+                                children: [
+                                    new TextRun({ text: '  '.repeat(level) + bullet }),
+                                    ...liContentRuns
+                                ],
+                                indent: { left: convertInchesToTwip(0.3 * (level + 1)) },
+                                spacing: { before: 50, after: 50 }
+                            }));
+                            
+                            // 处理嵌套列表
+                            const nestedLists = li.querySelectorAll(':scope > ul, :scope > ol');
+                            nestedLists.forEach(nestedList => {
+                                const nestedType = nestedList.tagName.toLowerCase();
+                                processListItems(nestedList, nestedType, level + 1);
+                            });
+                        });
+                    }
+                    processListItems(element, tagName, 0);
+                    break;
+                case 'blockquote':
+                    const quoteChildren = processNode(element);
+                    paragraphs.push(new Paragraph({
+                        children: quoteChildren,
+                        indent: { left: convertInchesToTwip(0.5) },
+                        spacing: { before: 100, after: 100 },
+                        shading: { fill: 'F5F5F5' },
+                        border: {
+                            left: { style: BorderStyle.SINGLE, size: 24, color: 'CCCCCC' }
+                        }
+                    }));
+                    break;
+                case 'pre':
+                    const codeElement = element.querySelector('code') || element;
+                    const codeText = codeElement.textContent || '';
+                    paragraphs.push(new Paragraph({
+                        children: [new TextRun({
+                            text: codeText,
+                            font: { name: 'Consolas' },
+                            size: 20
+                        })],
+                        shading: { fill: 'F6F8FA' },
+                        border: {
+                            top: { style: BorderStyle.SINGLE, size: 1, color: 'D0D7DE' },
+                            bottom: { style: BorderStyle.SINGLE, size: 1, color: 'D0D7DE' },
+                            left: { style: BorderStyle.SINGLE, size: 1, color: 'D0D7DE' },
+                            right: { style: BorderStyle.SINGLE, size: 1, color: 'D0D7DE' }
+                        },
+                        spacing: { before: 100, after: 100 }
+                    }));
+                    break;
+                case 'hr':
+                    paragraphs.push(new Paragraph({
+                        children: [new TextRun({ text: '─'.repeat(50) })],
+                        alignment: AlignmentType.CENTER,
+                        spacing: { before: 200, after: 200 }
+                    }));
+                    break;
+                case 'img':
+                    // 处理图片
+                    const imgSrc = element.getAttribute('src');
+                    if (imgSrc && imageMap.has(imgSrc)) {
+                        const imgInfo = imageMap.get(imgSrc);
+                        try {
+                            // 计算适当的尺寸，最大宽度 500 像素
+                            let imgWidth = imgInfo.width || 400;
+                            let imgHeight = imgInfo.height || 300;
+                            const maxWidth = 500;
+                            
+                            if (imgWidth > maxWidth) {
+                                const ratio = maxWidth / imgWidth;
+                                imgWidth = maxWidth;
+                                imgHeight = Math.round(imgHeight * ratio);
+                            }
+                            
+                            paragraphs.push(new Paragraph({
+                                children: [new ImageRun({
+                                    data: imgInfo.data,
+                                    transformation: {
+                                        width: imgWidth,
+                                        height: imgHeight
+                                    }
+                                })],
+                                alignment: AlignmentType.CENTER,
+                                spacing: { before: 200, after: 200 }
+                            }));
+                        } catch (imgError) {
+                            console.error('添加图片到 Word 失败:', imgError);
+                            paragraphs.push(new Paragraph({
+                                children: [new TextRun({ text: '[图片]', italics: true, color: '999999' })],
+                                alignment: AlignmentType.CENTER,
+                                spacing: { before: 100, after: 100 }
+                            }));
+                        }
+                    } else {
+                        // 图片加载失败，显示占位符
+                        paragraphs.push(new Paragraph({
+                            children: [new TextRun({ text: '[图片]', italics: true, color: '999999' })],
+                            alignment: AlignmentType.CENTER,
+                            spacing: { before: 100, after: 100 }
+                        }));
+                    }
+                    break;
+                case 'figure':
+                    // 处理 figure 元素（包含图片和说明）
+                    const figImg = element.querySelector('img');
+                    const figCaption = element.querySelector('figcaption');
+                    
+                    if (figImg) {
+                        const figImgSrc = figImg.getAttribute('src');
+                        if (figImgSrc && imageMap.has(figImgSrc)) {
+                            const figImgInfo = imageMap.get(figImgSrc);
+                            try {
+                                let figImgWidth = figImgInfo.width || 400;
+                                let figImgHeight = figImgInfo.height || 300;
+                                const figMaxWidth = 500;
+                                
+                                if (figImgWidth > figMaxWidth) {
+                                    const ratio = figMaxWidth / figImgWidth;
+                                    figImgWidth = figMaxWidth;
+                                    figImgHeight = Math.round(figImgHeight * ratio);
+                                }
+                                
+                                paragraphs.push(new Paragraph({
+                                    children: [new ImageRun({
+                                        data: figImgInfo.data,
+                                        transformation: {
+                                            width: figImgWidth,
+                                            height: figImgHeight
+                                        }
+                                    })],
+                                    alignment: AlignmentType.CENTER,
+                                    spacing: { before: 200, after: 100 }
+                                }));
+                            } catch (figImgError) {
+                                console.error('添加 figure 图片到 Word 失败:', figImgError);
+                                paragraphs.push(new Paragraph({
+                                    children: [new TextRun({ text: '[图片]', italics: true, color: '999999' })],
+                                    alignment: AlignmentType.CENTER,
+                                    spacing: { before: 100, after: 100 }
+                                }));
+                            }
+                        }
+                    }
+                    
+                    if (figCaption) {
+                        paragraphs.push(new Paragraph({
+                            children: processNode(figCaption),
+                            alignment: AlignmentType.CENTER,
+                            spacing: { before: 50, after: 200 }
+                        }));
+                    }
+                    break;
+                case 'table':
+                    // 处理表格
+                    const rows = element.querySelectorAll('tr');
+                    if (rows.length > 0) {
+                        const tableRows = [];
+                        let maxCols = 0;
+                        
+                        // 首先确定最大列数
+                        rows.forEach(row => {
+                            const cells = row.querySelectorAll('th, td');
+                            if (cells.length > maxCols) maxCols = cells.length;
+                        });
+                        
+                        rows.forEach((row, rowIndex) => {
+                            const cells = row.querySelectorAll('th, td');
+                            const tableCells = [];
+                            const isHeader = row.parentElement && row.parentElement.tagName.toLowerCase() === 'thead';
+                            
+                            cells.forEach((cell, cellIndex) => {
+                                const isHeaderCell = cell.tagName.toLowerCase() === 'th' || isHeader;
+                                const cellContent = processNode(cell);
+                                
+                                tableCells.push(new TableCell({
+                                    children: [new Paragraph({
+                                        children: cellContent.length > 0 ? cellContent : [new TextRun({ text: '' })],
+                                        alignment: AlignmentType.LEFT
+                                    })],
+                                    width: { size: Math.floor(100 / maxCols), type: WidthType.PERCENTAGE },
+                                    shading: isHeaderCell ? { fill: 'E8E8E8' } : undefined,
+                                    margins: {
+                                        top: convertInchesToTwip(0.05),
+                                        bottom: convertInchesToTwip(0.05),
+                                        left: convertInchesToTwip(0.1),
+                                        right: convertInchesToTwip(0.1)
+                                    }
+                                }));
+                            });
+                            
+                            // 填充空单元格
+                            while (tableCells.length < maxCols) {
+                                tableCells.push(new TableCell({
+                                    children: [new Paragraph({ children: [new TextRun({ text: '' })] })],
+                                    width: { size: Math.floor(100 / maxCols), type: WidthType.PERCENTAGE }
+                                }));
+                            }
+                            
+                            if (tableCells.length > 0) {
+                                tableRows.push(new TableRow({ children: tableCells }));
+                            }
+                        });
+                        
+                        if (tableRows.length > 0) {
+                            // 创建表格对象
+                            const table = new Table({
+                                rows: tableRows,
+                                width: { size: 100, type: WidthType.PERCENTAGE },
+                                borders: {
+                                    top: { style: BorderStyle.SINGLE, size: 1, color: 'CCCCCC' },
+                                    bottom: { style: BorderStyle.SINGLE, size: 1, color: 'CCCCCC' },
+                                    left: { style: BorderStyle.SINGLE, size: 1, color: 'CCCCCC' },
+                                    right: { style: BorderStyle.SINGLE, size: 1, color: 'CCCCCC' },
+                                    insideHorizontal: { style: BorderStyle.SINGLE, size: 1, color: 'CCCCCC' },
+                                    insideVertical: { style: BorderStyle.SINGLE, size: 1, color: 'CCCCCC' }
+                                }
+                            });
+                            // 表格前后添加空段落作为间距
+                            paragraphs.push(new Paragraph({ text: '', spacing: { before: 100 } }));
+                            paragraphs.push(table);
+                            paragraphs.push(new Paragraph({ text: '', spacing: { after: 100 } }));
+                        }
+                    }
+                    break;
+                case 'br':
+                    // 换行
+                    paragraphs.push(new Paragraph({ text: '' }));
+                    break;
+                case 'div':
+                case 'section':
+                case 'article':
+                case 'main':
+                case 'header':
+                case 'footer':
+                case 'aside':
+                case 'nav':
+                    // 容器元素，递归处理子元素
+                    for (const child of element.childNodes) {
+                        if (child.nodeType === Node.TEXT_NODE) {
+                            const text = child.textContent.trim();
+                            if (text) {
+                                paragraphs.push(new Paragraph({
+                                    children: [new TextRun({ text })],
+                                    spacing: { before: 50, after: 50 }
+                                }));
+                            }
+                        } else if (child.nodeType === Node.ELEMENT_NODE) {
+                            processBlockElement(child);
+                        }
+                    }
+                    break;
+                case 'span':
+                case 'a':
+                case 'strong':
+                case 'b':
+                case 'em':
+                case 'i':
+                case 'u':
+                case 's':
+                case 'del':
+                case 'code':
+                case 'mark':
+                case 'sup':
+                case 'sub':
+                    // 内联元素作为块级处理时，包装成段落
+                    const inlineChildren = processNode(element);
+                    if (inlineChildren.length > 0) {
+                        paragraphs.push(new Paragraph({
+                            children: inlineChildren,
+                            spacing: { before: 50, after: 50 }
+                        }));
+                    }
+                    break;
+                case 'video':
+                case 'audio':
+                case 'iframe':
+                case 'embed':
+                case 'object':
+                    // 媒体元素，显示占位符
+                    paragraphs.push(new Paragraph({
+                        children: [new TextRun({ text: '[媒体内容]', italics: true, color: '999999' })],
+                        alignment: AlignmentType.CENTER,
+                        spacing: { before: 100, after: 100 }
+                    }));
+                    break;
+                case 'details':
+                    // 处理 details 元素
+                    const summary = element.querySelector('summary');
+                    if (summary) {
+                        paragraphs.push(new Paragraph({
+                            children: [
+                                new TextRun({ text: '▶ ', bold: true }),
+                                ...processNode(summary)
+                            ],
+                            spacing: { before: 100, after: 50 }
+                        }));
+                    }
+                    // 处理 details 内的其他内容
+                    for (const child of element.childNodes) {
+                        if (child.nodeType === Node.ELEMENT_NODE && child.tagName.toLowerCase() !== 'summary') {
+                            processBlockElement(child);
+                        }
+                    }
+                    break;
+                case 'summary':
+                    // summary 已在 details 中处理
+                    break;
+                case 'dl':
+                    // 定义列表
+                    const dlItems = element.querySelectorAll(':scope > dt, :scope > dd');
+                    dlItems.forEach(item => {
+                        const isDt = item.tagName.toLowerCase() === 'dt';
+                        paragraphs.push(new Paragraph({
+                            children: processNode(item),
+                            indent: isDt ? undefined : { left: convertInchesToTwip(0.5) },
+                            spacing: { before: isDt ? 100 : 50, after: 50 }
+                        }));
+                    });
+                    break;
+                case 'dt':
+                case 'dd':
+                    // 单独出现时的处理
+                    paragraphs.push(new Paragraph({
+                        children: processNode(element),
+                        indent: tagName === 'dd' ? { left: convertInchesToTwip(0.5) } : undefined,
+                        spacing: { before: 50, after: 50 }
+                    }));
+                    break;
+                default:
+                    // 处理其他元素或文本节点
+                    if (element.childNodes && element.childNodes.length > 0) {
+                        for (const child of element.childNodes) {
+                            if (child.nodeType === Node.TEXT_NODE) {
+                                const text = child.textContent.trim();
+                                if (text) {
+                                    paragraphs.push(new Paragraph({
+                                        children: [new TextRun({ text })],
+                                        spacing: { before: 50, after: 50 }
+                                    }));
+                                }
+                            } else if (child.nodeType === Node.ELEMENT_NODE) {
+                                processBlockElement(child);
+                            }
+                        }
+                    } else if (element.textContent && element.textContent.trim()) {
+                        paragraphs.push(new Paragraph({
+                            children: processNode(element),
+                            spacing: { before: 50, after: 50 }
+                        }));
+                    }
+            }
+        }
+        
+        // 处理顶层元素
+        for (const child of tempDiv.childNodes) {
+            if (child.nodeType === Node.TEXT_NODE) {
+                const text = child.textContent.trim();
+                if (text) {
+                    paragraphs.push(new Paragraph({
+                        children: [new TextRun({ text })],
+                        spacing: { before: 50, after: 50 }
+                    }));
+                }
+            } else if (child.nodeType === Node.ELEMENT_NODE) {
+                processBlockElement(child);
+            }
+        }
+        
+        return paragraphs.length > 0 ? paragraphs : [new Paragraph({ text: '' })];
+    }
+    
+    // 构建目录树
+    const directoryTree = buildDirectoryTree(mulufile);
+    const flatList = flattenTree(directoryTree);
+    
+    // 预加载所有图片
+    showToast('正在处理图片...', 'info', 2000);
+    const allHtmlContent = flatList.map(item => item.content || '').join('');
+    const imageMap = await collectAndLoadImages(allHtmlContent);
+    
+    // 创建文档内容
+    const children = [];
+    
+    // 添加文档标题
+    children.push(new Paragraph({
+        children: [new TextRun({
+            text: baseName,
+            bold: true,
+            size: 56  // 28pt
+        })],
+        heading: HeadingLevel.TITLE,
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 400 }
+    }));
+    
+    // 添加目录标题
+    children.push(new Paragraph({
+        children: [new TextRun({
+            text: '目 录',
+            bold: true,
+            size: 36  // 18pt
+        })],
+        heading: HeadingLevel.HEADING_1,
+        alignment: AlignmentType.CENTER,
+        spacing: { before: 400, after: 300 }
+    }));
+    
+    // 生成目录列表（常见目录样式：序号 + 名称 + 点线 + 页码）
+    // 计算各级序号
+    const levelCounters = [0, 0, 0, 0, 0, 0]; // 最多6级
+    let lastLevel = -1;
+    
+    flatList.forEach((item, index) => {
+        const level = item.level;
+        
+        // 更新序号
+        if (level > lastLevel) {
+            // 进入子级，重置当前级别计数
+            levelCounters[level] = 1;
+        } else if (level === lastLevel) {
+            // 同级，递增
+            levelCounters[level]++;
+        } else {
+            // 返回上级，重置下级计数，递增当前级别
+            for (let i = level + 1; i < 6; i++) {
+                levelCounters[i] = 0;
+            }
+            levelCounters[level]++;
+        }
+        lastLevel = level;
+        
+        // 生成序号字符串（如：1、1.1、1.1.1）
+        let numberStr = '';
+        for (let i = 0; i <= level; i++) {
+            if (i === 0) {
+                numberStr = String(levelCounters[i]);
+            } else {
+                numberStr += '.' + levelCounters[i];
+            }
+        }
+        
+        // 根据层级调整样式
+        const indent = level * 0.4;  // 每级缩进 0.4 英寸
+        const fontSize = level === 0 ? 26 : 24;  // 一级目录稍大
+        const isBold = level === 0;  // 一级目录加粗
+        
+        // 创建目录项：序号 + 名称 + 点线填充 + 页码占位
+        children.push(new Paragraph({
+            children: [
+                new TextRun({
+                    text: numberStr + '  ',
+                    bold: isBold,
+                    size: fontSize
+                }),
+                new TextRun({
+                    text: item.name,
+                    bold: isBold,
+                    size: fontSize
+                }),
+                new TextRun({
+                    text: ' ',
+                    size: fontSize
+                }),
+                // 使用制表符和点线
+                new TextRun({
+                    text: '·'.repeat(Math.max(3, 40 - item.name.length - numberStr.length - level * 4)),
+                    size: fontSize,
+                    color: 'AAAAAA'
+                }),
+                new TextRun({
+                    text: ' ' + (index + 1),  // 使用序号作为伪页码
+                    bold: isBold,
+                    size: fontSize
+                })
+            ],
+            indent: { left: convertInchesToTwip(indent) },
+            spacing: { before: level === 0 ? 120 : 60, after: level === 0 ? 80 : 60 },
+            tabStops: [{
+                type: 'right',
+                position: convertInchesToTwip(6),
+                leader: 'dot'
+            }]
+        }));
+    });
+    
+    // 添加分页符
+    children.push(new Paragraph({
+        children: [new PageBreak()]
+    }));
+    
+    // 添加内容标题
+    children.push(new Paragraph({
+        children: [new TextRun({
+            text: '正 文',
+            bold: true,
+            size: 36  // 18pt
+        })],
+        heading: HeadingLevel.HEADING_1,
+        alignment: AlignmentType.CENTER,
+        spacing: { before: 200, after: 400 }
+    }));
+    
+    // 添加各目录的内容
+    for (const item of flatList) {
+        // 根据层级确定标题级别
+        const headingLevel = Math.min(item.level + 1, 6);
+        const headingLevels = [
+            HeadingLevel.HEADING_1,
+            HeadingLevel.HEADING_2,
+            HeadingLevel.HEADING_3,
+            HeadingLevel.HEADING_4,
+            HeadingLevel.HEADING_5,
+            HeadingLevel.HEADING_6
+        ];
+        
+        // 添加章节标题（居中放大显示）
+        children.push(new Paragraph({
+            children: [new TextRun({
+                text: item.name,
+                bold: true,
+                size: 36 - (item.level * 4)  // 根据层级调整字号，一级36pt，二级32pt...
+            })],
+            heading: headingLevels[headingLevel - 1] || HeadingLevel.HEADING_6,
+            alignment: AlignmentType.CENTER,
+            spacing: { before: 400, after: 300 }
+        }));
+        
+        // 添加章节内容
+        if (item.content && item.content.trim()) {
+            const contentParagraphs = await htmlToWordParagraphs(item.content, imageMap);
+            children.push(...contentParagraphs);
+        } else {
+            children.push(new Paragraph({
+                children: [new TextRun({
+                    text: '（暂无内容）',
+                    italics: true,
+                    color: '999999'
+                })],
+                spacing: { before: 100, after: 100 }
+            }));
+        }
+        
+        // 在各章节之间添加一些间距
+        children.push(new Paragraph({
+            text: '',
+            spacing: { before: 200, after: 200 }
+        }));
+    }
+    
+    // 创建 Word 文档
+    const doc = new Document({
+        sections: [{
+            properties: {
+                page: {
+                    margin: {
+                        top: convertInchesToTwip(1),
+                        right: convertInchesToTwip(1),
+                        bottom: convertInchesToTwip(1),
+                        left: convertInchesToTwip(1)
+                    }
+                }
+            },
+            children: children
+        }]
+    });
+    
+    // 生成并下载文件
+    try {
+        const blob = await Packer.toBlob(doc);
+        const objectURL = URL.createObjectURL(blob);
+        
+        const aTag = document.createElement('a');
+        aTag.href = objectURL;
+        aTag.download = filename;
+        aTag.click();
+        
+        URL.revokeObjectURL(objectURL);
+        showToast(`已导出 Word 文档：${filename}`, 'success', 2500);
+    } catch (error) {
+        console.error('Word 导出失败:', error);
+        showToast('Word 导出失败：' + error.message, 'error', 3000);
+    }
+}
