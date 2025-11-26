@@ -65,12 +65,6 @@ function limitImageSize(img, maxWidth = MAX_IMAGE_WIDTH, maxHeight = MAX_IMAGE_H
 /** 目录数据数组，格式：[[父ID, 名称, ID, 内容], ...] */
 let mulufile = [];
 
-/** 新目录名（临时存储） */
-let newName;
-
-/** 旧目录名（临时存储） */
-let oldName;
-
 /** 当前选中的目录元素ID */
 let currentMuluName = null;
 

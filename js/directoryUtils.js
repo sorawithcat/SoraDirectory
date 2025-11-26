@@ -324,12 +324,6 @@ function ChangeChildName(idname = "", newName = "") {
     return true;
 }
 
-/**
- * 初始化时隐藏所有子目录（收起状态）
- */
-function NoneChildMulu() {
-    cutAllMulu.click();
-}
 
 // ============================================
 // 通用目录事件绑定函数

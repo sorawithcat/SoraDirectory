@@ -14,7 +14,6 @@ document.oncontextmenu = function (e) {
     return false;
 };
 
-
 // DOM 加载完成后初始化
 document.addEventListener("DOMContentLoaded", function () {
     // 为所有元素生成唯一 ID
@@ -27,18 +26,10 @@ document.addEventListener("DOMContentLoaded", function () {
     
     // 延迟执行初始化（确保 DOM 完全渲染）
     setTimeout(() => {
-        // 展开所有带有子目录的目录
-        let allMulus = document.querySelectorAll(".mulu.has-children");
-        for (let i = 0; i < allMulus.length; i++) {
-            let mulu = allMulus[i];
-            let dirId = mulu.getAttribute("data-dir-id");
-            if (dirId && mulu.classList.contains("expanded")) {
-                toggleChildDirectories(dirId, true);
-            }
+        // 展开所有目录
+        if (typeof expandAllDirectories === 'function') {
+            expandAllDirectories();
         }
-        
-        // 初始收起所有目录
-        NoneChildMulu();
         
         // 默认选中第一个根目录
         let firstRootMulu = null;
