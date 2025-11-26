@@ -14,16 +14,6 @@ document.oncontextmenu = function (e) {
     return false;
 }
 
-// box 鼠标抬起事件
-box.addEventListener("mouseup", function (e) {
-    if (e.button == 2) {
-        box.style.display = "none";
-        wordsbox.style.display = "block";
-        anjiansss.style.display = "none";
-        bigbox.style.display = "block";
-    }
-})
-
 // 初始化文件夹样式（在DOM加载后）
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', function() {

@@ -2,60 +2,8 @@
 // fileOperations 模块 (fileOperations.js)
 // ============================================
 
-//从文件录入
-if (1) {
-
-    //解决一旦拖拽外部文件就覆盖掉当前页面的问题
-    //  解决：给document绑定drop事件
-    //  drop事件默认触发不了，需要在dragover事件里面阻止默认事件
-    document.ondrop = function () {
-        return false;
-    }
-    // 这个阻止默认事件是为了让drop事件得以触发
-    document.ondragover = function () {
-        return false;
-    }
-
-    box.ondragenter = function () {
-        box.style.boxShadow = '0 0 10px 5px rgba(255,0,0,.8)';
-    }
-
-    box.ondrop = function (e) {
-        e.preventDefault();
-        // 得到拖拽过来的文件
-        let dataFile = e.dataTransfer.files[0];
-        
-        if (!dataFile) {
-            customAlert("未检测到文件");
-            return;
-        }
-        
-        // 保存文件名用于后续解析
-        let fileName = dataFile.name;
-
-        // FileReader实例化
-        let fr = new FileReader();
-        // 异步读取文件
-        fr.readAsText(dataFile);
-        // 读取完毕之后执行
-        fr.onload = function () {
-            // 获取得到的结果
-            let data = fr.result;
-
-            const ta = document.createElement('textarea');
-            ta.value = data;
-            ta.setAttribute("class", 'entity');
-            ta.setAttribute("data-filename", fileName); // 保存文件名
-
-            box.innerHTML = '';
-            box.appendChild(ta);
-        }
-        fr.onerror = function() {
-            customAlert("文件读取失败");
-        }
-    }
-    // 解析不同格式的文件内容
-    function parseFileContent(content, filename) {
+// 解析不同格式的文件内容（全局函数，供其他模块使用）
+function parseFileContent(content, filename) {
         let ext = filename ? filename.toLowerCase().split('.').pop() : '';
         
         // 尝试解析XML格式
@@ -126,87 +74,6 @@ if (1) {
         } catch (e) {
             throw new Error("无法解析文件格式，请确保文件格式正确");
         }
-    }
-    
-    loadssss.addEventListener("click", function () {
-        let entityElement = document.querySelector(".box > .entity");
-        if (!entityElement) {
-            customAlert("请先拖拽文件到拖拽区域");
-            return;
-        }
-        
-        let fileContent = entityElement.value.trim();
-        if (!fileContent) {
-            customAlert("文件内容为空");
-            return;
-        }
-        
-        try {
-            // 从data属性获取文件名
-            let filename = entityElement.getAttribute("data-filename") || "";
-            
-            // 解析文件内容
-            mulufile = parseFileContent(fileContent, filename);
-            
-            // 验证数据格式
-            if (!Array.isArray(mulufile) || mulufile.length === 0) {
-                customAlert("文件格式错误：无法解析为有效的目录数据");
-                return;
-            }
-            
-            // 验证第一个目录
-            if (mulufile[0].length < 4 || mulufile[0][0] !== "mulu") {
-                customAlert("文件格式错误：第一个目录必须以'mulu'开头，且每个目录数据必须包含4个元素");
-                return;
-            }
-            
-            LoadMulu();
-            // 延迟执行，确保所有目录都已创建并设置好data属性
-            setTimeout(() => {
-                // 初始化所有有子目录的目录，展开它们
-                let allMulus = document.querySelectorAll(".mulu.has-children");
-                for (let i = 0; i < allMulus.length; i++) {
-                    let mulu = allMulus[i];
-                    let dirId = mulu.getAttribute("data-dir-id");
-                    if (dirId && mulu.classList.contains("expanded")) {
-                        toggleChildDirectories(dirId, true);
-                    }
-                }
-                NoneChildMulu();
-                
-                // 默认选中第一个根目录
-                let firstRootMulu = null;
-                let allMulusForSelect = document.querySelectorAll(".mulu");
-                for (let i = 0; i < allMulusForSelect.length; i++) {
-                    let mulu = allMulusForSelect[i];
-                    let parentId = mulu.getAttribute("data-parent-id");
-                    if (!parentId || parentId === "mulu") {
-                        firstRootMulu = mulu;
-                        break;
-                    }
-                }
-                if (firstRootMulu) {
-                    currentMuluName = firstRootMulu.id;
-                    RemoveOtherSelect();
-                    firstRootMulu.classList.add("select");
-                    // 显示第一个目录的内容
-                    jiedianwords.value = findMulufileData(firstRootMulu);
-            isUpdating = true;
-            updateMarkdownPreview();
-            isUpdating = false;
-                }
-                
-                AddListStyleForFolder();
-            }, 10);
-            box.style.display = "none";
-            wordsbox.style.display = "block";
-            anjiansss.style.display = "none";
-            bigbox.style.display = "block";
-        } catch (error) {
-            console.error("文件加载错误:", error);
-            customAlert("文件加载失败：" + error.message);
-        }
-    })
 }
 
 // 根据文件扩展名获取MIME类型

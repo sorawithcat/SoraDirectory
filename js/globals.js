@@ -26,9 +26,6 @@ const showbox = document.querySelector(".showbox");
 // 所有的目录
 const mulus = document.querySelectorAll(".mulu");
 
-// 拖动元素的框
-const box = document.querySelector('.box');
-
 // 目录容器
 const firststep = document.querySelector(".firststep");
 
@@ -61,12 +58,6 @@ const markdownPreview = document.querySelector(".markdown-preview");
 const textFormatToolbar = document.querySelector(".text-format-toolbar");
 const imageUploadBtn = document.getElementById("imageUploadBtn");
 const imageFileInput = document.getElementById("imageFileInput");
-
-// 文件录入按键
-const anjiansss = document.querySelector(".anjiansss");
-
-// 文件录入加载界面按键
-const loadssss = document.querySelector(".loadssss");
 
 // 节点盒子
 const wordsbox = document.querySelector(".wordsbox");

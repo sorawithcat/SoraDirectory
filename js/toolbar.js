@@ -86,11 +86,100 @@ if (topSaveBtn) {
 
 // 加载功能
 if (topLoadBtn) {
+    // 创建隐藏的文件输入元素
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = '.json,.txt,.xml,.csv';
+    fileInput.style.display = 'none';
+    document.body.appendChild(fileInput);
+    
     topLoadBtn.addEventListener("click", function() {
-        box.style.display = "block";
-        anjiansss.style.display = "block";
-        bigbox.style.display = "none";
-        wordsbox.style.display = "none";
+        fileInput.click();
+    });
+    
+    // 处理文件选择
+    fileInput.addEventListener("change", function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        const fileName = file.name;
+        const reader = new FileReader();
+        
+        reader.onload = function() {
+            const fileContent = reader.result;
+            
+            try {
+                // 解析文件内容
+                mulufile = parseFileContent(fileContent, fileName);
+                
+                // 验证数据格式
+                if (!Array.isArray(mulufile) || mulufile.length === 0) {
+                    customAlert("文件格式错误：无法解析为有效的目录数据");
+                    return;
+                }
+                
+                // 验证第一个目录
+                if (mulufile[0].length < 4 || mulufile[0][0] !== "mulu") {
+                    customAlert("文件格式错误：第一个目录必须以'mulu'开头，且每个目录数据必须包含4个元素");
+                    return;
+                }
+                
+                LoadMulu();
+                // 延迟执行，确保所有目录都已创建并设置好data属性
+                setTimeout(() => {
+                    // 初始化所有有子目录的目录，展开它们
+                    let allMulus = document.querySelectorAll(".mulu.has-children");
+                    for (let i = 0; i < allMulus.length; i++) {
+                        let mulu = allMulus[i];
+                        let dirId = mulu.getAttribute("data-dir-id");
+                        if (dirId && mulu.classList.contains("expanded")) {
+                            toggleChildDirectories(dirId, true);
+                        }
+                    }
+                    NoneChildMulu();
+                    
+                    // 默认选中第一个根目录
+                    let firstRootMulu = null;
+                    let allMulusForSelect = document.querySelectorAll(".mulu");
+                    for (let i = 0; i < allMulusForSelect.length; i++) {
+                        let mulu = allMulusForSelect[i];
+                        let parentId = mulu.getAttribute("data-parent-id");
+                        if (!parentId || parentId === "mulu") {
+                            firstRootMulu = mulu;
+                            break;
+                        }
+                    }
+                    if (firstRootMulu) {
+                        currentMuluName = firstRootMulu.id;
+                        RemoveOtherSelect();
+                        firstRootMulu.classList.add("select");
+                        // 显示第一个目录的内容
+                        jiedianwords.value = findMulufileData(firstRootMulu);
+                        isUpdating = true;
+                        updateMarkdownPreview();
+                        isUpdating = false;
+                    }
+                    
+                    AddListStyleForFolder();
+                }, 10);
+                
+                bigbox.style.display = "block";
+                wordsbox.style.display = "block";
+            } catch (error) {
+                console.error("文件加载错误:", error);
+                customAlert("文件加载失败：" + error.message);
+            }
+            
+            // 重置文件输入，以便可以再次选择同一个文件
+            fileInput.value = '';
+        };
+        
+        reader.onerror = function() {
+            customAlert("文件读取失败");
+            fileInput.value = '';
+        };
+        
+        reader.readAsText(file);
     });
 }
 

@@ -517,12 +517,12 @@ async function applyFormat(command) {
                         const content = trimmed.replace(/^-\s*\[[ xX]\]\s*/, '');
                         return '<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"' + 
                                (trimmed.startsWith('- [x]') || trimmed.startsWith('- [X]') ? ' checked' : '') + 
-                               ' disabled> ' + content + '</li>';
+                               '> ' + content + '</li>';
                     }
-                    return '<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled> ' + trimmed + '</li>';
+                    return '<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"> ' + trimmed + '</li>';
                 }).join('') + '</ul>';
             } else {
-                formattedHtml = '<ul class="contains-task-list"><li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled> <br></li></ul>';
+                formattedHtml = '<ul class="contains-task-list"><li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"> <br></li></ul>';
             }
             break;
         // 其他块级元素

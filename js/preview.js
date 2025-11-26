@@ -73,12 +73,35 @@ function syncPreviewToTextarea() {
     }
 }
 
+// 为任务列表复选框添加事件监听器（全局函数，可在多处调用）
+function attachTaskListEvents() {
+    if (!markdownPreview) return;
+    
+    const checkboxes = markdownPreview.querySelectorAll('.task-list-item-checkbox');
+    checkboxes.forEach(checkbox => {
+        // 移除 disabled 属性（如果存在）
+        if (checkbox.hasAttribute('disabled')) {
+            checkbox.removeAttribute('disabled');
+        }
+        // 避免重复绑定
+        if (!checkbox.hasAttribute('data-task-attached')) {
+            checkbox.setAttribute('data-task-attached', 'true');
+            checkbox.addEventListener('change', function() {
+                syncPreviewToTextarea();
+            });
+        }
+    });
+}
+
 // 更新预览（从 textarea 同步到预览区域）
 function updateMarkdownPreview() {
     if (markdownPreview && jiedianwords) {
         isUpdating = true;
         markdownPreview.innerHTML = jiedianwords.value || '';
         isUpdating = false;
+        
+        // 更新后绑定任务列表复选框事件
+        attachTaskListEvents();
     }
 }
 
@@ -241,6 +264,49 @@ if (markdownPreview) {
         syncPreviewToTextarea();
     });
     
+    // 处理任务列表复选框的状态切换
+    markdownPreview.addEventListener("change", function(e) {
+        if (e.target.classList.contains('task-list-item-checkbox')) {
+            // 复选框状态改变时同步到 textarea
+            syncPreviewToTextarea();
+        }
+    });
+    
+    // 初始绑定
+    attachTaskListEvents();
+    
+    // 监听预览区域内容变化，为新插入的任务列表复选框添加事件
+    const taskObserver = new MutationObserver(function(mutations) {
+        mutations.forEach(function(mutation) {
+            if (mutation.addedNodes.length) {
+                mutation.addedNodes.forEach(function(node) {
+                    if (node.nodeType === Node.ELEMENT_NODE) {
+                        // 检查是否是任务列表项或包含任务列表项
+                        const checkboxes = node.nodeName === 'INPUT' && node.classList.contains('task-list-item-checkbox') 
+                            ? [node]
+                            : (node.querySelectorAll ? node.querySelectorAll('.task-list-item-checkbox') : []);
+                        
+                        checkboxes.forEach(checkbox => {
+                            if (!checkbox.hasAttribute('data-task-attached')) {
+                                checkbox.setAttribute('data-task-attached', 'true');
+                                checkbox.addEventListener('change', function() {
+                                    syncPreviewToTextarea();
+                                });
+                            }
+                        });
+                    }
+                });
+            }
+        });
+        attachTaskListEvents();
+    });
+    
+    if (markdownPreview) {
+        taskObserver.observe(markdownPreview, {
+            childList: true,
+            subtree: true
+        });
+    }
 }
 
 // 复制事件（需要在 markdownPreview 存在时绑定）
