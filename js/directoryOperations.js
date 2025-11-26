@@ -92,6 +92,9 @@ addNewMuluButton.addEventListener("click", async function () {
     newMulu.setAttribute("data-dir-id", newMuLuName);
     newMulu.setAttribute("data-parent-id", parentIdForFile);
     
+    // 设置颜色小球
+    setParentColorBall(newMulu);
+    
     // 设置显示状态
     if (siblings.length > 0 && siblings[0] !== newMulu) {
         newMulu.style.display = siblings[0].style.display || "block";
@@ -101,9 +104,6 @@ addNewMuluButton.addEventListener("click", async function () {
     
     // 绑定事件
     bindMuluEvents(newMulu);
-    
-    // 更新 UI
-    AddListStyleForFolder();
     
     // 自动选中新添加的目录
     if (currentMuluName) {
@@ -188,6 +188,9 @@ addNewPotsButton.addEventListener("click", async function () {
     newMulu.setAttribute("data-dir-id", newMuLuName);
     newMulu.setAttribute("data-parent-id", currentDirId || parentIdForFile);
     
+    // 设置颜色小球
+    setParentColorBall(newMulu);
+    
     // 更新父目录的 has-children 标记并确保展开
     if (currentElement && currentDirId) {
         if (!currentElement.classList.contains("has-children")) {
@@ -206,9 +209,6 @@ addNewPotsButton.addEventListener("click", async function () {
     
     // 绑定事件
     bindMuluEvents(newMulu);
-    
-    // 更新 UI
-    AddListStyleForFolder();
     
     // 自动选中新添加的节点
     if (currentMuluName) {

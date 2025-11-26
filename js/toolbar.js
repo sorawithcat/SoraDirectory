@@ -117,15 +117,9 @@ if (topLoadBtn) {
                 
                 setTimeout(() => {
                     // 展开所有目录
-                    let allMulus = document.querySelectorAll(".mulu.has-children");
-                    for (let i = 0; i < allMulus.length; i++) {
-                        let mulu = allMulus[i];
-                        let dirId = mulu.getAttribute("data-dir-id");
-                        if (dirId && mulu.classList.contains("expanded")) {
-                            toggleChildDirectories(dirId, true);
-                        }
+                    if (typeof expandAllDirectories === 'function') {
+                        expandAllDirectories();
                     }
-                    NoneChildMulu();
                     
                     // 选中第一个根目录
                     let firstRootMulu = null;
@@ -148,8 +142,6 @@ if (topLoadBtn) {
                         updateMarkdownPreview();
                         isUpdating = false;
                     }
-                    
-                    AddListStyleForFolder();
                 }, 10);
                 
                 bigbox.style.display = "block";
@@ -183,14 +175,18 @@ if (topLoadBtn) {
 // 展开全部
 if (expandAllBtn) {
     expandAllBtn.addEventListener("click", function() {
-        if (showAllMulu) showAllMulu.click();
+        if (typeof expandAllDirectories === 'function') {
+            expandAllDirectories();
+        }
     });
 }
 
 // 收起全部
 if (collapseAllBtn) {
     collapseAllBtn.addEventListener("click", function() {
-        if (cutAllMulu) cutAllMulu.click();
+        if (typeof collapseAllDirectories === 'function') {
+            collapseAllDirectories();
+        }
     });
 }
 

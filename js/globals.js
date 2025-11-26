@@ -120,5 +120,5 @@ const wordsbox = document.querySelector(".wordsbox");                   // 内�
 const rightmousemenu = document.querySelector(".rightmousemenu");       // 右键菜单容器
 const deleteMulu = document.querySelector(".deleteMulu");               // 删除目录
 const noneRightMouseMenu = document.querySelector(".noneRightMouseMenu"); // 取消
-const showAllMulu = document.querySelector(".showAllMulu");             // 展开所有目录
-const cutAllMulu = document.querySelector(".cutAllMulu");               // 收起所有目录
+const expandThisMulu = document.querySelector(".expandThisMulu");       // 展开此目录
+const collapseThisMulu = document.querySelector(".collapseThisMulu");   // 收起此目录

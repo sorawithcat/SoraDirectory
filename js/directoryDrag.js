@@ -315,6 +315,15 @@ function handleDrop(e) {
     // 更新层级（递归更新所有后代）
     updateLevelRecursively(draggedMulu, newLevel);
     
+    // 更新背景色（递归更新所有后代，因为根目录可能变了）
+    if (typeof setParentColorBall === 'function') {
+        setParentColorBall(draggedMulu);
+        // 递归更新所有后代的颜色
+        for (let i = 1; i < elementsToMove.length; i++) {
+            setParentColorBall(elementsToMove[i]);
+        }
+    }
+    
     // 移动 DOM 元素
     let firststepElement = document.querySelector('.firststep');
     
@@ -374,9 +383,6 @@ function handleDrop(e) {
             }
         }
     }
-    
-    // 更新样式
-    AddListStyleForFolder();
     
     // 显示成功提示
     showToast("目录已移动", "success", 1500);

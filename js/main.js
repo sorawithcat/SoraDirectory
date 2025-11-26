@@ -14,14 +14,6 @@ document.oncontextmenu = function (e) {
     return false;
 };
 
-// 初始化文件夹样式
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function() {
-        AddListStyleForFolder();
-    });
-} else {
-    AddListStyleForFolder();
-}
 
 // DOM 加载完成后初始化
 document.addEventListener("DOMContentLoaded", function () {

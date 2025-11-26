@@ -4,20 +4,112 @@
 // 依赖：globals.js
 // ============================================
 
+// -------------------- 根目录颜色相关 --------------------
+
+/** 根目录ID到颜色的映射缓存 */
+const rootColorMap = new Map();
+
 /**
- * 安全获取元素的类名信息（已废弃，保留兼容）
- * @param {HTMLElement} element - DOM 元素
- * @returns {Object} - 包含 parentClass, selfClass, isTopLevel 的对象
- * @deprecated 现在使用 data 属性替代类名
+ * 查找目录的根目录ID
+ * @param {HTMLElement} element - 目录元素
+ * @returns {string} - 根目录ID，如果本身是根目录则返回自己的ID
  */
-function getClassNames(element) {
-    let classList = Array.from(element.classList);
-    let filtered = classList.filter(c => c !== "mulu" && c !== "select");
-    return {
-        parentClass: filtered[0] || null,
-        selfClass: filtered[1] || filtered[0] || null,
-        isTopLevel: filtered.length === 1 && filtered[0] !== null
-    };
+function findRootDirId(element) {
+    let parentId = element.getAttribute("data-parent-id");
+    
+    // 如果本身就是根目录
+    if (!parentId || parentId === "mulu") {
+        return element.getAttribute("data-dir-id");
+    }
+    
+    // 向上查找直到找到根目录
+    let currentParentId = parentId;
+    let visited = new Set();
+    
+    while (currentParentId && currentParentId !== "mulu" && !visited.has(currentParentId)) {
+        visited.add(currentParentId);
+        
+        // 查找父目录元素
+        let parentElement = document.querySelector(`[data-dir-id="${currentParentId}"]`);
+        if (parentElement) {
+            let grandParentId = parentElement.getAttribute("data-parent-id");
+            if (!grandParentId || grandParentId === "mulu") {
+                // 找到了根目录
+                return currentParentId;
+            }
+            currentParentId = grandParentId;
+        } else {
+            break;
+        }
+    }
+    
+    return currentParentId;
+}
+
+/**
+ * 根据字符串生成哈希值
+ * @param {string} str - 输入字符串
+ * @returns {number} - 哈希值 (0-1之间的小数)
+ */
+function stringToHash(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+        hash = ((hash << 5) - hash) + str.charCodeAt(i);
+        hash = hash & hash;
+    }
+    return Math.abs(hash);
+}
+
+/**
+ * 根据根目录ID动态生成一个唯一的浅色背景
+ * 使用 HSL 颜色模式，固定饱和度和亮度，只变化色相
+ * @param {string} rootId - 根目录ID
+ * @returns {string} - HSL颜色值
+ */
+function getRootColor(rootId) {
+    if (!rootId) {
+        return '#f9f9f9';
+    }
+    
+    // 检查缓存
+    if (rootColorMap.has(rootId)) {
+        return rootColorMap.get(rootId);
+    }
+    
+    // 根据ID生成哈希，计算色相 (0-360)
+    let hash = stringToHash(rootId);
+    let hue = hash % 360;
+    
+    // 固定饱和度和亮度，生成柔和的浅色
+    // 饱和度 40-60%，亮度 88-92%
+    let saturation = 40 + (hash % 20);
+    let lightness = 88 + (hash % 5);
+    
+    let color = `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+    
+    // 缓存结果
+    rootColorMap.set(rootId, color);
+    
+    return color;
+}
+
+/**
+ * 为目录元素设置背景色（根据根目录）
+ * @param {HTMLElement} element - 目录元素
+ */
+function setParentColorBall(element) {
+    let parentId = element.getAttribute("data-parent-id");
+    
+    // 根目录使用默认颜色
+    if (!parentId || parentId === "mulu") {
+        element.style.backgroundColor = '#f9f9f9';
+        return;
+    }
+    
+    // 查找根目录并设置颜色
+    let rootId = findRootDirId(element);
+    let color = getRootColor(rootId);
+    element.style.backgroundColor = color;
 }
 
 /**
@@ -109,27 +201,6 @@ function toggleChildDirectories(parentId, show) {
             let childId = child.getAttribute("data-dir-id");
             if (childId) {
                 toggleChildDirectories(childId, false);
-            }
-        }
-    }
-}
-
-/**
- * 为有子目录的目录添加文件夹样式（斜体）
- */
-function AddListStyleForFolder() {
-    let allMulus = document.querySelectorAll(".mulu");
-    let processedDirs = new Set();
-    
-    for (let i = 0; i < allMulus.length; i++) {
-        let mulu = allMulus[i];
-        let dirId = mulu.getAttribute("data-dir-id");
-        
-        if (dirId && !processedDirs.has(dirId)) {
-            let children = findChildElementsByParentId(dirId);
-            if (children.length > 0) {
-                mulu.style.fontStyle = "italic";
-                processedDirs.add(dirId);
             }
         }
     }

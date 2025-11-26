@@ -125,6 +125,9 @@ function LoadMulu() {
             newMulu.setAttribute("data-dir-id", mulufile[i][2]);    // 当前目录ID
             newMulu.setAttribute("data-parent-id", mulufile[i][0]); // 父目录ID
             
+            // 设置颜色小球
+            setParentColorBall(newMulu);
+            
             // 检查是否有子目录
             let hasChildren = false;
             for (let j = 0; j < mulufile.length; j++) {

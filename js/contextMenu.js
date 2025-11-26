@@ -145,14 +145,87 @@ deleteMulu.addEventListener("click", function () {
         isUpdating = false;
         
         // 更新 UI
-        AddListStyleForFolder();
         DuplicateMuluHints();
         hideRightMouseMenu();
     });
 });
 
-// 右键菜单 - 展开所有目录
-showAllMulu.addEventListener("click", function () {
+// 右键菜单 - 展开此目录（递归展开当前目录及其所有子目录）
+expandThisMulu.addEventListener("click", function () {
+    if (!currentMuluName) {
+        hideRightMouseMenu();
+        return;
+    }
+    
+    let currentMulu = document.getElementById(currentMuluName);
+    if (!currentMulu) {
+        hideRightMouseMenu();
+        return;
+    }
+    
+    /**
+     * 递归展开目录及其所有子目录
+     * @param {HTMLElement} mulu - 目录元素
+     */
+    function expandRecursively(mulu) {
+        if (mulu.classList.contains("has-children")) {
+            mulu.classList.add("expanded");
+            let dirId = mulu.getAttribute("data-dir-id");
+            if (dirId) {
+                toggleChildDirectories(dirId, true);
+                // 递归展开子目录
+                let children = findChildElementsByParentId(dirId);
+                for (let child of children) {
+                    expandRecursively(child);
+                }
+            }
+        }
+    }
+    
+    expandRecursively(currentMulu);
+    hideRightMouseMenu();
+});
+
+// 右键菜单 - 收起此目录（递归收起当前目录及其所有子目录）
+collapseThisMulu.addEventListener("click", function () {
+    if (!currentMuluName) {
+        hideRightMouseMenu();
+        return;
+    }
+    
+    let currentMulu = document.getElementById(currentMuluName);
+    if (!currentMulu) {
+        hideRightMouseMenu();
+        return;
+    }
+    
+    /**
+     * 递归收起目录及其所有子目录
+     * @param {HTMLElement} mulu - 目录元素
+     */
+    function collapseRecursively(mulu) {
+        if (mulu.classList.contains("has-children")) {
+            mulu.classList.remove("expanded");
+            let dirId = mulu.getAttribute("data-dir-id");
+            if (dirId) {
+                toggleChildDirectories(dirId, false);
+                // 递归收起子目录
+                let children = findChildElementsByParentId(dirId);
+                for (let child of children) {
+                    collapseRecursively(child);
+                }
+            }
+        }
+    }
+    
+    collapseRecursively(currentMulu);
+    hideRightMouseMenu();
+});
+
+/**
+ * 展开所有目录（供工具栏按钮使用）
+ */
+function expandAllDirectories() {
     let allMulus = document.querySelectorAll(".mulu.has-children");
     for (let i = 0; i < allMulus.length; i++) {
         let mulu = allMulus[i];
@@ -162,11 +235,12 @@ showAllMulu.addEventListener("click", function () {
             toggleChildDirectories(dirId, true);
         }
     }
-    hideRightMouseMenu();
-});
+}
 
-// 右键菜单 - 收起所有目录
-cutAllMulu.addEventListener("click", function () {
+/**
+ * 收起所有目录（供工具栏按钮使用）
+ */
+function collapseAllDirectories() {
     let allMulus = document.querySelectorAll(".mulu.has-children");
     for (let i = 0; i < allMulus.length; i++) {
         let mulu = allMulus[i];
@@ -176,5 +250,4 @@ cutAllMulu.addEventListener("click", function () {
             toggleChildDirectories(dirId, false);
         }
     }
-    hideRightMouseMenu();
-});
+}
