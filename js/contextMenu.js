@@ -9,32 +9,79 @@
  * @param {MouseEvent} e - 鼠标事件对象
  */
 function rightMouseMenu(e) {
+    // 先显示菜单（不可见状态）以获取尺寸
     rightmousemenu.style.display = "block";
-    rightmousemenu.style.left = `${e.clientX}px`;
-    rightmousemenu.style.top = `${e.clientY}px`;
+    rightmousemenu.classList.remove("show");
+    
+    // 获取菜单尺寸和视窗尺寸
+    const menuWidth = rightmousemenu.offsetWidth;
+    const menuHeight = rightmousemenu.offsetHeight;
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    
+    // 计算位置，确保菜单不超出视窗
+    let posX = e.clientX;
+    let posY = e.clientY;
+    
+    // 边界检测：如果菜单会超出右边，则向左显示
+    if (posX + menuWidth > viewportWidth - 10) {
+        posX = viewportWidth - menuWidth - 10;
+    }
+    
+    // 边界检测：如果菜单会超出底部，则向上显示
+    if (posY + menuHeight > viewportHeight - 10) {
+        posY = viewportHeight - menuHeight - 10;
+    }
+    
+    // 确保不会出现负值
+    posX = Math.max(10, posX);
+    posY = Math.max(10, posY);
+    
+    rightmousemenu.style.left = `${posX}px`;
+    rightmousemenu.style.top = `${posY}px`;
+    
+    // 延迟添加 show 类以触发动画
+    requestAnimationFrame(() => {
+        rightmousemenu.classList.add("show");
+    });
 }
 
 // 点击页面其他区域时隐藏菜单
-document.addEventListener('click', function () {
-    noneRightMouseMenu.click();
+document.addEventListener('click', function (e) {
+    // 如果点击的是菜单本身，不处理
+    if (rightmousemenu.contains(e.target)) return;
+    hideRightMouseMenu();
 });
+
+/**
+ * 隐藏右键菜单（带动画）
+ */
+function hideRightMouseMenu() {
+    rightmousemenu.classList.remove("show");
+    // 等待动画完成后隐藏
+    setTimeout(() => {
+        if (!rightmousemenu.classList.contains("show")) {
+            rightmousemenu.style.display = "none";
+        }
+    }, 150);
+}
 
 // 右键菜单 - 取消
 noneRightMouseMenu.addEventListener("click", function () {
-    rightmousemenu.style.display = "none";
+    hideRightMouseMenu();
 });
 
 // 右键菜单 - 删除目录（包含所有子目录）
 deleteMulu.addEventListener("click", function () {
     customConfirm("是否删除此目录？").then(result => {
         if (!result) {
-            noneRightMouseMenu.click();
+            hideRightMouseMenu();
             return;
         }
         
         let nowchild = document.getElementById(currentMuluName);
         if (!nowchild) {
-            noneRightMouseMenu.click();
+            hideRightMouseMenu();
             return;
         }
         
@@ -100,7 +147,7 @@ deleteMulu.addEventListener("click", function () {
         // 更新 UI
         AddListStyleForFolder();
         DuplicateMuluHints();
-        noneRightMouseMenu.click();
+        hideRightMouseMenu();
     });
 });
 
@@ -115,6 +162,7 @@ showAllMulu.addEventListener("click", function () {
             toggleChildDirectories(dirId, true);
         }
     }
+    hideRightMouseMenu();
 });
 
 // 右键菜单 - 收起所有目录
@@ -128,4 +176,5 @@ cutAllMulu.addEventListener("click", function () {
             toggleChildDirectories(dirId, false);
         }
     }
+    hideRightMouseMenu();
 });

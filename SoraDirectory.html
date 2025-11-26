@@ -392,9 +392,11 @@
             max-width: none;
             max-height: none;
             border-radius: 5px;
-            margin: 1em 0;
             cursor: pointer;
             transition: opacity 0.2s;
+            /* 居中显示 */
+            display: block;
+            margin: 1em auto;
         }
         
         .markdown-preview img:hover {
@@ -593,24 +595,55 @@
         }
 
         .rightmousemenu {
-            width: 200px;
+            width: 180px;
             height: auto;
-            border: 1px solid black;
-            position: absolute;
-            background-color: burlywood;
-            left: 50px;
+            position: fixed;
+            background-color: #333;
+            border-radius: 6px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
             display: none;
+            z-index: 10000;
+            padding: 6px 0;
+            opacity: 0;
+            transform: scale(0.95) translateY(-5px);
+            transition: opacity 0.15s ease, transform 0.15s ease;
         }
 
-            .rightmousemenu div {
-                width: 100%;
-                height: 40px;
-                line-height: 40px;
-                border-bottom: 1px solid black;
-                user-select: none;
-                white-space: nowrap;
-                text-align: center;
-            }
+        .rightmousemenu.show {
+            opacity: 1;
+            transform: scale(1) translateY(0);
+        }
+
+        .rightmousemenu div:not(.menu-divider) {
+            width: 100%;
+            height: 36px;
+            line-height: 36px;
+            padding: 0 12px;
+            user-select: none;
+            white-space: nowrap;
+            text-align: left;
+            color: #fff;
+            font-size: 13px;
+            cursor: pointer;
+            box-sizing: border-box;
+            transition: background-color 0.1s ease;
+            display: flex;
+            align-items: center;
+        }
+
+        .rightmousemenu div:not(.menu-divider):hover {
+            background-color: #444;
+        }
+
+        .rightmousemenu .deleteMulu:hover {
+            background-color: #c0392b;
+        }
+
+        .rightmousemenu .menu-divider {
+            height: 1px;
+            background-color: #444;
+            margin: 4px 10px;
+        }
 
 
         /* 自定义对话框样式 */
@@ -1182,8 +1215,10 @@
     <input type="file" id="imageFileInput" accept="image/*" style="display: none;">
     <div class="rightmousemenu">
         <div class="deleteMulu">删除选中目录</div>
+        <div class="menu-divider"></div>
         <div class="showAllMulu">展开所有目录</div>
         <div class="cutAllMulu">收起所有目录</div>
+        <div class="menu-divider"></div>
         <div class="noneRightMouseMenu">取消</div>
     </div>
     <!-- Toast 悬浮提示容器 -->
