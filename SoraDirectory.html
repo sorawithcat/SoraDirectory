@@ -101,16 +101,14 @@
         
 
         .mulu {
-            min-width: 100%; /* 最小宽度为容器宽度，但可以超出 */
             min-height: 30px;
             line-height: 30px;
             border: 1px solid #ccc;
             text-align: left;
-            overflow: visible; /* 允许内容超出 */
-            text-overflow: ellipsis;
             white-space: nowrap;
             position: relative;
             padding-left: 20px; /* 基础偏移，会被setLevelPadding覆盖 */
+            padding-right: 10px;
             cursor: pointer;
             background-color: #f9f9f9;
             margin: 1px 0;
@@ -190,8 +188,7 @@
         }
             
         .mulubox {
-            min-width: 100%; /* 确保内容可以超出容器宽度 */
-            width: max-content; /* 根据内容自动调整宽度 */
+            min-width: max-content;
         }
 
         .showbox {

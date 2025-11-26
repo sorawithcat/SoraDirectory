@@ -261,12 +261,32 @@ if (newBtn) {
 // 另存为功能
 if (saveAsBtn) {
     saveAsBtn.addEventListener("click", async function() {
-        let customName = await customPrompt("输入文件名（包含扩展名，如：mydata.json）", "");
-        if (!customName) {
-            customAlert("已取消保存");
+        // 另存为格式选项
+        const saveAsOptions = [
+            { value: 'webpage', label: '网页 (.html) - 独立可浏览的网页' },
+            { value: 'custom', label: '自定义文件名 - 手动输入文件名和格式' }
+        ];
+        
+        // 显示格式选择对话框
+        const saveType = await customSelect('选择另存为格式：', saveAsOptions, 'webpage', '另存为');
+        
+        if (saveType === null) {
+            showToast('已取消保存', 'info', 2000);
             return;
         }
-        await handleSaveAs(customName);
+        
+        if (saveType === 'webpage') {
+            // 另存为网页
+            await handleSaveAsWebpage();
+        } else if (saveType === 'custom') {
+            // 自定义文件名
+            let customName = await customPrompt("输入文件名（包含扩展名，如：mydata.json）", "");
+            if (!customName) {
+                showToast('已取消保存', 'info', 2000);
+                return;
+            }
+            await handleSaveAs(customName);
+        }
     });
 }
 
