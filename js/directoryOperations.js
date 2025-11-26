@@ -16,13 +16,11 @@ addNewMuluButton.addEventListener("click", async function () {
         return;
     }
     
-    // 检查重复
-    if (isDuplicateName(nMulu)) {
-        customAlert("目录名已存在，请使用其他名称");
-        return;
-    }
+    // 检查重复（仅提示，不阻止）
+    let hasDuplicate = isDuplicateName(nMulu);
     
-    let newMuLuName = `mulu${nMulu}`;
+    // 使用随机ID而不是基于名称的ID，避免同名目录冲突
+    let newMuLuName = `mulu_${getOneId(8, 2)}`;
     let idName;
     
     // 获取当前状态
@@ -109,7 +107,26 @@ addNewMuluButton.addEventListener("click", async function () {
     
     // 更新 UI
     AddListStyleForFolder();
-    DuplicateMuluHints();
+    
+    // 自动选中新添加的目录
+    if (currentMuluName) {
+        let oldMulu = document.getElementById(currentMuluName);
+        if (oldMulu) {
+            syncPreviewToTextarea(); // 保存之前选中目录的内容
+        }
+    }
+    RemoveOtherSelect();
+    newMulu.classList.add("select");
+    currentMuluName = newMulu.id;
+    jiedianwords.value = findMulufileData(newMulu);
+    isUpdating = true;
+    updateMarkdownPreview();
+    isUpdating = false;
+    
+    // 显示重复提示（使用 toast）
+    if (hasDuplicate) {
+        showToast("已存在同名目录", "warning", 2500);
+    }
 });
 
 /**
@@ -124,13 +141,11 @@ addNewPotsButton.addEventListener("click", async function () {
         return;
     }
     
-    // 检查重复
-    if (isDuplicateName(nMulu)) {
-        customAlert("目录名已存在，请使用其他名称");
-        return;
-    }
+    // 检查重复（仅提示，不阻止）
+    let hasDuplicate = isDuplicateName(nMulu);
     
-    let newMuLuName = `mulu${nMulu}`;
+    // 使用随机ID而不是基于名称的ID，避免同名目录冲突
+    let newMuLuName = `mulu_${getOneId(8, 2)}`;
     let idName;
     
     // 获取当前状态
@@ -195,5 +210,24 @@ addNewPotsButton.addEventListener("click", async function () {
     
     // 更新 UI
     AddListStyleForFolder();
-    DuplicateMuluHints();
+    
+    // 自动选中新添加的节点
+    if (currentMuluName) {
+        let oldMulu = document.getElementById(currentMuluName);
+        if (oldMulu) {
+            syncPreviewToTextarea(); // 保存之前选中目录的内容
+        }
+    }
+    RemoveOtherSelect();
+    newMulu.classList.add("select");
+    currentMuluName = newMulu.id;
+    jiedianwords.value = findMulufileData(newMulu);
+    isUpdating = true;
+    updateMarkdownPreview();
+    isUpdating = false;
+    
+    // 显示重复提示（使用 toast）
+    if (hasDuplicate) {
+        showToast("已存在同名目录", "warning", 2500);
+    }
 });

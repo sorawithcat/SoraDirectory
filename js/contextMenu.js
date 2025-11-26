@@ -59,11 +59,10 @@ deleteMulu.addEventListener("click", function () {
                     deleteAllChildren(childId);
                 }
                 
-                // 从 mulufile 中删除子目录数据
-                let childName = child.innerHTML;
+                // 从 mulufile 中删除子目录数据（只使用 dirId 查找，因为 dirId 是唯一的）
                 for (let j = mulufile.length - 1; j >= 0; j--) {
                     let item = mulufile[j];
-                    if (item.length === 4 && item[2] === childId && item[1] === childName) {
+                    if (item.length === 4 && item[2] === childId) {
                         mulufile.splice(j, 1);
                         break;
                     }
@@ -79,11 +78,10 @@ deleteMulu.addEventListener("click", function () {
             deleteAllChildren(currentDirId);
         }
         
-        // 从 mulufile 中删除当前目录数据
-        let currentName = nowchild.innerHTML;
+        // 从 mulufile 中删除当前目录数据（只使用 dirId 查找，因为 dirId 是唯一的）
         for (let i = mulufile.length - 1; i >= 0; i--) {
             let item = mulufile[i];
-            if (item.length === 4 && item[2] === currentDirId && item[1] === currentName) {
+            if (item.length === 4 && item[2] === currentDirId) {
                 mulufile.splice(i, 1);
                 break;
             }

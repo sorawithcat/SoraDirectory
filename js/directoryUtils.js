@@ -21,20 +21,20 @@ function getClassNames(element) {
 }
 
 /**
- * 更新目录数据（基于 data 属性查找）
+ * 更新目录数据（基于 data-dir-id 查找）
  * @param {HTMLElement} element - 目录 DOM 元素
  * @param {string} newContent - 新的内容
  * @returns {boolean} - 是否更新成功
  */
 function updateMulufileData(element, newContent) {
     let dirId = element.getAttribute("data-dir-id");
-    let name = element.innerHTML;
     
     if (!dirId) return false;
     
     for (let i = 0; i < mulufile.length; i++) {
         let item = mulufile[i];
-        if (item.length === 4 && item[2] === dirId && item[1] === name) {
+        // 只使用 dirId 查找，因为 dirId 是唯一的
+        if (item.length === 4 && item[2] === dirId) {
             mulufile[i][3] = newContent;
             return true;
         }
@@ -43,19 +43,19 @@ function updateMulufileData(element, newContent) {
 }
 
 /**
- * 查找目录数据（基于 data 属性查找）
+ * 查找目录数据（基于 data-dir-id 查找）
  * @param {HTMLElement} element - 目录 DOM 元素
  * @returns {string} - 目录内容，未找到返回空字符串
  */
 function findMulufileData(element) {
     let dirId = element.getAttribute("data-dir-id");
-    let name = element.innerHTML;
     
     if (!dirId) return "";
     
     for (let i = 0; i < mulufile.length; i++) {
         let item = mulufile[i];
-        if (item.length === 4 && item[2] === dirId && item[1] === name) {
+        // 只使用 dirId 查找，因为 dirId 是唯一的
+        if (item.length === 4 && item[2] === dirId) {
             return item[3];
         }
     }
@@ -181,13 +181,13 @@ function DuplicateMuluHints() {
         }
     }
     
-    // 显示重复提示
+    // 显示重复提示（使用 toast）
     if (duplicateMulu.length != 0) {
         for (let i = 0; i < duplicateMulu.length; i++) {
             console.warn(`重复目录名：${duplicateMulu[i]}    重复数量：${elementCount[duplicateMulu[i]] - 1}   其ID为：${duplicateMuluID[i]}    所在位置（悬浮显示）：`);
             console.warn(document.getElementById(duplicateMuluID[i]));
         }
-        customAlert(`重复目录名（按F12 > 控制台了解详情）: ${duplicateMulu.join(` , `)}`);
+        showToast(`存在 ${duplicateMulu.length} 个重复目录名`, "warning", 3000);
         return true;
     } else {
         console.log("无重复目录");
@@ -224,39 +224,30 @@ function ChangeChildName(idname = "", newName = "") {
         return false;
     }
     
-    // 检查新名称是否与其他目录重复
-    if (isDuplicateName(newName)) {
-        customAlert("目录名已存在，请使用其他名称");
-        return false;
-    }
+    // 检查新名称是否与其他目录重复（仅提示，不阻止）
+    let hasDuplicate = isDuplicateName(newName);
     
     let currentDirId = currentMulu.getAttribute("data-dir-id");
-    let oldName = currentMulu.innerHTML;
-    let newClassId = `mulu${newName}`;
+    // 保持原有的dirId不变，只更新名称
+    // 这样可以保持父子关系的稳定性
     
-    // 更新 mulufile 中的数据
+    // 更新 mulufile 中的数据（只更新名称，不改变dirId）
     for (let i = 0; i < mulufile.length; i++) {
         let item = mulufile[i];
         if (item.length === 4) {
-            // 更新当前目录的数据
-            if (item[2] === currentDirId && item[1] === oldName) {
+            // 更新当前目录的名称（只使用 dirId 查找，因为 dirId 是唯一的）
+            if (item[2] === currentDirId) {
                 mulufile[i][1] = newName;
-                mulufile[i][2] = newClassId;
-            }
-            // 更新子目录的父目录ID引用
-            if (item[0] === currentDirId) {
-                mulufile[i][0] = newClassId;
+                break;
             }
         }
     }
     
-    // 更新 DOM 元素的 data-dir-id
-    currentMulu.setAttribute("data-dir-id", newClassId);
+    // dirId 保持不变，不需要更新 DOM 和子目录引用
     
-    // 更新所有子目录的 data-parent-id
-    let children = findChildElementsByParentId(currentDirId);
-    for (let i = 0; i < children.length; i++) {
-        children[i].setAttribute("data-parent-id", newClassId);
+    // 显示重复提示（使用 toast）
+    if (hasDuplicate) {
+        showToast("已存在同名目录", "warning", 2500);
     }
     
     return true;

@@ -656,6 +656,58 @@
         .custom-dialog-btn-danger:hover {
             background-color: #c82333;
         }
+        
+        /* Toast 悬浮提示样式 */
+        .toast-container {
+            position: fixed;
+            top: 80px;
+            right: 20px;
+            z-index: 10000;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            pointer-events: none;
+        }
+        
+        .toast {
+            background-color: #333;
+            color: #fff;
+            padding: 12px 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            font-size: 14px;
+            max-width: 350px;
+            opacity: 0;
+            transform: translateX(100%);
+            transition: all 0.3s ease;
+            pointer-events: auto;
+        }
+        
+        .toast.show {
+            opacity: 1;
+            transform: translateX(0);
+        }
+        
+        .toast.hide {
+            opacity: 0;
+            transform: translateX(100%);
+        }
+        
+        .toast-info {
+            background-color: #2196F3;
+        }
+        
+        .toast-success {
+            background-color: #4CAF50;
+        }
+        
+        .toast-warning {
+            background-color: #FF9800;
+        }
+        
+        .toast-error {
+            background-color: #f44336;
+        }
     </style>
 </head>
 <body>
@@ -756,6 +808,9 @@
         <div class="cutAllMulu">收起所有目录</div>
         <div class="noneRightMouseMenu">取消</div>
     </div>
+    <!-- Toast 悬浮提示容器 -->
+    <div class="toast-container" id="toastContainer"></div>
+    
     <!-- 自定义对话框 -->
     <div class="custom-dialog-overlay" id="customDialogOverlay">
         <div class="custom-dialog" id="customDialog">

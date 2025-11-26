@@ -4,6 +4,41 @@
 // 依赖：无
 // ============================================
 
+// Toast 容器引用
+const toastContainer = document.getElementById('toastContainer');
+
+/**
+ * 显示 Toast 悬浮提示（自动消失）
+ * @param {string} message - 提示消息
+ * @param {string} type - 提示类型：'info'|'success'|'warning'|'error'，默认 'info'
+ * @param {number} duration - 显示时长（毫秒），默认 3000
+ */
+function showToast(message, type = 'info', duration = 3000) {
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.textContent = message;
+    
+    toastContainer.appendChild(toast);
+    
+    // 触发动画
+    requestAnimationFrame(() => {
+        toast.classList.add('show');
+    });
+    
+    // 自动消失
+    setTimeout(() => {
+        toast.classList.remove('show');
+        toast.classList.add('hide');
+        
+        // 动画结束后移除元素
+        setTimeout(() => {
+            if (toast.parentNode) {
+                toast.parentNode.removeChild(toast);
+            }
+        }, 300);
+    }, duration);
+}
+
 // DOM 元素引用
 const customDialogOverlay = document.getElementById('customDialogOverlay');
 const customDialog = document.getElementById('customDialog');
