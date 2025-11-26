@@ -1,20 +1,20 @@
 // ============================================
 // 主初始化模块 (main.js)
-// 功能：初始化应用，绑定事件监听器
+// 功能：应用初始化、全局事件绑定
+// 依赖：所有其他模块（需最后加载）
 // ============================================
 
-// 去除默认事件（但允许在编辑器中使用右键菜单）
+// 禁用默认右键菜单（编辑器区域显示自定义工具栏）
 document.oncontextmenu = function (e) {
-    // 如果是在预览区域，显示格式工具栏
     if (e.target === markdownPreview || markdownPreview.contains(e.target)) {
         e.preventDefault();
         showTextFormatToolbar(e);
         return false;
     }
     return false;
-}
+};
 
-// 初始化文件夹样式（在DOM加载后）
+// 初始化文件夹样式
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', function() {
         AddListStyleForFolder();
@@ -23,16 +23,19 @@ if (document.readyState === 'loading') {
     AddListStyleForFolder();
 }
 
-// 加载所有元素后执行
+// DOM 加载完成后初始化
 document.addEventListener("DOMContentLoaded", function () {
-    // 给所有body里的东西添加id
+    // 为所有元素生成唯一 ID
     for (let i = 0; i < allThins.length; i++) {
         allThins[i].id = getOneId(10, 0);
     }
+    
+    // 加载目录数据
     LoadMulu();
-    // 延迟执行，确保所有目录都已创建
+    
+    // 延迟执行初始化（确保 DOM 完全渲染）
     setTimeout(() => {
-        // 初始化所有有子目录的目录，展开它们
+        // 展开所有带有子目录的目录
         let allMulus = document.querySelectorAll(".mulu.has-children");
         for (let i = 0; i < allMulus.length; i++) {
             let mulu = allMulus[i];
@@ -41,11 +44,14 @@ document.addEventListener("DOMContentLoaded", function () {
                 toggleChildDirectories(dirId, true);
             }
         }
+        
+        // 初始收起所有目录
         NoneChildMulu();
         
         // 默认选中第一个根目录
         let firstRootMulu = null;
         let allMulusForSelect = document.querySelectorAll(".mulu");
+        
         for (let i = 0; i < allMulusForSelect.length; i++) {
             let mulu = allMulusForSelect[i];
             let parentId = mulu.getAttribute("data-parent-id");
@@ -54,10 +60,12 @@ document.addEventListener("DOMContentLoaded", function () {
                 break;
             }
         }
+        
         if (firstRootMulu) {
             currentMuluName = firstRootMulu.id;
             RemoveOtherSelect();
             firstRootMulu.classList.add("select");
+            
             // 显示第一个目录的内容
             jiedianwords.value = findMulufileData(firstRootMulu);
             isUpdating = true;
@@ -65,5 +73,4 @@ document.addEventListener("DOMContentLoaded", function () {
             isUpdating = false;
         }
     }, 10);
-})
-
+});

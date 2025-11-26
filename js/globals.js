@@ -1,79 +1,123 @@
 // ============================================
 // 全局变量和DOM引用模块 (globals.js)
-// 功能：定义全局变量和DOM元素引用
+// 功能：定义全局变量、常量和DOM元素引用
+// 依赖：无（需最先加载）
 // ============================================
 
-// 储存目录文件
+// -------------------- 常量配置 --------------------
+
+/** 图片最大宽度（像素） */
+const MAX_IMAGE_WIDTH = 800;
+
+/** 图片最大高度（像素） */
+const MAX_IMAGE_HEIGHT = 600;
+
+// -------------------- 公共函数 --------------------
+
+/**
+ * 限制图片大小但保持宽高比例
+ * @param {HTMLImageElement} img - 图片元素
+ * @param {number} maxWidth - 最大宽度，默认使用 MAX_IMAGE_WIDTH
+ * @param {number} maxHeight - 最大高度，默认使用 MAX_IMAGE_HEIGHT
+ * @returns {Promise<void>} - 图片处理完成后 resolve
+ */
+function limitImageSize(img, maxWidth = MAX_IMAGE_WIDTH, maxHeight = MAX_IMAGE_HEIGHT) {
+    return new Promise((resolve) => {
+        const applySizeLimit = () => {
+            const width = img.naturalWidth;
+            const height = img.naturalHeight;
+            
+            if (width === 0 || height === 0) {
+                resolve();
+                return;
+            }
+            
+            // 计算缩放比例（不放大，只缩小）
+            const widthRatio = maxWidth / width;
+            const heightRatio = maxHeight / height;
+            const ratio = Math.min(widthRatio, heightRatio, 1);
+            
+            if (ratio < 1) {
+                // 图片超过限制，按比例缩小
+                img.style.width = (width * ratio) + 'px';
+                img.style.height = 'auto';
+            } else {
+                // 图片在限制内，设置最大宽度为100%
+                img.style.maxWidth = '100%';
+                img.style.height = 'auto';
+            }
+            
+            resolve();
+        };
+        
+        // 判断图片是否已加载
+        if (img.complete && img.naturalWidth > 0) {
+            applySizeLimit();
+        } else {
+            img.onload = applySizeLimit;
+            img.onerror = () => resolve();
+        }
+    });
+}
+
+// -------------------- 状态变量 --------------------
+
+/** 目录数据数组，格式：[[父ID, 名称, ID, 内容], ...] */
 let mulufile = [];
 
-// 新/旧的目录名
-let newName, oldName;
+/** 新目录名（临时存储） */
+let newName;
 
-// 所选择的目录
+/** 旧目录名（临时存储） */
+let oldName;
+
+/** 当前选中的目录元素ID */
 let currentMuluName = null;
 
-// 预览区域更新标志
+/** 预览区域更新标志，防止循环更新 */
 let isUpdating = false;
 
-// 所有物体
+// -------------------- DOM 元素引用 --------------------
+
+// 基础容器
 const body = document.querySelector("body");
 const allThins = body.querySelectorAll("*");
 
-// 包裹目录的两个盒子
-const bigbox = document.querySelector(".bigbox");
-const showbox = document.querySelector(".showbox");
+// 目录区域
+const bigbox = document.querySelector(".bigbox");           // 目录容器
+const showbox = document.querySelector(".showbox");         // 显示区域
+const mulus = document.querySelectorAll(".mulu");           // 所有目录元素
+const firststep = document.querySelector(".firststep");     // 目录列表容器
+const mulubox = document.querySelector(".mulubox");         // 目录主体
 
-// 所有的目录
-const mulus = document.querySelectorAll(".mulu");
-
-// 目录容器
-const firststep = document.querySelector(".firststep");
-
-// 目录主体
-const mulubox = document.querySelector(".mulubox");
-
-// 按钮容器
-// 添加目录
-const addNewMuluButton = document.querySelector(".addNewMuluButton");
-
-// 添加新节点
-const addNewPotsButton = document.querySelector(".addNewPotsButton");
+// 目录操作按钮
+const addNewMuluButton = document.querySelector(".addNewMuluButton");   // 添加目录
+const addNewPotsButton = document.querySelector(".addNewPotsButton");   // 添加节点
 
 // 顶部工具栏按钮
-const newBtn = document.getElementById("newBtn");
-const topSaveBtn = document.getElementById("saveBtn");
-const saveAsBtn = document.getElementById("saveAsBtn");
-const topLoadBtn = document.getElementById("loadBtn");
-const expandAllBtn = document.getElementById("expandAllBtn");
-const collapseAllBtn = document.getElementById("collapseAllBtn");
-const toggleSidebarBtn = document.getElementById("toggleSidebarBtn");
-const fullscreenBtn = document.getElementById("fullscreenBtn");
-const topImageUploadBtn = document.getElementById("topImageUploadBtn");
-const topLinkBtn = document.getElementById("topLinkBtn");
-const topToolbar = document.getElementById("topToolbar");
+const newBtn = document.getElementById("newBtn");                       // 新建
+const topSaveBtn = document.getElementById("saveBtn");                  // 保存
+const saveAsBtn = document.getElementById("saveAsBtn");                 // 另存为
+const topLoadBtn = document.getElementById("loadBtn");                  // 加载
+const expandAllBtn = document.getElementById("expandAllBtn");           // 展开全部
+const collapseAllBtn = document.getElementById("collapseAllBtn");       // 收起全部
+const toggleSidebarBtn = document.getElementById("toggleSidebarBtn");   // 切换侧边栏
+const fullscreenBtn = document.getElementById("fullscreenBtn");         // 全屏
+const topImageUploadBtn = document.getElementById("topImageUploadBtn"); // 顶部图片上传
+const topLinkBtn = document.getElementById("topLinkBtn");               // 顶部链接按钮
+const topToolbar = document.getElementById("topToolbar");               // 顶部工具栏
 
-// 节点内容容器
-const jiedianwords = document.querySelector(".jiedianwords");
-const markdownPreview = document.querySelector(".markdown-preview");
-const textFormatToolbar = document.querySelector(".text-format-toolbar");
-const imageUploadBtn = document.getElementById("imageUploadBtn");
-const imageFileInput = document.getElementById("imageFileInput");
-
-// 节点盒子
-const wordsbox = document.querySelector(".wordsbox");
+// 内容编辑区域
+const jiedianwords = document.querySelector(".jiedianwords");           // 隐藏的 textarea
+const markdownPreview = document.querySelector(".markdown-preview");     // 预览/编辑区域
+const textFormatToolbar = document.querySelector(".text-format-toolbar"); // 悬浮格式工具栏
+const imageUploadBtn = document.getElementById("imageUploadBtn");        // 图片上传按钮
+const imageFileInput = document.getElementById("imageFileInput");        // 图片文件输入
+const wordsbox = document.querySelector(".wordsbox");                   // 内容区域容器
 
 // 右键菜单
-const rightmousemenu = document.querySelector(".rightmousemenu");
-
-// 右键-删除
-const deleteMulu = document.querySelector(".deleteMulu");
-
-// 右键-取消
-const noneRightMouseMenu = document.querySelector(".noneRightMouseMenu");
-
-// 右键-展开所有目录
-const showAllMulu = document.querySelector(".showAllMulu");
-
-// 右键-收缩所有目录
-const cutAllMulu = document.querySelector(".cutAllMulu");
-
+const rightmousemenu = document.querySelector(".rightmousemenu");       // 右键菜单容器
+const deleteMulu = document.querySelector(".deleteMulu");               // 删除目录
+const noneRightMouseMenu = document.querySelector(".noneRightMouseMenu"); // 取消
+const showAllMulu = document.querySelector(".showAllMulu");             // 展开所有目录
+const cutAllMulu = document.querySelector(".cutAllMulu");               // 收起所有目录

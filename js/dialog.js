@@ -1,8 +1,10 @@
 // ============================================
 // 对话框模块 (dialog.js)
-// 功能：自定义对话框系统（alert, confirm, prompt）
+// 功能：自定义对话框系统，替代原生 alert/confirm/prompt
+// 依赖：无
 // ============================================
 
+// DOM 元素引用
 const customDialogOverlay = document.getElementById('customDialogOverlay');
 const customDialog = document.getElementById('customDialog');
 const customDialogTitle = document.getElementById('customDialogTitle');
@@ -11,7 +13,12 @@ const customDialogInput = document.getElementById('customDialogInput');
 const customDialogFooter = document.getElementById('customDialogFooter');
 const customDialogClose = document.getElementById('customDialogClose');
 
-// 自定义 alert
+/**
+ * 自定义 alert 对话框
+ * @param {string} message - 显示的消息内容
+ * @param {string} title - 对话框标题，默认为"提示"
+ * @returns {Promise<void>} - 用户点击确定后 resolve
+ */
 function customAlert(message, title = '提示') {
     return new Promise((resolve) => {
         customDialogTitle.textContent = title;
@@ -38,7 +45,12 @@ function customAlert(message, title = '提示') {
     });
 }
 
-// 自定义 confirm
+/**
+ * 自定义 confirm 对话框
+ * @param {string} message - 显示的确认消息
+ * @param {string} title - 对话框标题，默认为"确认"
+ * @returns {Promise<boolean>} - 用户点击确定返回 true，取消返回 false
+ */
 function customConfirm(message, title = '确认') {
     return new Promise((resolve) => {
         customDialogTitle.textContent = title;
@@ -69,7 +81,13 @@ function customConfirm(message, title = '确认') {
     });
 }
 
-// 自定义 prompt
+/**
+ * 自定义 prompt 输入对话框
+ * @param {string} message - 显示的提示消息
+ * @param {string} defaultValue - 输入框的默认值
+ * @param {string} title - 对话框标题，默认为"输入"
+ * @returns {Promise<string|null>} - 用户点击确定返回输入值，取消返回 null
+ */
 function customPrompt(message, defaultValue = '', title = '输入') {
     return new Promise((resolve) => {
         customDialogTitle.textContent = title;
@@ -97,6 +115,8 @@ function customPrompt(message, defaultValue = '', title = '输入') {
         okBtn.onclick = handleOk;
         cancelBtn.onclick = () => closeDialog(null);
         closeBtn.onclick = () => closeDialog(null);
+        
+        // 键盘事件：回车确认，ESC取消
         customDialogInput.onkeydown = (e) => {
             if (e.key === 'Enter') {
                 e.preventDefault();
@@ -106,6 +126,8 @@ function customPrompt(message, defaultValue = '', title = '输入') {
                 closeDialog(null);
             }
         };
+        
+        // 点击遮罩层关闭
         customDialogOverlay.onclick = (e) => {
             if (e.target === customDialogOverlay) closeDialog(null);
         };
@@ -114,4 +136,3 @@ function customPrompt(message, defaultValue = '', title = '输入') {
         setTimeout(() => customDialogInput.focus(), 100);
     });
 }
-

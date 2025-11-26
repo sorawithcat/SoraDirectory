@@ -1,31 +1,33 @@
 // ============================================
-// toolbar 模块 (toolbar.js)
+// 工具栏模块 (toolbar.js)
+// 功能：顶部工具栏的所有按钮事件处理
+// 依赖：globals.js, fileOperations.js, directoryCore.js, formatToolbar.js
 // ============================================
 
-// 更新工具栏高度（动态调整其他元素位置）
+// -------------------- 工具栏高度自适应 --------------------
+
+/**
+ * 更新工具栏高度，动态调整其他元素位置
+ */
 function updateToolbarHeight() {
     if (topToolbar) {
         const toolbarHeight = topToolbar.offsetHeight;
         document.documentElement.style.setProperty('--toolbar-height', toolbarHeight + 'px');
         
-        // 直接更新wordsbox的位置和高度，确保立即生效
+        // 更新内容区域位置和高度
         if (wordsbox) {
             const availableHeight = window.innerHeight - toolbarHeight;
             wordsbox.style.top = `${toolbarHeight}px`;
             wordsbox.style.height = `${availableHeight}px`;
             
-            // 确保内部容器高度正确
             const markdownContainer = wordsbox.querySelector('.markdown-editor-container');
-            if (markdownContainer) {
-                markdownContainer.style.height = '100%';
-            }
-            const markdownPreview = wordsbox.querySelector('.markdown-preview');
-            if (markdownPreview) {
-                markdownPreview.style.height = '100%';
-            }
+            if (markdownContainer) markdownContainer.style.height = '100%';
+            
+            const preview = wordsbox.querySelector('.markdown-preview');
+            if (preview) preview.style.height = '100%';
         }
         
-        // 同时更新bigbox的位置和高度
+        // 更新目录区域位置和高度
         const bigbox = document.querySelector('.bigbox');
         if (bigbox) {
             bigbox.style.top = `${toolbarHeight}px`;
@@ -34,39 +36,29 @@ function updateToolbarHeight() {
     }
 }
 
-// 初始化时更新高度（立即执行，确保初始高度正确）
+// 初始化工具栏高度
 if (topToolbar) {
-    // 立即更新一次（使用requestAnimationFrame确保DOM已渲染）
+    // 立即更新
     requestAnimationFrame(function() {
         updateToolbarHeight();
-        // 再延迟一次确保完全渲染
         setTimeout(updateToolbarHeight, 0);
     });
     
     // 页面加载完成后更新
-    window.addEventListener('load', function() {
-        updateToolbarHeight();
-    });
+    window.addEventListener('load', updateToolbarHeight);
     
-    // DOMContentLoaded时也更新
+    // DOMContentLoaded 时更新
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', function() {
-            updateToolbarHeight();
-        });
+        document.addEventListener('DOMContentLoaded', updateToolbarHeight);
     } else {
-        // 如果已经加载完成，立即更新
         updateToolbarHeight();
     }
     
     // 窗口大小改变时更新
-    window.addEventListener('resize', function() {
-        updateToolbarHeight();
-    });
+    window.addEventListener('resize', updateToolbarHeight);
     
-    // 使用MutationObserver监听工具栏内容变化
-    const observer = new MutationObserver(function() {
-        updateToolbarHeight();
-    });
+    // 监听工具栏内容变化
+    const observer = new MutationObserver(updateToolbarHeight);
     observer.observe(topToolbar, {
         childList: true,
         subtree: true,
@@ -75,18 +67,18 @@ if (topToolbar) {
     });
 }
 
-// 顶部工具栏按钮事件处理
-// 保存功能
+// -------------------- 文件操作按钮 --------------------
+
+// 保存按钮
 if (topSaveBtn) {
     topSaveBtn.addEventListener("click", function() {
-        // 直接调用保存功能（保存功能代码在下面）
         handleSave();
     });
 }
 
-// 加载功能
+// 加载按钮
 if (topLoadBtn) {
-    // 创建隐藏的文件输入元素
+    // 创建隐藏的文件输入
     const fileInput = document.createElement('input');
     fileInput.type = 'file';
     fileInput.accept = '.json,.txt,.xml,.csv';
@@ -97,7 +89,7 @@ if (topLoadBtn) {
         fileInput.click();
     });
     
-    // 处理文件选择
+    // 文件选择处理
     fileInput.addEventListener("change", function(e) {
         const file = e.target.files[0];
         if (!file) return;
@@ -106,11 +98,8 @@ if (topLoadBtn) {
         const reader = new FileReader();
         
         reader.onload = function() {
-            const fileContent = reader.result;
-            
             try {
-                // 解析文件内容
-                mulufile = parseFileContent(fileContent, fileName);
+                mulufile = parseFileContent(reader.result, fileName);
                 
                 // 验证数据格式
                 if (!Array.isArray(mulufile) || mulufile.length === 0) {
@@ -118,16 +107,16 @@ if (topLoadBtn) {
                     return;
                 }
                 
-                // 验证第一个目录
                 if (mulufile[0].length < 4 || mulufile[0][0] !== "mulu") {
                     customAlert("文件格式错误：第一个目录必须以'mulu'开头，且每个目录数据必须包含4个元素");
                     return;
                 }
                 
+                // 加载目录
                 LoadMulu();
-                // 延迟执行，确保所有目录都已创建并设置好data属性
+                
                 setTimeout(() => {
-                    // 初始化所有有子目录的目录，展开它们
+                    // 展开所有目录
                     let allMulus = document.querySelectorAll(".mulu.has-children");
                     for (let i = 0; i < allMulus.length; i++) {
                         let mulu = allMulus[i];
@@ -138,7 +127,7 @@ if (topLoadBtn) {
                     }
                     NoneChildMulu();
                     
-                    // 默认选中第一个根目录
+                    // 选中第一个根目录
                     let firstRootMulu = null;
                     let allMulusForSelect = document.querySelectorAll(".mulu");
                     for (let i = 0; i < allMulusForSelect.length; i++) {
@@ -149,11 +138,11 @@ if (topLoadBtn) {
                             break;
                         }
                     }
+                    
                     if (firstRootMulu) {
                         currentMuluName = firstRootMulu.id;
                         RemoveOtherSelect();
                         firstRootMulu.classList.add("select");
-                        // 显示第一个目录的内容
                         jiedianwords.value = findMulufileData(firstRootMulu);
                         isUpdating = true;
                         updateMarkdownPreview();
@@ -170,7 +159,6 @@ if (topLoadBtn) {
                 customAlert("文件加载失败：" + error.message);
             }
             
-            // 重置文件输入，以便可以再次选择同一个文件
             fileInput.value = '';
         };
         
@@ -183,21 +171,28 @@ if (topLoadBtn) {
     });
 }
 
+// -------------------- 目录操作按钮 --------------------
+
+// 展开全部
 if (expandAllBtn) {
     expandAllBtn.addEventListener("click", function() {
         if (showAllMulu) showAllMulu.click();
     });
 }
 
+// 收起全部
 if (collapseAllBtn) {
     collapseAllBtn.addEventListener("click", function() {
         if (cutAllMulu) cutAllMulu.click();
     });
 }
 
+// -------------------- 视图操作按钮 --------------------
+
 // 切换侧边栏
 if (toggleSidebarBtn) {
     let sidebarVisible = true;
+    
     toggleSidebarBtn.addEventListener("click", function() {
         sidebarVisible = !sidebarVisible;
         if (sidebarVisible) {
@@ -238,20 +233,20 @@ if (fullscreenBtn) {
 
 // 新建功能
 if (newBtn) {
-    newBtn.addEventListener("click", function() {
-        if (confirm("确定要新建吗？当前未保存的内容将丢失。")) {
-            // 清空目录
+    newBtn.addEventListener("click", async function() {
+        const result = await customConfirm("确定要新建吗？当前未保存的内容将丢失。");
+        if (result) {
+            // 清空数据
+            mulufile = [];
+            currentMuluName = null;
+            
+            // 清空 DOM
             const firststep = document.querySelector(".firststep");
-            if (firststep) {
-                firststep.innerHTML = "";
-            }
-            // 清空内容
-            if (jiedianwords) {
-                jiedianwords.value = "";
-            }
-            if (markdownPreview) {
-                markdownPreview.innerHTML = "";
-            }
+            if (firststep) firststep.innerHTML = "";
+            
+            if (jiedianwords) jiedianwords.value = "";
+            if (markdownPreview) markdownPreview.innerHTML = "";
+            
             customAlert("已新建");
         }
     });
@@ -260,36 +255,31 @@ if (newBtn) {
 // 另存为功能
 if (saveAsBtn) {
     saveAsBtn.addEventListener("click", async function() {
-        // 另存为总是提示输入文件名
         let customName = await customPrompt("输入文件名（包含扩展名，如：mydata.json）", "");
         if (!customName) {
             customAlert("已取消保存");
             return;
         }
-        // 调用保存功能，但使用自定义文件名
         await handleSaveAs(customName);
     });
 }
 
+// -------------------- 格式按钮 --------------------
 
-// 顶部工具栏格式按钮事件处理
+// 顶部工具栏格式按钮
 document.querySelectorAll('.format-toolbar-btn').forEach(btn => {
     if (btn.id === 'topLinkBtn') {
-        // 链接按钮单独处理（已在 formatToolbar.js 中处理）
         btn.addEventListener('click', async function(e) {
             e.preventDefault();
             e.stopPropagation();
             await applyFormat('link');
         });
     } else {
-        // 其他格式按钮
         btn.addEventListener('click', function(e) {
             e.preventDefault();
             e.stopPropagation();
             const command = this.getAttribute('data-command');
-            if (command) {
-                applyFormat(command);
-            }
+            if (command) applyFormat(command);
         });
     }
 });
@@ -299,34 +289,32 @@ if (topImageUploadBtn) {
     topImageUploadBtn.addEventListener('click', function(e) {
         e.preventDefault();
         e.stopPropagation();
-        if (imageFileInput) {
-            imageFileInput.click();
-        }
+        if (imageFileInput) imageFileInput.click();
     });
 }
 
-// 键盘快捷键支持
+// -------------------- 键盘快捷键 --------------------
+
 document.addEventListener('keydown', function(e) {
-    // 检查是否按下了Ctrl键（Windows/Linux）或Cmd键（Mac）
     const isCtrl = e.ctrlKey || e.metaKey;
     
     if (isCtrl) {
         switch(e.key.toLowerCase()) {
-            case 's':
+            case 's':  // Ctrl+S 保存
                 e.preventDefault();
                 if (topSaveBtn) topSaveBtn.click();
                 break;
-            case 'b':
+            case 'b':  // Ctrl+B 粗体
                 e.preventDefault();
                 const boldBtn = document.querySelector('.format-toolbar-btn[data-command="bold"]');
                 if (boldBtn) boldBtn.click();
                 break;
-            case 'i':
+            case 'i':  // Ctrl+I 斜体
                 e.preventDefault();
                 const italicBtn = document.querySelector('.format-toolbar-btn[data-command="italic"]');
                 if (italicBtn) italicBtn.click();
                 break;
-            case 'u':
+            case 'u':  // Ctrl+U 下划线
                 e.preventDefault();
                 const underlineBtn = document.querySelector('.format-toolbar-btn[data-command="underline"]');
                 if (underlineBtn) underlineBtn.click();

@@ -1,12 +1,23 @@
 // ============================================
-// formatToolbar 模块 (formatToolbar.js)
+// 格式工具栏模块 (formatToolbar.js)
+// 功能：悬浮格式工具栏、文本格式化操作
+// 依赖：globals.js, preview.js, dialog.js
 // ============================================
 
-// 显示/隐藏悬浮工具栏
+// -------------------- 状态变量 --------------------
+
+/** 当前选中的文本 */
 let selectedText = '';
+
+/** 当前选中范围 */
 let selectionRange = null;
 
-// 获取预览区域的选中内容
+// -------------------- 辅助函数 --------------------
+
+/**
+ * 获取预览区域的选中内容
+ * @returns {Object|null} - { text: string, range: Range } 或 null
+ */
 function getPreviewSelection() {
     if (!markdownPreview) {
         return null;
@@ -39,7 +50,10 @@ function getPreviewSelection() {
     };
 }
 
-// 显示文字格式工具栏的函数
+/**
+ * 显示文字格式工具栏
+ * @param {MouseEvent} e - 鼠标事件对象
+ */
 function showTextFormatToolbar(e) {
     // 先同步预览区域到 textarea
     syncPreviewToTextarea();
@@ -124,7 +138,9 @@ function showTextFormatToolbar(e) {
     textFormatToolbar.style.visibility = 'visible';
 }
 
-// 预览区域鼠标抬起事件
+// -------------------- 预览区域事件绑定 --------------------
+
+// 预览区域鼠标抬起事件（显示工具栏）
 if (markdownPreview) {
     markdownPreview.addEventListener("mouseup", function(e) {
         setTimeout(() => {
@@ -146,6 +162,8 @@ if (markdownPreview) {
         }, 10);
     });
 }
+
+// -------------------- 格式按钮事件绑定 --------------------
 
 // 格式化按钮点击事件
 document.querySelectorAll('.format-btn').forEach(btn => {
@@ -196,14 +214,34 @@ if (markdownPreview) {
     });
 }
 
-// HTML 转义辅助函数
+// -------------------- 辅助函数 --------------------
+
+/**
+ * HTML 转义
+ * @param {string} text - 原始文本
+ * @returns {string} - 转义后的文本
+ */
 function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
 }
 
-// 应用格式化（在预览区域直接应用 HTML 格式）
+// -------------------- 格式化核心函数 --------------------
+
+/**
+ * 应用格式化命令
+ * 在预览区域直接应用 HTML 格式，支持切换（再次点击取消格式）
+ * 
+ * 支持的命令：
+ * - 标题：h1, h2, h3, h4, h5, h6
+ * - 文本格式：bold, italic, underline, strikethrough, code, code-block, highlight, superscript, subscript
+ * - 链接：link
+ * - 列表：unordered-list, ordered-list, task-list
+ * - 块级元素：quote, paragraph, hr, table
+ * 
+ * @param {string} command - 格式化命令
+ */
 async function applyFormat(command) {
     const selection = window.getSelection();
     let range;

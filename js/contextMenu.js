@@ -1,31 +1,37 @@
 // ============================================
-// contextMenu 模块 (contextMenu.js)
+// 右键菜单模块 (contextMenu.js)
+// 功能：目录区域的右键菜单功能
+// 依赖：globals.js, directoryUtils.js, preview.js
 // ============================================
 
-//显示右键菜单
+/**
+ * 显示右键菜单
+ * @param {MouseEvent} e - 鼠标事件对象
+ */
 function rightMouseMenu(e) {
     rightmousemenu.style.display = "block";
     rightmousemenu.style.left = `${e.clientX}px`;
     rightmousemenu.style.top = `${e.clientY}px`;
 }
-//失去焦点后隐藏
+
+// 点击页面其他区域时隐藏菜单
 document.addEventListener('click', function () {
     noneRightMouseMenu.click();
+});
 
-})
-
-//右键-取消
+// 右键菜单 - 取消
 noneRightMouseMenu.addEventListener("click", function () {
     rightmousemenu.style.display = "none";
-})
+});
 
-//右键-删除 - 基于data属性
+// 右键菜单 - 删除目录（包含所有子目录）
 deleteMulu.addEventListener("click", function () {
     customConfirm("是否删除此目录？").then(result => {
         if (!result) {
             noneRightMouseMenu.click();
             return;
         }
+        
         let nowchild = document.getElementById(currentMuluName);
         if (!nowchild) {
             noneRightMouseMenu.click();
@@ -34,7 +40,10 @@ deleteMulu.addEventListener("click", function () {
         
         let currentDirId = nowchild.getAttribute("data-dir-id");
         
-        // 递归删除所有子目录
+        /**
+         * 递归删除所有子目录
+         * @param {string} parentId - 父目录ID
+         */
         function deleteAllChildren(parentId) {
             if (!parentId) return;
             let children = findChildElementsByParentId(parentId);
@@ -50,7 +59,7 @@ deleteMulu.addEventListener("click", function () {
                     deleteAllChildren(childId);
                 }
                 
-                // 从mulufile中删除子目录数据
+                // 从 mulufile 中删除子目录数据
                 let childName = child.innerHTML;
                 for (let j = mulufile.length - 1; j >= 0; j--) {
                     let item = mulufile[j];
@@ -60,7 +69,7 @@ deleteMulu.addEventListener("click", function () {
                     }
                 }
                 
-                // 删除DOM元素
+                // 删除 DOM 元素
                 child.remove();
             }
         }
@@ -70,7 +79,7 @@ deleteMulu.addEventListener("click", function () {
             deleteAllChildren(currentDirId);
         }
         
-        // 从mulufile中删除当前目录数据
+        // 从 mulufile 中删除当前目录数据
         let currentName = nowchild.innerHTML;
         for (let i = mulufile.length - 1; i >= 0; i--) {
             let item = mulufile[i];
@@ -80,7 +89,7 @@ deleteMulu.addEventListener("click", function () {
             }
         }
         
-        // 删除DOM元素
+        // 删除 DOM 元素
         nowchild.remove();
         
         // 重置状态
@@ -90,15 +99,14 @@ deleteMulu.addEventListener("click", function () {
         updateMarkdownPreview();
         isUpdating = false;
         
-        // 更新UI
+        // 更新 UI
         AddListStyleForFolder();
         DuplicateMuluHints();
         noneRightMouseMenu.click();
     });
-})
+});
 
-
-//右键-展开目录
+// 右键菜单 - 展开所有目录
 showAllMulu.addEventListener("click", function () {
     let allMulus = document.querySelectorAll(".mulu.has-children");
     for (let i = 0; i < allMulus.length; i++) {
@@ -109,9 +117,9 @@ showAllMulu.addEventListener("click", function () {
             toggleChildDirectories(dirId, true);
         }
     }
-})
+});
 
-//右键-收起目录
+// 右键菜单 - 收起所有目录
 cutAllMulu.addEventListener("click", function () {
     let allMulus = document.querySelectorAll(".mulu.has-children");
     for (let i = 0; i < allMulus.length; i++) {
@@ -122,4 +130,4 @@ cutAllMulu.addEventListener("click", function () {
             toggleChildDirectories(dirId, false);
         }
     }
-})
+});
