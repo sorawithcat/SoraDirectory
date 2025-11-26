@@ -590,22 +590,14 @@ async function applyFormat(command) {
             break;
         case 'spoiler':
             if (!selectedText) return;
-            unwrapTag = isWrappedInTag(range, ['SPAN']);
-            // 检查是否是防剧透标签（具有 spoiler 类）
-            if (unwrapTag && !unwrapTag.classList.contains('spoiler')) {
-                unwrapTag = null;
-            }
+            unwrapTag = isWrappedInTag(range, ['SPOILER']);
             if (!unwrapTag) {
-                // 查找选中内容中的 spoiler span
-                const spoilerSpan = findTagInSelection(range, 'SPAN');
-                if (spoilerSpan && spoilerSpan.classList.contains('spoiler')) {
-                    unwrapTag = spoilerSpan;
-                }
+                unwrapTag = findTagInSelection(range, 'SPOILER');
             }
             if (unwrapTag) {
                 shouldUnwrap = true;
             } else {
-                formattedHtml = '<span class="spoiler">' + selectedHtml + '</span>';
+                formattedHtml = '<spoiler>' + selectedHtml + '</spoiler>';
             }
             break;
         case 'superscript':
@@ -857,7 +849,7 @@ async function applyFormat(command) {
         
         // 辅助函数：检查节点是否在格式标签内
         function isInFormatTag(node) {
-            const formatTags = ['EM', 'I', 'STRONG', 'B', 'U', 'S', 'STRIKE', 'DEL', 'CODE', 'MARK', 'SUP', 'SUB', 'SPAN'];
+            const formatTags = ['EM', 'I', 'STRONG', 'B', 'U', 'S', 'STRIKE', 'DEL', 'CODE', 'MARK', 'SUP', 'SUB', 'SPOILER'];
             let parent = node.nodeType === Node.TEXT_NODE ? node.parentNode : node;
             while (parent && parent !== markdownPreview) {
                 if (parent.nodeType === Node.ELEMENT_NODE && formatTags.includes(parent.tagName)) {
@@ -885,7 +877,7 @@ async function applyFormat(command) {
             const parent = insertedElement.parentNode;
             if (parent) {
                 // 检查插入的元素是否是行内格式标签
-                const inlineFormatTags = ['EM', 'I', 'STRONG', 'B', 'U', 'S', 'STRIKE', 'DEL', 'CODE', 'MARK', 'SUP', 'SUB', 'A', 'SPAN'];
+                const inlineFormatTags = ['EM', 'I', 'STRONG', 'B', 'U', 'S', 'STRIKE', 'DEL', 'CODE', 'MARK', 'SUP', 'SUB', 'A', 'SPOILER'];
                 const isInlineFormat = inlineFormatTags.includes(insertedElement.tagName);
                 
                 if (isInlineFormat) {
@@ -1013,7 +1005,7 @@ async function applyFormat(command) {
                 // 检查光标是否在格式标签内
                 let container = currentRange.startContainer;
                 let node = container.nodeType === Node.TEXT_NODE ? container.parentNode : container;
-                const formatTags = ['EM', 'I', 'STRONG', 'B', 'U', 'S', 'STRIKE', 'DEL', 'CODE', 'MARK', 'SUP', 'SUB', 'SPAN'];
+                const formatTags = ['EM', 'I', 'STRONG', 'B', 'U', 'S', 'STRIKE', 'DEL', 'CODE', 'MARK', 'SUP', 'SUB', 'SPOILER'];
                 
                 while (node && node !== markdownPreview) {
                     if (node.nodeType === Node.ELEMENT_NODE && formatTags.includes(node.tagName)) {
