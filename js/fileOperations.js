@@ -171,8 +171,11 @@ async function handleSave() {
         return;
     }
     
-    let baseName = "soralist";
-    let filename = `${baseName}ForLoad.${format}`;
+    // 从输入框获取文件名
+    let baseName = (fileNameInput && fileNameInput.value.trim()) || "soralist";
+    // 移除可能的扩展名
+    baseName = baseName.replace(/\.(json|txt|xml|csv)$/i, '');
+    let filename = `${baseName}.${format}`;
     
     // 准备数据
     let mimeType = getMimeType(filename);

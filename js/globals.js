@@ -99,6 +99,7 @@ const newBtn = document.getElementById("newBtn");                       // 新�
 const topSaveBtn = document.getElementById("saveBtn");                  // 保存
 const saveAsBtn = document.getElementById("saveAsBtn");                 // 另存为
 const topLoadBtn = document.getElementById("loadBtn");                  // 加载
+const fileNameInput = document.getElementById("fileNameInput");         // 文件名输入框
 const expandAllBtn = document.getElementById("expandAllBtn");           // 展开全部
 const collapseAllBtn = document.getElementById("collapseAllBtn");       // 收起全部
 const toggleSidebarBtn = document.getElementById("toggleSidebarBtn");   // 切换侧边栏

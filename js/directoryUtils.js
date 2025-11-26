@@ -269,12 +269,18 @@ function NoneChildMulu() {
  * - 左键单击：选择目录 / 点击三角折叠展开
  * - 左键双击：重命名目录
  * - 右键单击：显示右键菜单
+ * - 拖拽：移动目录
  * 
  * @param {HTMLElement} muluElement - 目录 DOM 元素
  * @param {number} mulufileIndex - 在 mulufile 数组中的索引（可选，-1 表示动态查找）
  */
 function bindMuluEvents(muluElement, mulufileIndex = -1) {
     let clickTimer = null;
+    
+    // 绑定拖拽事件
+    if (typeof bindDragEvents === 'function') {
+        bindDragEvents(muluElement);
+    }
     
     // 鼠标点击事件
     muluElement.addEventListener("mouseup", function(e) {

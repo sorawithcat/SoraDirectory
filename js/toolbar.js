@@ -154,6 +154,13 @@ if (topLoadBtn) {
                 
                 bigbox.style.display = "block";
                 wordsbox.style.display = "block";
+                
+                // 更新文件名输入框
+                if (fileNameInput) {
+                    // 移除扩展名
+                    let nameWithoutExt = fileName.replace(/\.(json|txt|xml|csv)$/i, '');
+                    fileNameInput.value = nameWithoutExt;
+                }
             } catch (error) {
                 console.error("文件加载错误:", error);
                 customAlert("文件加载失败：" + error.message);
@@ -246,6 +253,9 @@ if (newBtn) {
             
             if (jiedianwords) jiedianwords.value = "";
             if (markdownPreview) markdownPreview.innerHTML = "";
+            
+            // 重置文件名
+            if (fileNameInput) fileNameInput.value = "soralist";
             
             customAlert("已新建");
         }

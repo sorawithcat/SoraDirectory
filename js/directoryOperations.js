@@ -68,12 +68,15 @@ addNewMuluButton.addEventListener("click", async function () {
     }
     
     // 创建 DOM 元素
-    if (currentElement && currentElement.nextSibling) {
-        idName = creatDivByIdBefore(currentMuluName, getOneId(10, 0), "mulu");
-    } else if (siblings.length > 0 && currentElement && siblings[siblings.length - 1] !== currentElement) {
-        idName = creatDivByIdBefore(siblings[siblings.length - 1].id, getOneId(10, 0), "mulu");
-    } else if (currentElement) {
-        idName = creatDivByIdBefore(currentMuluName, getOneId(10, 0), "mulu");
+    // 需要找到当前目录及其所有后代的最后一个元素，在其后插入
+    if (currentElement) {
+        // 获取当前目录及其所有后代
+        let lastDescendant = currentElement;
+        if (typeof getDescendantElements === 'function') {
+            let descendants = getDescendantElements(currentElement);
+            lastDescendant = descendants[descendants.length - 1];
+        }
+        idName = creatDivByIdBefore(lastDescendant.id, getOneId(10, 0), "mulu");
     } else {
         idName = creatDivByClass("firststep", getOneId(10, 0), "mulu");
     }
@@ -94,12 +97,6 @@ addNewMuluButton.addEventListener("click", async function () {
         newMulu.style.display = siblings[0].style.display || "block";
     } else {
         newMulu.style.display = "block";
-    }
-    
-    // 更新父目录标记（如果当前是根目录下添加）
-    if (currentElement && currentDirId && !currentElement.classList.contains("has-children")) {
-        currentElement.classList.add("has-children");
-        currentElement.classList.add("expanded");
     }
     
     // 绑定事件
@@ -191,19 +188,21 @@ addNewPotsButton.addEventListener("click", async function () {
     newMulu.setAttribute("data-dir-id", newMuLuName);
     newMulu.setAttribute("data-parent-id", currentDirId || parentIdForFile);
     
-    // 更新父目录的 has-children 标记
-    if (currentElement && currentDirId && !currentElement.classList.contains("has-children")) {
-        currentElement.classList.add("has-children");
-        currentElement.classList.add("expanded");
+    // 更新父目录的 has-children 标记并确保展开
+    if (currentElement && currentDirId) {
+        if (!currentElement.classList.contains("has-children")) {
+            currentElement.classList.add("has-children");
+        }
+        // 如果父目录是收缩的，展开它
+        if (!currentElement.classList.contains("expanded")) {
+            currentElement.classList.add("expanded");
+            // 展开已有的子目录
+            toggleChildDirectories(currentDirId, true);
+        }
     }
         
-    // 设置显示状态
-    let siblings = findChildElementsByParentId(currentDirId || parentIdForFile);
-    if (siblings.length > 1) {
-        newMulu.style.display = siblings[1].style.display || "block";
-    } else {
-        newMulu.style.display = "block";
-    }
+    // 新添加的节点始终显示
+    newMulu.style.display = "block";
     
     // 绑定事件
     bindMuluEvents(newMulu);

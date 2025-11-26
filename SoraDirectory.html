@@ -79,6 +79,26 @@
             margin-right: 8px;
         }
         
+        .top-toolbar-input {
+            padding: 6px 10px;
+            margin: 0 4px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            width: 120px;
+            transition: all 0.2s;
+        }
+        
+        .top-toolbar-input:focus {
+            outline: none;
+            border-color: #0066cc;
+            box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.2);
+        }
+        
+        .top-toolbar-input::placeholder {
+            color: #999;
+        }
+        
 
         .mulu {
             min-width: 100%; /* 最小宽度为容器宽度，但可以超出 */
@@ -1114,6 +1134,75 @@
             background-color: #ff9800 !important;
             color: #fff;
         }
+        
+        /* ==================== 目录拖拽样式 ==================== */
+        
+        /* 拖拽中的目录样式 */
+        .mulu.dragging {
+            opacity: 0.5;
+            background-color: #e3f2fd;
+            border: 1px dashed #0066cc;
+        }
+        
+        /* 拖拽中的子目录（跟随移动的）*/
+        .mulu.dragging-child {
+            opacity: 0.3;
+            background-color: #f0f7ff;
+        }
+        
+        /* 拖拽悬停 - 放置在目标前面 */
+        .mulu.drag-over-before {
+            border-top: 3px solid #0066cc !important;
+            margin-top: -1px;
+        }
+        
+        /* 拖拽悬停 - 放置在目标后面 */
+        .mulu.drag-over-after {
+            border-bottom: 3px solid #0066cc !important;
+            margin-bottom: -1px;
+        }
+        
+        /* 拖拽悬停 - 作为子目录 */
+        .mulu.drag-over-child {
+            background-color: #e3f2fd !important;
+            box-shadow: inset 0 0 0 2px #0066cc;
+        }
+        
+        /* 拖拽占位符 */
+        .mulu-drag-placeholder {
+            height: 4px;
+            background-color: #0066cc;
+            margin: 2px 0;
+            border-radius: 2px;
+            pointer-events: none;
+            animation: placeholder-pulse 1s ease-in-out infinite;
+        }
+        
+        @keyframes placeholder-pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        /* 拖拽提示文字 */
+        .drag-hint {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: rgba(0, 0, 0, 0.8);
+            color: #fff;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 13px;
+            z-index: 10000;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+        
+        .drag-hint.visible {
+            opacity: 1;
+        }
     </style>
 </head>
 <body>
@@ -1122,6 +1211,7 @@
     <div class="top-toolbar" id="topToolbar">
         <div class="top-toolbar-group">
             <span class="top-toolbar-label">文件</span>
+            <input type="text" id="fileNameInput" class="top-toolbar-input" placeholder="文件名" value="soralist" title="文件名（不含扩展名）">
             <button class="top-toolbar-btn" id="newBtn" title="新建">新建</button>
             <button class="top-toolbar-btn" id="saveBtn" title="保存 (Ctrl+S)">保存</button>
             <button class="top-toolbar-btn" id="saveAsBtn" title="另存为">另存为</button>
@@ -1174,7 +1264,7 @@
     
     <div class="bigbox">
         <div style="padding: 10px; background-color: #f9f9f9; border-bottom: 1px solid #ddd; font-size: 12px; color: #666;">
-            左键选择/展开目录，右键菜单，双击改名。目录可上下滑动。
+            左键选择/展开，右键菜单，双击改名，拖拽移动目录（含子目录）
         </div>
         <div class="showbox">
             <div class="mulubox">
@@ -1300,6 +1390,7 @@
     <script src="js/formatToolbar.js"></script>
     <script src="js/imageHandler.js"></script>
     <script src="js/directoryCore.js"></script>
+    <script src="js/directoryDrag.js"></script>
     <script src="js/directoryOperations.js"></script>
     <script src="js/contextMenu.js"></script>
     <script src="js/fileOperations.js"></script>
