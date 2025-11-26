@@ -167,6 +167,9 @@ let currentMuluName = null;
 /** 预览区域更新标志，防止循环更新 */
 let isUpdating = false;
 
+/** 目录剪贴板数据 */
+let directoryClipboard = null;
+
 // -------------------- DOM 元素引用 --------------------
 
 // 基础容器
@@ -212,3 +215,8 @@ const deleteMulu = document.querySelector(".deleteMulu");               // 删�
 const noneRightMouseMenu = document.querySelector(".noneRightMouseMenu"); // 取消
 const expandThisMulu = document.querySelector(".expandThisMulu");       // 展开此目录
 const collapseThisMulu = document.querySelector(".collapseThisMulu");   // 收起此目录
+const copyMuluWithChildren = document.querySelector(".copyMuluWithChildren");       // 复制（含子目录）
+const copyMuluWithoutChildren = document.querySelector(".copyMuluWithoutChildren"); // 复制（不含子目录）
+const pasteMulu = document.querySelector(".pasteMulu");                             // 粘贴目录
+const quickDuplicateWithChildren = document.querySelector(".quickDuplicateWithChildren");       // 快速复制（含子目录）
+const quickDuplicateWithoutChildren = document.querySelector(".quickDuplicateWithoutChildren"); // 快速复制（不含子目录）
