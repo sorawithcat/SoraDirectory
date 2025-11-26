@@ -155,71 +155,24 @@ function formatDataByExtension(data, filename) {
  * 保存文件（提供格式选择）
  */
 async function handleSave() {
-    // 显示格式选择对话框
-    let formatChoice = await customPrompt(
-        "选择保存格式：\n" +
-        "1. JSON (.json)\n" +
-        "2. 文本 (.txt)\n" +
-        "3. XML (.xml)\n" +
-        "4. CSV (.csv)\n" +
-        "5. 自定义文件名\n\n" +
-        "请输入数字(1-5)或直接输入文件名（包含扩展名）",
-        ""
-    );
+    // 格式选项列表
+    const formatOptions = [
+        { value: 'json', label: 'JSON 格式 (.json) - 推荐' },
+        { value: 'txt', label: '文本格式 (.txt)' },
+        { value: 'xml', label: 'XML 格式 (.xml)' },
+        { value: 'csv', label: 'CSV 格式 (.csv)' }
+    ];
     
-    if (!formatChoice) {
-        customAlert("已取消保存");
+    // 显示格式选择对话框
+    const format = await customSelect('选择保存格式：', formatOptions, 'json', '保存文件');
+    
+    if (format === null) {
+        showToast('已取消保存', 'info', 2000);
         return;
     }
     
-    let filename, format;
     let baseName = "soralist";
-    
-    // 解析用户选择
-    if (formatChoice.match(/^\d+$/)) {
-        let choice = parseInt(formatChoice);
-        switch(choice) {
-            case 1:
-                filename = `${baseName}ForLoad.json`;
-                format = 'json';
-                break;
-            case 2:
-                filename = `${baseName}ForLoad.txt`;
-                format = 'txt';
-                break;
-            case 3:
-                filename = `${baseName}ForLoad.xml`;
-                format = 'xml';
-                break;
-            case 4:
-                filename = `${baseName}ForLoad.csv`;
-                format = 'csv';
-                break;
-            case 5:
-                let customName = await customPrompt("输入文件名（包含扩展名，如：mydata.json）", "");
-                if (!customName) {
-                    customAlert("已取消保存");
-                    return;
-                }
-                filename = customName;
-                format = customName.substring(customName.lastIndexOf('.') + 1).toLowerCase();
-                break;
-            default:
-                customAlert("无效的选择");
-                return;
-        }
-    } else {
-        // 直接使用用户输入的文件名
-        filename = formatChoice;
-        let nameWithoutExt = filename.substring(0, filename.lastIndexOf('.'));
-        let ext = filename.substring(filename.lastIndexOf('.'));
-        
-        if (!nameWithoutExt || !ext) {
-            customAlert("文件名格式错误，请包含扩展名（如：data.json）");
-            return;
-        }
-        format = ext.substring(1).toLowerCase();
-    }
+    let filename = `${baseName}ForLoad.${format}`;
     
     // 准备数据
     let mimeType = getMimeType(filename);
@@ -237,7 +190,7 @@ async function handleSave() {
     aTag.click();
     
     URL.revokeObjectURL(objectURL);
-    customAlert(`文件保存成功！\n已保存：${filename}`);
+    showToast(`已保存：${filename}`, 'success', 2500);
 }
 
 /**

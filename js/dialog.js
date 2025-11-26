@@ -171,3 +171,163 @@ function customPrompt(message, defaultValue = '', title = '输入') {
         setTimeout(() => customDialogInput.focus(), 100);
     });
 }
+
+/**
+ * 自定义下拉选择对话框
+ * @param {string} message - 显示的提示消息
+ * @param {Array} options - 选项数组，格式 [{value: '', label: ''}, ...]
+ * @param {string} defaultValue - 默认选中的值
+ * @param {string} title - 对话框标题，默认为"选择"
+ * @returns {Promise<string|null>} - 用户点击确定返回选中值，取消返回 null
+ */
+function customSelect(message, options, defaultValue = '', title = '选择') {
+    return new Promise((resolve) => {
+        customDialogTitle.textContent = title;
+        customDialogMessage.textContent = message;
+        customDialogInput.style.display = 'none';
+        
+        // 创建下拉选择框
+        let selectHtml = '<select class="custom-dialog-select" id="customDialogSelect">';
+        options.forEach(opt => {
+            const selected = opt.value === defaultValue ? ' selected' : '';
+            selectHtml += `<option value="${opt.value}"${selected}>${opt.label}</option>`;
+        });
+        selectHtml += '</select>';
+        
+        customDialogMessage.innerHTML = message + '<br><br>' + selectHtml;
+        
+        customDialogFooter.innerHTML = 
+            '<button class="custom-dialog-btn custom-dialog-btn-secondary" id="customDialogCancel">取消</button>' +
+            '<button class="custom-dialog-btn custom-dialog-btn-primary" id="customDialogOk">确定</button>';
+        
+        const selectEl = document.getElementById('customDialogSelect');
+        const okBtn = document.getElementById('customDialogOk');
+        const cancelBtn = document.getElementById('customDialogCancel');
+        const closeBtn = customDialogClose;
+        
+        const closeDialog = (result) => {
+            customDialogOverlay.classList.remove('active');
+            customDialogMessage.innerHTML = '';
+            resolve(result);
+        };
+        
+        const handleOk = () => {
+            closeDialog(selectEl.value);
+        };
+        
+        okBtn.onclick = handleOk;
+        cancelBtn.onclick = () => closeDialog(null);
+        closeBtn.onclick = () => closeDialog(null);
+        
+        // 键盘事件
+        selectEl.onkeydown = (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                handleOk();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                closeDialog(null);
+            }
+        };
+        
+        // 点击遮罩层关闭
+        customDialogOverlay.onclick = (e) => {
+            if (e.target === customDialogOverlay) closeDialog(null);
+        };
+        
+        customDialogOverlay.classList.add('active');
+        setTimeout(() => selectEl.focus(), 100);
+    });
+}
+
+/**
+ * 代码编辑对话框
+ * @param {string} code - 初始代码内容
+ * @param {string} language - 当前语言
+ * @param {Array} langOptions - 语言选项数组
+ * @param {string} title - 对话框标题
+ * @returns {Promise<{code: string, language: string}|null>} - 返回代码和语言，取消返回 null
+ */
+function codeEditDialog(code = '', language = 'javascript', langOptions = [], title = '编辑代码') {
+    return new Promise((resolve) => {
+        customDialogTitle.textContent = title;
+        customDialogInput.style.display = 'none';
+        
+        // 创建代码编辑界面
+        let selectHtml = '<select class="custom-dialog-select" id="codeDialogLang" style="margin-bottom: 10px;">';
+        langOptions.forEach(opt => {
+            const selected = opt.value === language ? ' selected' : '';
+            selectHtml += `<option value="${opt.value}"${selected}>${opt.label}</option>`;
+        });
+        selectHtml += '</select>';
+        
+        customDialogMessage.innerHTML = 
+            '<label style="font-size: 12px; color: #666; display: block; margin-bottom: 4px;">编程语言</label>' +
+            selectHtml +
+            '<label style="font-size: 12px; color: #666; display: block; margin-bottom: 4px; margin-top: 12px;">代码内容</label>' +
+            '<textarea id="codeDialogTextarea" class="code-dialog-textarea" spellcheck="false">' + 
+            code.replace(/</g, '&lt;').replace(/>/g, '&gt;') + 
+            '</textarea>';
+        
+        customDialogFooter.innerHTML = 
+            '<button class="custom-dialog-btn custom-dialog-btn-secondary" id="customDialogCancel">取消</button>' +
+            '<button class="custom-dialog-btn custom-dialog-btn-danger" id="customDialogDelete" style="margin-right: auto;">删除代码块</button>' +
+            '<button class="custom-dialog-btn custom-dialog-btn-primary" id="customDialogOk">确定</button>';
+        
+        const textarea = document.getElementById('codeDialogTextarea');
+        const langSelect = document.getElementById('codeDialogLang');
+        const okBtn = document.getElementById('customDialogOk');
+        const cancelBtn = document.getElementById('customDialogCancel');
+        const deleteBtn = document.getElementById('customDialogDelete');
+        const closeBtn = customDialogClose;
+        
+        // 如果是新建，隐藏删除按钮
+        if (!code) {
+            deleteBtn.style.display = 'none';
+        }
+        
+        const closeDialog = (result) => {
+            customDialogOverlay.classList.remove('active');
+            customDialogMessage.innerHTML = '';
+            resolve(result);
+        };
+        
+        const handleOk = () => {
+            closeDialog({
+                code: textarea.value,
+                language: langSelect.value
+            });
+        };
+        
+        okBtn.onclick = handleOk;
+        cancelBtn.onclick = () => closeDialog(null);
+        closeBtn.onclick = () => closeDialog(null);
+        deleteBtn.onclick = () => closeDialog({ delete: true });
+        
+        // Tab 键在 textarea 中插入制表符
+        textarea.onkeydown = (e) => {
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                const start = textarea.selectionStart;
+                const end = textarea.selectionEnd;
+                textarea.value = textarea.value.substring(0, start) + '    ' + textarea.value.substring(end);
+                textarea.selectionStart = textarea.selectionEnd = start + 4;
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                closeDialog(null);
+            }
+        };
+        
+        // 点击遮罩层关闭
+        customDialogOverlay.onclick = (e) => {
+            if (e.target === customDialogOverlay) closeDialog(null);
+        };
+        
+        // 调整对话框宽度
+        customDialog.style.maxWidth = '700px';
+        customDialog.style.width = '90%';
+        
+        customDialogOverlay.classList.add('active');
+        setTimeout(() => textarea.focus(), 100);
+    });
+}

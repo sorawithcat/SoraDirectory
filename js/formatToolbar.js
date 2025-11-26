@@ -4,6 +4,34 @@
 // 依赖：globals.js, preview.js, dialog.js
 // ============================================
 
+// -------------------- 常量定义 --------------------
+
+/** 代码块支持的语言选项 */
+const CODE_LANG_OPTIONS = [
+    { value: '', label: '纯文本（无高亮）' },
+    { value: 'javascript', label: 'JavaScript' },
+    { value: 'typescript', label: 'TypeScript' },
+    { value: 'python', label: 'Python' },
+    { value: 'java', label: 'Java' },
+    { value: 'c', label: 'C' },
+    { value: 'cpp', label: 'C++' },
+    { value: 'csharp', label: 'C#' },
+    { value: 'go', label: 'Go' },
+    { value: 'rust', label: 'Rust' },
+    { value: 'html', label: 'HTML' },
+    { value: 'css', label: 'CSS' },
+    { value: 'scss', label: 'SCSS/SASS' },
+    { value: 'sql', label: 'SQL' },
+    { value: 'json', label: 'JSON' },
+    { value: 'xml', label: 'XML' },
+    { value: 'bash', label: 'Bash/Shell' },
+    { value: 'php', label: 'PHP' },
+    { value: 'ruby', label: 'Ruby' },
+    { value: 'swift', label: 'Swift' },
+    { value: 'kotlin', label: 'Kotlin' },
+    { value: 'markdown', label: 'Markdown' }
+];
+
 // -------------------- 状态变量 --------------------
 
 /** 当前选中的文本 */
@@ -483,11 +511,18 @@ async function applyFormat(command) {
             }
             break;
         case 'code-block':
-            if (selectedText) {
-                const lang = await customPrompt('输入编程语言（可选，直接按确定跳过）:', '');
-                formattedHtml = '<pre><code' + (lang ? ' class="language-' + escapeHtml(lang) + '"' : '') + '>' + escapeHtml(selectedText) + '</code></pre>';
-            } else {
-                formattedHtml = '<pre><code></code></pre>';
+            {
+                // 弹出代码编辑对话框
+                const result = await codeEditDialog(selectedText || '', 'javascript', CODE_LANG_OPTIONS, '插入代码块');
+                if (result === null) return; // 用户取消
+                
+                const langValue = result.language ? escapeHtml(result.language.toLowerCase()) : 'code';
+                const langClass = result.language ? ' class="language-' + langValue + '"' : '';
+                const codeContent = escapeHtml(result.code);
+                const highlightedCode = highlightCode(result.code, result.language);
+                
+                // 代码块不可编辑，点击时弹出编辑对话框
+                formattedHtml = '<pre data-lang="' + langValue + '" contenteditable="false" class="code-block-editable"><code' + langClass + '>' + highlightedCode + '</code></pre>';
             }
             break;
         case 'highlight':
@@ -867,4 +902,349 @@ async function applyFormat(command) {
     textFormatToolbar.style.display = 'none';
     textFormatToolbar.style.visibility = 'hidden';
     selectionRange = null;
+}
+
+// ============================================
+// 代码块辅助功能
+// ============================================
+
+/**
+ * 为代码块添加复制按钮（悬停时显示）
+ */
+function addCopyButtonsToCodeBlocks() {
+    // 暂时禁用自动添加复制按钮，以确保代码块可正常编辑
+    // 用户可以通过选中代码后 Ctrl+C 复制
+}
+
+/**
+ * 复制代码块内容
+ * @param {HTMLElement} btn - 复制按钮元素
+ */
+function copyCodeBlock(btn) {
+    const pre = btn.closest('pre');
+    if (!pre) return;
+    
+    const codeElement = pre.querySelector('code');
+    const code = codeElement ? codeElement.textContent : pre.textContent;
+    
+    navigator.clipboard.writeText(code).then(() => {
+        btn.textContent = '已复制!';
+        btn.classList.add('copied');
+        
+        setTimeout(() => {
+            btn.textContent = '复制';
+            btn.classList.remove('copied');
+        }, 2000);
+    }).catch(err => {
+        console.error('复制失败:', err);
+        // 降级方案
+        const textarea = document.createElement('textarea');
+        textarea.value = code;
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+        
+        btn.textContent = '已复制!';
+        btn.classList.add('copied');
+        setTimeout(() => {
+            btn.textContent = '复制';
+            btn.classList.remove('copied');
+        }, 2000);
+    });
+}
+
+/**
+ * 简单的语法高亮（支持常见语言）
+ * @param {string} code - 代码内容
+ * @param {string} language - 语言类型
+ * @returns {string} - 高亮后的 HTML
+ */
+function highlightCode(code, language) {
+    if (!code) return code;
+    
+    // 先转义 HTML
+    let escaped = escapeHtml(code);
+    
+    // 根据语言应用不同的高亮规则
+    const lang = (language || '').toLowerCase();
+    
+    // 通用规则
+    const rules = {
+        // 字符串
+        string: /("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)/g,
+        // 注释
+        comment: /(\/\/.*$|\/\*[\s\S]*?\*\/|#.*$|&lt;!--[\s\S]*?--&gt;)/gm,
+        // 数字
+        number: /\b(\d+\.?\d*)\b/g,
+    };
+    
+    // JavaScript/TypeScript 关键词
+    if (['javascript', 'js', 'typescript', 'ts', 'jsx', 'tsx'].includes(lang)) {
+        rules.keyword = /\b(const|let|var|function|return|if|else|for|while|do|switch|case|break|continue|new|this|class|extends|import|export|from|default|async|await|try|catch|finally|throw|typeof|instanceof|in|of|null|undefined|true|false)\b/g;
+        rules.function = /\b([a-zA-Z_$][a-zA-Z0-9_$]*)\s*(?=\()/g;
+        rules.class = /\b([A-Z][a-zA-Z0-9_$]*)\b/g;
+    }
+    // Python 关键词
+    else if (['python', 'py'].includes(lang)) {
+        rules.keyword = /\b(def|class|if|elif|else|for|while|return|import|from|as|try|except|finally|raise|with|lambda|yield|pass|break|continue|and|or|not|in|is|None|True|False|self)\b/g;
+        rules.function = /\b([a-zA-Z_][a-zA-Z0-9_]*)\s*(?=\()/g;
+    }
+    // HTML/XML
+    else if (['html', 'xml', 'svg'].includes(lang)) {
+        rules.tag = /(&lt;\/?[a-zA-Z][a-zA-Z0-9]*)/g;
+        rules.attr = /\s([a-zA-Z\-]+)=/g;
+    }
+    // CSS
+    else if (['css', 'scss', 'less'].includes(lang)) {
+        rules.property = /([a-zA-Z\-]+)\s*:/g;
+        rules.keyword = /(@[a-zA-Z]+|!important)/g;
+    }
+    // SQL
+    else if (['sql'].includes(lang)) {
+        rules.keyword = /\b(SELECT|FROM|WHERE|AND|OR|INSERT|INTO|VALUES|UPDATE|SET|DELETE|CREATE|TABLE|DROP|ALTER|JOIN|LEFT|RIGHT|INNER|OUTER|ON|AS|ORDER|BY|GROUP|HAVING|LIMIT|OFFSET|NULL|NOT|IN|LIKE|BETWEEN|IS|TRUE|FALSE|COUNT|SUM|AVG|MIN|MAX|DISTINCT)\b/gi;
+    }
+    // C/C++/C#/Java
+    else if (['c', 'cpp', 'c++', 'csharp', 'c#', 'java'].includes(lang)) {
+        rules.keyword = /\b(int|float|double|char|void|bool|boolean|string|class|struct|enum|public|private|protected|static|const|final|new|return|if|else|for|while|do|switch|case|break|continue|try|catch|throw|finally|null|true|false|this|super|import|package|using|namespace|include)\b/g;
+        rules.function = /\b([a-zA-Z_][a-zA-Z0-9_]*)\s*(?=\()/g;
+    }
+    // Go
+    else if (['go', 'golang'].includes(lang)) {
+        rules.keyword = /\b(package|import|func|return|var|const|type|struct|interface|map|chan|go|defer|if|else|for|range|switch|case|default|break|continue|select|nil|true|false|make|new|len|cap|append|copy|delete)\b/g;
+    }
+    // Rust
+    else if (['rust', 'rs'].includes(lang)) {
+        rules.keyword = /\b(fn|let|mut|const|if|else|match|loop|while|for|in|return|struct|enum|impl|trait|pub|use|mod|crate|self|super|true|false|Some|None|Ok|Err)\b/g;
+    }
+    
+    // 应用高亮规则（注意顺序很重要）
+    // 先处理注释和字符串，避免其中的关键词被误匹配
+    const tokens = [];
+    let result = escaped;
+    
+    // 提取注释和字符串，用占位符替代
+    if (rules.comment) {
+        result = result.replace(rules.comment, (match) => {
+            const index = tokens.length;
+            tokens.push('<span class="comment">' + match + '</span>');
+            return '___TOKEN_' + index + '___';
+        });
+    }
+    
+    if (rules.string) {
+        result = result.replace(rules.string, (match) => {
+            const index = tokens.length;
+            tokens.push('<span class="string">' + match + '</span>');
+            return '___TOKEN_' + index + '___';
+        });
+    }
+    
+    // 应用其他规则
+    if (rules.keyword) {
+        result = result.replace(rules.keyword, '<span class="keyword">$1</span>');
+    }
+    if (rules.function) {
+        result = result.replace(rules.function, '<span class="function">$1</span>');
+    }
+    if (rules.class) {
+        result = result.replace(rules.class, '<span class="class-name">$1</span>');
+    }
+    if (rules.number) {
+        result = result.replace(rules.number, '<span class="number">$1</span>');
+    }
+    if (rules.tag) {
+        result = result.replace(rules.tag, '<span class="tag">$1</span>');
+    }
+    if (rules.attr) {
+        result = result.replace(rules.attr, ' <span class="attr-name">$1</span>=');
+    }
+    if (rules.property) {
+        result = result.replace(rules.property, '<span class="property">$1</span>:');
+    }
+    
+    // 还原占位符
+    tokens.forEach((token, index) => {
+        result = result.replace('___TOKEN_' + index + '___', token);
+    });
+    
+    return result;
+}
+
+/**
+ * 保存光标位置（文本偏移量）
+ */
+function saveCaretPosition(element) {
+    const selection = window.getSelection();
+    if (selection.rangeCount === 0) return null;
+    
+    const range = selection.getRangeAt(0);
+    if (!element.contains(range.startContainer)) return null;
+    
+    // 计算从元素开头到光标的文本偏移量
+    const preRange = document.createRange();
+    preRange.selectNodeContents(element);
+    preRange.setEnd(range.startContainer, range.startOffset);
+    
+    return preRange.toString().length;
+}
+
+/**
+ * 恢复光标位置
+ */
+function restoreCaretPosition(element, offset) {
+    if (offset === null || offset === undefined) return;
+    
+    const selection = window.getSelection();
+    const range = document.createRange();
+    
+    // 遍历文本节点找到正确的位置
+    let currentOffset = 0;
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null, false);
+    
+    while (walker.nextNode()) {
+        const node = walker.currentNode;
+        const nodeLength = node.textContent.length;
+        
+        if (currentOffset + nodeLength >= offset) {
+            range.setStart(node, offset - currentOffset);
+            range.collapse(true);
+            selection.removeAllRanges();
+            selection.addRange(range);
+            return;
+        }
+        currentOffset += nodeLength;
+    }
+    
+    // 如果没找到，放到末尾
+    range.selectNodeContents(element);
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
+}
+
+/**
+ * 对单个代码块应用语法高亮
+ */
+function applyHighlightToCodeBlock(codeElement) {
+    if (!codeElement) return;
+    
+    const pre = codeElement.closest('pre');
+    if (!pre) return;
+    
+    // 获取语言
+    const langAttr = pre.getAttribute('data-lang');
+    const langClass = Array.from(codeElement.classList).find(c => c.startsWith('language-'));
+    const lang = langClass ? langClass.replace('language-', '') : langAttr;
+    
+    if (!lang || lang === 'code') return;
+    
+    // 获取纯文本内容
+    const code = codeElement.textContent;
+    
+    // 应用高亮
+    codeElement.innerHTML = highlightCode(code, lang);
+    
+    // 设置代码块不可编辑
+    pre.setAttribute('contenteditable', 'false');
+    pre.classList.add('code-block-editable');
+}
+
+/**
+ * 初始化所有代码块
+ */
+function initCodeBlocks() {
+    if (!markdownPreview) return;
+    
+    const codeBlocks = markdownPreview.querySelectorAll('pre');
+    codeBlocks.forEach(pre => {
+        // 设置不可编辑
+        pre.setAttribute('contenteditable', 'false');
+        pre.classList.add('code-block-editable');
+        
+        // 应用语法高亮
+        const codeElement = pre.querySelector('code');
+        if (codeElement) {
+            applyHighlightToCodeBlock(codeElement);
+        }
+    });
+}
+
+/**
+ * 编辑代码块
+ */
+async function editCodeBlock(pre) {
+    if (!pre) return;
+    
+    const codeElement = pre.querySelector('code');
+    if (!codeElement) return;
+    
+    // 获取当前语言和代码
+    const langAttr = pre.getAttribute('data-lang') || '';
+    const langClass = Array.from(codeElement.classList).find(c => c.startsWith('language-'));
+    const currentLang = langClass ? langClass.replace('language-', '') : langAttr;
+    const currentCode = codeElement.textContent;
+    
+    // 弹出编辑对话框
+    const result = await codeEditDialog(currentCode, currentLang, CODE_LANG_OPTIONS, '编辑代码块');
+    
+    if (result === null) return; // 用户取消
+    
+    if (result.delete) {
+        // 删除代码块
+        pre.remove();
+        syncPreviewToTextarea();
+        return;
+    }
+    
+    // 更新代码块
+    const langValue = result.language ? result.language.toLowerCase() : 'code';
+    pre.setAttribute('data-lang', langValue);
+    
+    // 更新 code 元素的类名
+    codeElement.className = result.language ? 'language-' + langValue : '';
+    
+    // 应用高亮
+    codeElement.innerHTML = highlightCode(result.code, result.language);
+    
+    syncPreviewToTextarea();
+}
+
+// 监听预览区域的代码块点击
+if (markdownPreview) {
+    markdownPreview.addEventListener('click', (e) => {
+        const pre = e.target.closest('pre.code-block-editable');
+        if (pre) {
+            e.preventDefault();
+            e.stopPropagation();
+            editCodeBlock(pre);
+        }
+    });
+    
+    // 监听 DOM 变化，初始化新插入的代码块
+    const codeObserver = new MutationObserver((mutations) => {
+        let needsUpdate = false;
+        mutations.forEach(mutation => {
+            if (mutation.type === 'childList') {
+                mutation.addedNodes.forEach(node => {
+                    if (node.nodeType === Node.ELEMENT_NODE) {
+                        if (node.matches && (node.matches('pre') || node.querySelector('pre'))) {
+                            needsUpdate = true;
+                        }
+                    }
+                });
+            }
+        });
+        if (needsUpdate) {
+            setTimeout(initCodeBlocks, 10);
+        }
+    });
+    
+    codeObserver.observe(markdownPreview, {
+        childList: true,
+        subtree: true
+    });
+    
+    // 初始化现有代码块
+    setTimeout(initCodeBlocks, 100);
 }

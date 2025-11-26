@@ -6,11 +6,33 @@
 // ============================================
 
 /**
+ * 从 HTML 内容中移除搜索高亮标签
+ * @param {string} html - HTML 内容
+ * @returns {string} - 清理后的内容
+ */
+function removeSearchHighlights(html) {
+    if (!html) return html;
+    
+    // 使用临时元素精确移除高亮标签
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = html;
+    const highlights = tempDiv.querySelectorAll('.search-highlight, .search-highlight-current');
+    highlights.forEach(span => {
+        const textNode = document.createTextNode(span.textContent);
+        span.parentNode.replaceChild(textNode, span);
+    });
+    tempDiv.normalize();
+    return tempDiv.innerHTML;
+}
+
+/**
  * 同步预览区域内容到隐藏的 textarea，并更新数据
  */
 function syncPreviewToTextarea() {
     if (markdownPreview && jiedianwords) {
-        const html = markdownPreview.innerHTML;
+        // 移除搜索高亮标签，避免被保存到数据中
+        const html = removeSearchHighlights(markdownPreview.innerHTML);
+        
         isUpdating = true;
         jiedianwords.value = html;
         isUpdating = false;
@@ -72,9 +94,10 @@ if (markdownPreview) {
     
     /**
      * 回车键处理：强制使用 <p> 标签而不是 <div>
+     * 在代码块中插入换行符
      */
     markdownPreview.addEventListener("keydown", function(e) {
-        if (e.key === 'Enter' && !e.shiftKey) {
+        if (e.key === 'Enter') {
             const selection = window.getSelection();
             if (selection.rangeCount > 0) {
                 const range = selection.getRangeAt(0);
@@ -83,6 +106,25 @@ if (markdownPreview) {
                 if (container.nodeType === Node.TEXT_NODE) {
                     container = container.parentNode;
                 }
+                
+                // 检查是否在代码块中
+                const codeBlock = container.closest('pre, code');
+                if (codeBlock) {
+                    // 在代码块中，插入换行符
+                    e.preventDefault();
+                    const textNode = document.createTextNode('\n');
+                    range.deleteContents();
+                    range.insertNode(textNode);
+                    range.setStartAfter(textNode);
+                    range.setEndAfter(textNode);
+                    selection.removeAllRanges();
+                    selection.addRange(range);
+                    syncPreviewToTextarea();
+                    return;
+                }
+                
+                // 非代码块，Shift+Enter 不做特殊处理
+                if (e.shiftKey) return;
                 
                 // 查找最近的块级元素
                 let currentBlock = container;

@@ -277,22 +277,101 @@
             color: #666;
         }
         .markdown-preview code {
-            background-color: #f4f4f4;
-            padding: 2px 4px;
-            border-radius: 3px;
+            background-color: #f0f0f0;
+            padding: 2px 6px;
+            border-radius: 4px;
             font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
             font-size: 0.9em;
+            color: #e83e8c;
         }
+        
+        /* 代码块 - 浅色主题，清晰易读 */
         .markdown-preview pre {
-            background-color: #f4f4f4;
+            position: relative;
+            background-color: #f6f8fa;
             padding: 1em;
-            border-radius: 5px;
+            padding-top: 2.2em;
+            border-radius: 8px;
             overflow-x: auto;
+            margin: 1em 0;
+            min-height: 3em;
+            border: 1px solid #d0d7de;
         }
+        
+        /* 语言标签 */
+        .markdown-preview pre[data-lang]::after {
+            content: attr(data-lang);
+            position: absolute;
+            top: 4px;
+            right: 8px;
+            padding: 2px 8px;
+            background-color: #e1e4e8;
+            border-radius: 4px;
+            font-size: 11px;
+            color: #57606a;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            pointer-events: none;
+        }
+        
         .markdown-preview pre code {
             background-color: transparent;
             padding: 0;
+            color: #24292f;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.6;
+            display: block;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            outline: none;
         }
+        
+        /* 可编辑代码块（点击编辑） */
+        .markdown-preview pre.code-block-editable {
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .markdown-preview pre.code-block-editable:hover {
+            background-color: #eef1f4;
+            box-shadow: 0 0 0 2px #0066cc;
+        }
+        
+        .markdown-preview pre.code-block-editable::before {
+            content: '点击编辑';
+            position: absolute;
+            top: 4px;
+            left: 8px;
+            padding: 2px 8px;
+            background-color: #0066cc;
+            border-radius: 4px;
+            font-size: 11px;
+            color: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            opacity: 0;
+            transition: opacity 0.2s;
+            pointer-events: none;
+        }
+        
+        .markdown-preview pre.code-block-editable:hover::before {
+            opacity: 1;
+        }
+        
+        /* 语法高亮 - GitHub 风格 */
+        .markdown-preview pre code .keyword { color: #cf222e; font-weight: 500; }
+        .markdown-preview pre code .string { color: #0a3069; }
+        .markdown-preview pre code .number { color: #0550ae; }
+        .markdown-preview pre code .comment { color: #6e7781; font-style: italic; }
+        .markdown-preview pre code .function { color: #8250df; }
+        .markdown-preview pre code .class-name { color: #953800; }
+        .markdown-preview pre code .property { color: #0550ae; }
+        .markdown-preview pre code .tag { color: #116329; }
+        .markdown-preview pre code .attr-name { color: #0550ae; }
+        .markdown-preview pre code .attr-value { color: #0a3069; }
+        .markdown-preview pre code .operator { color: #cf222e; }
+        .markdown-preview pre code .punctuation { color: #24292f; }
         .markdown-preview img {
             /* 保持原图大小 */
             width: auto;
@@ -612,6 +691,44 @@
             border-color: #0066cc;
         }
         
+        .custom-dialog-select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            background-color: #fff;
+            cursor: pointer;
+            box-sizing: border-box;
+        }
+        
+        .custom-dialog-select:focus {
+            outline: none;
+            border-color: #0066cc;
+        }
+        
+        .code-dialog-textarea {
+            width: 100%;
+            height: 300px;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.5;
+            background-color: #f6f8fa;
+            color: #24292f;
+            resize: vertical;
+            box-sizing: border-box;
+            tab-size: 4;
+        }
+        
+        .code-dialog-textarea:focus {
+            outline: none;
+            border-color: #0066cc;
+            background-color: #fff;
+        }
+        
         .custom-dialog-footer {
             padding: 15px 20px;
             background-color: #f5f5f5;
@@ -708,6 +825,249 @@
         .toast-error {
             background-color: #f44336;
         }
+        
+        /* 查找/替换对话框样式 */
+        .search-dialog-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            z-index: 9999;
+            display: none;
+            pointer-events: none; /* 不阻挡其他操作 */
+        }
+        
+        .search-dialog-overlay.active {
+            display: block;
+        }
+        
+        .search-dialog {
+            position: fixed;
+            top: 100px;
+            right: 20px;
+            width: 400px;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            z-index: 10000;
+            pointer-events: auto; /* 对话框本身可以操作 */
+            cursor: move; /* 提示可拖动 */
+        }
+        
+        .search-dialog-body,
+        .search-dialog-footer {
+            cursor: default;
+        }
+        
+        .search-dialog-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            background-color: #f5f5f5;
+            border-bottom: 1px solid #ddd;
+            border-radius: 8px 8px 0 0;
+        }
+        
+        .search-dialog-header h3 {
+            margin: 0;
+            font-size: 16px;
+            font-weight: 500;
+        }
+        
+        .search-dialog-close {
+            background: none;
+            border: none;
+            font-size: 20px;
+            cursor: pointer;
+            color: #666;
+            padding: 0 4px;
+        }
+        
+        .search-dialog-close:hover {
+            color: #333;
+        }
+        
+        .search-dialog-body {
+            padding: 16px;
+        }
+        
+        .search-input-group {
+            margin-bottom: 12px;
+        }
+        
+        .search-input-group label {
+            display: block;
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 4px;
+        }
+        
+        .search-input-group input {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            box-sizing: border-box;
+        }
+        
+        .search-input-group input:focus {
+            outline: none;
+            border-color: #0066cc;
+            box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.2);
+        }
+        
+        .search-options {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+        }
+        
+        .search-option {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 13px;
+            color: #555;
+            cursor: pointer;
+        }
+        
+        .search-option input {
+            cursor: pointer;
+        }
+        
+        .search-scope {
+            margin-bottom: 12px;
+        }
+        
+        .search-scope label {
+            display: block;
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 4px;
+        }
+        
+        .search-scope select {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            background-color: #fff;
+        }
+        
+        .search-dialog-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            background-color: #f9f9f9;
+            border-top: 1px solid #ddd;
+            border-radius: 0 0 8px 8px;
+        }
+        
+        .search-info {
+            font-size: 13px;
+            color: #666;
+        }
+        
+        .search-buttons {
+            display: flex;
+            gap: 8px;
+        }
+        
+        .search-btn {
+            padding: 6px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background-color: #fff;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+        
+        .search-btn:hover {
+            background-color: #f0f0f0;
+            border-color: #999;
+        }
+        
+        .search-btn-primary {
+            background-color: #0066cc;
+            color: #fff;
+            border-color: #0066cc;
+        }
+        
+        .search-btn-primary:hover {
+            background-color: #0052a3;
+        }
+        
+        .search-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        /* 搜索结果列表样式 */
+        .search-results {
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-top: 12px;
+        }
+        
+        .search-result-item {
+            padding: 8px 12px;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        
+        .search-result-item:last-child {
+            border-bottom: none;
+        }
+        
+        .search-result-item:hover {
+            background-color: #f5f5f5;
+        }
+        
+        .search-result-item.active {
+            background-color: #e3f2fd;
+        }
+        
+        .search-result-dir {
+            font-weight: 500;
+            color: #333;
+            margin-bottom: 2px;
+        }
+        
+        .search-result-context {
+            color: #666;
+            font-size: 12px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .search-result-context mark {
+            background-color: #fff59d;
+            padding: 0 2px;
+            border-radius: 2px;
+        }
+        
+        /* 高亮匹配项 */
+        .search-highlight {
+            background-color: #fff59d !important;
+            padding: 0 2px;
+            border-radius: 2px;
+        }
+        
+        .search-highlight-current {
+            background-color: #ff9800 !important;
+            color: #fff;
+        }
     </style>
 </head>
 <body>
@@ -753,6 +1113,11 @@
             <button class="top-toolbar-btn addNewPotsButton" title="添加节点">添加节点</button>
             <button class="top-toolbar-btn" id="expandAllBtn" title="展开全部">展开全部</button>
             <button class="top-toolbar-btn" id="collapseAllBtn" title="收起全部">收起全部</button>
+        </div>
+        <div class="top-toolbar-group">
+            <span class="top-toolbar-label">编辑</span>
+            <button class="top-toolbar-btn" id="searchBtn" title="查找 (Ctrl+F)">查找</button>
+            <button class="top-toolbar-btn" id="replaceBtn" title="替换 (Ctrl+H)">替换</button>
         </div>
         <div class="top-toolbar-group">
             <span class="top-toolbar-label">视图</span>
@@ -811,6 +1176,57 @@
     <!-- Toast 悬浮提示容器 -->
     <div class="toast-container" id="toastContainer"></div>
     
+    <!-- 查找/替换对话框 -->
+    <div class="search-dialog-overlay" id="searchDialogOverlay">
+        <div class="search-dialog" id="searchDialog">
+            <div class="search-dialog-header">
+                <h3 id="searchDialogTitle">查找</h3>
+                <button class="search-dialog-close" id="searchDialogClose">&times;</button>
+            </div>
+            <div class="search-dialog-body">
+                <div class="search-input-group">
+                    <label>查找内容</label>
+                    <input type="text" id="searchInput" placeholder="输入要查找的内容...">
+                </div>
+                <div class="search-input-group" id="replaceInputGroup" style="display: none;">
+                    <label>替换为</label>
+                    <input type="text" id="replaceInput" placeholder="输入替换内容...">
+                </div>
+                <div class="search-options">
+                    <label class="search-option">
+                        <input type="checkbox" id="searchCaseSensitive">
+                        区分大小写
+                    </label>
+                    <label class="search-option">
+                        <input type="checkbox" id="searchWholeWord">
+                        全词匹配
+                    </label>
+                    <label class="search-option">
+                        <input type="checkbox" id="searchRegex">
+                        正则表达式
+                    </label>
+                </div>
+                <div class="search-scope">
+                    <label>搜索范围</label>
+                    <select id="searchScope">
+                        <option value="current">当前目录</option>
+                        <option value="all" selected>所有目录</option>
+                    </select>
+                </div>
+                <div class="search-results" id="searchResults" style="display: none;"></div>
+            </div>
+            <div class="search-dialog-footer">
+                <span class="search-info" id="searchInfo">输入内容开始查找</span>
+                <div class="search-buttons">
+                    <button class="search-btn" id="searchPrevBtn" disabled>上一个</button>
+                    <button class="search-btn" id="searchNextBtn" disabled>下一个</button>
+                    <button class="search-btn" id="replaceOneBtn" style="display: none;" disabled>替换</button>
+                    <button class="search-btn search-btn-primary" id="replaceAllBtn" style="display: none;" disabled>全部替换</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
     <!-- 自定义对话框 -->
     <div class="custom-dialog-overlay" id="customDialogOverlay">
         <div class="custom-dialog" id="customDialog">
@@ -840,6 +1256,7 @@
     <script src="js/contextMenu.js"></script>
     <script src="js/fileOperations.js"></script>
     <script src="js/toolbar.js"></script>
+    <script src="js/searchReplace.js"></script>
     <script src="js/main.js"></script>
 </body>
 </html>
