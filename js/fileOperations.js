@@ -177,11 +177,13 @@ async function handleSave() {
     baseName = baseName.replace(/\.(json|txt|xml|csv)$/i, '');
     let filename = `${baseName}.${format}`;
     
-    // 准备数据
+    // 准备数据（从 IndexedDB 恢复视频数据）
+    let dataToSave = await prepareDataForExport(mulufile);
+    
     let mimeType = getMimeType(filename);
     let stringData = (format === 'json')
-        ? JSON.stringify(mulufile, null, 2)
-        : formatDataByExtension(mulufile, filename);
+        ? JSON.stringify(dataToSave, null, 2)
+        : formatDataByExtension(dataToSave, filename);
     
     // 创建并下载文件
     const blob = new Blob([stringData], { type: `${mimeType};charset=utf-8` });
@@ -194,6 +196,29 @@ async function handleSave() {
     
     URL.revokeObjectURL(objectURL);
     showToast(`已保存：${filename}`, 'success', 2500);
+}
+
+/**
+ * 准备导出数据（从 IndexedDB 恢复视频数据）
+ * @param {Array} muluData - 原始目录数据
+ * @returns {Promise<Array>} - 包含完整视频数据的目录数据副本
+ */
+async function prepareDataForExport(muluData) {
+    // 创建数据副本
+    const exportData = JSON.parse(JSON.stringify(muluData));
+    
+    // 遍历并恢复视频数据
+    for (let i = 0; i < exportData.length; i++) {
+        if (exportData[i].length === 4) {
+            let content = exportData[i][3];
+            // 如果内容包含 IndexedDB 视频引用，恢复视频数据
+            if (content && content.includes('data-video-storage-id') && typeof VideoStorage !== 'undefined') {
+                exportData[i][3] = await VideoStorage.processHtmlForExport(content);
+            }
+        }
+    }
+    
+    return exportData;
 }
 
 /**
@@ -218,10 +243,12 @@ async function handleSaveAs(customName) {
     let format = ext.substring(1).toLowerCase();
     let mimeType = getMimeType(filename);
     
-    // 准备数据
+    // 准备数据（从 IndexedDB 恢复视频数据）
+    let dataToSave = await prepareDataForExport(mulufile);
+    
     let stringData = (format === 'json')
-        ? JSON.stringify(mulufile, null, 2)
-        : formatDataByExtension(mulufile, filename);
+        ? JSON.stringify(dataToSave, null, 2)
+        : formatDataByExtension(dataToSave, filename);
     
     // 创建并下载文件
     const blob = new Blob([stringData], { type: `${mimeType};charset=utf-8` });
@@ -338,20 +365,25 @@ async function handleSaveAsWebpage() {
         return div.innerHTML;
     }
     
-    // 生成内容映射
-    function generateContentMap(muluData) {
+    // 生成内容映射（异步，支持从 IndexedDB 恢复视频数据）
+    async function generateContentMap(muluData) {
         const contentMap = {};
-        muluData.forEach(item => {
+        for (const item of muluData) {
             if (item.length === 4) {
-                contentMap[item[2]] = item[3];
+                let content = item[3];
+                // 如果内容包含 IndexedDB 视频引用，恢复视频数据
+                if (content && content.includes('data-video-storage-id') && typeof VideoStorage !== 'undefined') {
+                    content = await VideoStorage.processHtmlForExport(content);
+                }
+                contentMap[item[2]] = content;
             }
-        });
+        }
         return contentMap;
     }
     
     const directoryTree = buildDirectoryTree(mulufile);
     const directoryHTML = generateDirectoryHTML(directoryTree);
-    const contentMap = generateContentMap(mulufile);
+    const contentMap = await generateContentMap(mulufile);
     
     // 获取第一个目录的ID作为默认选中
     const firstDirId = mulufile.length > 0 && mulufile[0].length === 4 ? mulufile[0][2] : '';
@@ -602,6 +634,34 @@ async function handleSaveAsWebpage() {
         
         .content-body img:hover {
             transform: scale(1.02);
+        }
+        
+        .content-body video {
+            display: block;
+            margin: 1em auto;
+            max-width: 640px;
+            max-height: 360px;
+            width: auto;
+            height: auto;
+            border-radius: 5px;
+        }
+        
+        .content-body .video-container {
+            display: block;
+            text-align: center;
+            margin: 1em 0;
+        }
+        
+        .content-body .video-container video {
+            margin: 0 auto;
+        }
+        
+        .content-body .video-container figcaption {
+            margin-top: 0.5em;
+            font-size: 0.9em;
+            color: #666;
+            font-style: italic;
+            text-align: center;
         }
         
         .image-viewer-overlay {

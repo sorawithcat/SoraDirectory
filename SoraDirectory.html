@@ -420,6 +420,35 @@
             opacity: 0.8;
         }
         
+        /* 视频样式 - 居中显示，限制大小 */
+        .markdown-preview video {
+            display: block;
+            margin: 1em auto;
+            max-width: 640px;
+            max-height: 360px;
+            width: auto;
+            height: auto;
+            border-radius: 5px;
+        }
+        
+        .markdown-preview .video-container {
+            display: block;
+            text-align: center;
+            margin: 1em 0;
+        }
+        
+        .markdown-preview .video-container video {
+            margin: 0 auto;
+        }
+        
+        .markdown-preview .video-container figcaption {
+            margin-top: 0.5em;
+            font-size: 0.9em;
+            color: #666;
+            font-style: italic;
+            text-align: center;
+        }
+        
         /* 图片展开查看的遮罩层 */
         .image-viewer-overlay {
             position: fixed;
@@ -1255,6 +1284,7 @@
             <button class="top-toolbar-btn format-toolbar-btn" data-command="code-block" title="代码块">代码块</button>
             <button class="top-toolbar-btn format-toolbar-btn" data-command="link" id="topLinkBtn" title="链接">🔗</button>
             <button class="top-toolbar-btn" id="topImageUploadBtn" title="插入图片">🖼️</button>
+            <button class="top-toolbar-btn" id="topVideoUploadBtn" title="插入视频">🎬</button>
             <button class="top-toolbar-btn format-toolbar-btn" data-command="unordered-list" title="无序列表">无序列表</button>
             <button class="top-toolbar-btn format-toolbar-btn" data-command="ordered-list" title="有序列表">有序列表</button>
             <button class="top-toolbar-btn format-toolbar-btn" data-command="task-list" title="任务列表">任务</button>
@@ -1324,6 +1354,7 @@
         <button class="format-btn format-btn-selection" data-command="quote" title="引用">" 引用</button>
     </div>
     <input type="file" id="imageFileInput" accept="image/*" style="display: none;">
+    <input type="file" id="videoFileInput" accept="video/*" style="display: none;">
     <div class="rightmousemenu">
         <div class="copyMuluWithChildren">复制目录（含子目录）</div>
         <div class="copyMuluWithoutChildren">复制目录（不含子目录）</div>
@@ -1414,6 +1445,7 @@
     <script src="https://unpkg.com/docx@8.5.0/build/index.umd.js"></script>
     <!-- 模块化脚本 -->
     <script src="js/dialog.js"></script>
+    <script src="js/videoStorage.js"></script>
     <script src="js/globals.js"></script>
     <script src="js/directoryUtils.js"></script>
     <script src="js/preview.js"></script>

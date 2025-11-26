@@ -121,14 +121,24 @@ function setParentColorBall(element) {
  */
 function updateMulufileData(element, newContent) {
     const dirId = element.getAttribute("data-dir-id");
-    if (!dirId) return false;
+    if (!dirId) {
+        console.warn('updateMulufileData: dirId 为空');
+        return false;
+    }
     
     // 优先使用缓存查找
     const data = getMulufileByDirId(dirId);
     if (data) {
         data[3] = newContent;
+        // 调试：检查是否包含视频
+        if (newContent && newContent.includes('<video')) {
+            console.log('updateMulufileData: 已保存视频内容到 mulufile');
+            console.log('  - dirId:', dirId);
+            console.log('  - 内容长度:', newContent.length);
+        }
         return true;
     }
+    console.warn('updateMulufileData: 未找到数据', dirId);
     return false;
 }
 
@@ -376,7 +386,7 @@ function bindMuluEvents(muluElement, mulufileIndex = -1) {
             clickTimer = setTimeout(function() {
                 // 切换目录前保存当前内容
                 if (currentMuluName) {
-                    let currentMulu = document.querySelector(`#${currentMuluName}`);
+                    let currentMulu = document.getElementById(currentMuluName);
                     if (currentMulu) {
                         syncPreviewToTextarea();
                     }
@@ -387,16 +397,27 @@ function bindMuluEvents(muluElement, mulufileIndex = -1) {
                 RemoveOtherSelect();
                 muluElement.classList.add("select");
                 
-                // 加载目录内容
-                if (mulufileIndex >= 0 && mulufile[mulufileIndex]) {
-                    jiedianwords.value = mulufile[mulufileIndex][3];
-                } else {
-                    jiedianwords.value = findMulufileData(muluElement);
-                }
+                // 加载目录内容 - 始终使用 findMulufileData 确保获取最新数据
+                let content = findMulufileData(muluElement);
                 
-                isUpdating = true;
-                updateMarkdownPreview();
-                isUpdating = false;
+                // 如果内容包含 IndexedDB 视频引用，异步恢复视频数据
+                if (content && content.includes('data-video-storage-id')) {
+                    // 异步恢复视频数据
+                    (async function() {
+                        if (typeof VideoStorage !== 'undefined') {
+                            content = await VideoStorage.processHtmlForLoad(content);
+                        }
+                        jiedianwords.value = content;
+                        isUpdating = true;
+                        updateMarkdownPreview();
+                        isUpdating = false;
+                    })();
+                } else {
+                    jiedianwords.value = content;
+                    isUpdating = true;
+                    updateMarkdownPreview();
+                    isUpdating = false;
+                }
                 clickTimer = null;
             }, 300);
 
@@ -410,7 +431,7 @@ function bindMuluEvents(muluElement, mulufileIndex = -1) {
             
             // 切换目录前保存当前内容
             if (currentMuluName) {
-                let currentMulu = document.querySelector(`#${currentMuluName}`);
+                let currentMulu = document.getElementById(currentMuluName);
                 if (currentMulu) {
                     syncPreviewToTextarea();
                 }
@@ -421,16 +442,28 @@ function bindMuluEvents(muluElement, mulufileIndex = -1) {
             RemoveOtherSelect();
             muluElement.classList.add("select");
             
-            if (mulufileIndex >= 0 && mulufile[mulufileIndex]) {
-                jiedianwords.value = mulufile[mulufileIndex][3];
-            } else {
-                jiedianwords.value = findMulufileData(muluElement);
-            }
+            // 加载目录内容 - 始终使用 findMulufileData 确保获取最新数据
+            let rightClickContent = findMulufileData(muluElement);
             
-            isUpdating = true;
-            updateMarkdownPreview();
-            isUpdating = false;
-            rightMouseMenu(e);
+            // 如果内容包含 IndexedDB 视频引用，异步恢复视频数据
+            if (rightClickContent && rightClickContent.includes('data-video-storage-id')) {
+                (async function() {
+                    if (typeof VideoStorage !== 'undefined') {
+                        rightClickContent = await VideoStorage.processHtmlForLoad(rightClickContent);
+                    }
+                    jiedianwords.value = rightClickContent;
+                    isUpdating = true;
+                    updateMarkdownPreview();
+                    isUpdating = false;
+                    rightMouseMenu(e);
+                })();
+            } else {
+                jiedianwords.value = rightClickContent;
+                isUpdating = true;
+                updateMarkdownPreview();
+                isUpdating = false;
+                rightMouseMenu(e);
+            }
         }
     });
     

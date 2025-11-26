@@ -13,16 +13,15 @@
 function removeSearchHighlights(html) {
     if (!html) return html;
     
-    // 使用临时元素精确移除高亮标签
-    const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = html;
-    const highlights = tempDiv.querySelectorAll('.search-highlight, .search-highlight-current');
-    highlights.forEach(span => {
-        const textNode = document.createTextNode(span.textContent);
-        span.parentNode.replaceChild(textNode, span);
-    });
-    tempDiv.normalize();
-    return tempDiv.innerHTML;
+    // 使用正则表达式直接移除高亮标签，避免通过 innerHTML 解析
+    // 这对包含视频等大型 base64 数据的 HTML 更安全
+    // 匹配 <span class="search-highlight">...</span> 和 <span class="search-highlight-current">...</span>
+    let result = html;
+    
+    // 移除 search-highlight 和 search-highlight-current 类的 span 标签，保留内容
+    result = result.replace(/<span\s+class=["']search-highlight(?:-current)?["'][^>]*>([\s\S]*?)<\/span>/gi, '$1');
+    
+    return result;
 }
 
 /**
@@ -41,7 +40,20 @@ function syncPreviewToTextarea() {
         });
         
         // 移除搜索高亮标签，避免被保存到数据中
-        const html = removeSearchHighlights(markdownPreview.innerHTML);
+        let html = removeSearchHighlights(markdownPreview.innerHTML);
+        
+        // 使用 IndexedDB 方案：对于有 data-video-storage-id 的视频，
+        // 将 src 替换为占位符（视频数据已保存在 IndexedDB 中）
+        if (html.includes('data-video-storage-id')) {
+            html = html.replace(
+                /(<video[^>]*data-video-storage-id=["'][^"']+["'][^>]*)\ssrc=["'][^"']*["']([^>]*>)/gi,
+                '$1 src="about:blank"$2'
+            );
+            html = html.replace(
+                /(<video[^>]*)\ssrc=["'][^"']*["']([^>]*data-video-storage-id=["'][^"']+["'][^>]*>)/gi,
+                '$1 src="about:blank"$2'
+            );
+        }
         
         isUpdating = true;
         jiedianwords.value = html;
@@ -49,7 +61,7 @@ function syncPreviewToTextarea() {
         
         // 同步更新 mulufile 数据
         if (currentMuluName) {
-            let changedmulu = document.querySelector(`#${currentMuluName}`);
+            let changedmulu = document.getElementById(currentMuluName);
             if (changedmulu) {
                 updateMulufileData(changedmulu, html);
             }
@@ -81,18 +93,91 @@ function attachTaskListEvents() {
     });
 }
 
+/** 存储视频原始 src 的映射（防止浏览器截断 base64 数据） */
+const videoOriginalSrcMap = new Map();
+
 /**
  * 从 textarea 同步内容到预览区域
  */
 function updateMarkdownPreview() {
     if (markdownPreview && jiedianwords) {
+        const content = jiedianwords.value || '';
+        
+        // 在设置 innerHTML 之前，提取并保存视频的原始 src
+        // 这是为了防止浏览器在处理 innerHTML 时截断 base64 数据
+        videoOriginalSrcMap.clear();
+        const videoSrcRegex = /<video[^>]*\ssrc=["']([^"']+)["'][^>]*>/gi;
+        let match;
+        let videoIndex = 0;
+        while ((match = videoSrcRegex.exec(content)) !== null) {
+            const src = match[1];
+            if (src && src.startsWith('data:')) {
+                videoOriginalSrcMap.set(videoIndex, src);
+            }
+            videoIndex++;
+        }
+        
         isUpdating = true;
-        markdownPreview.innerHTML = jiedianwords.value || '';
+        markdownPreview.innerHTML = content;
         isUpdating = false;
+        
+        // 为每个视频设置 data-video-index 属性，用于后续恢复
+        const videos = markdownPreview.querySelectorAll('video');
+        videos.forEach((video, index) => {
+            video.setAttribute('data-video-index', index);
+            if (videoOriginalSrcMap.has(index)) {
+                video.setAttribute('data-original-src', videoOriginalSrcMap.get(index));
+            }
+        });
         
         // 绑定任务列表复选框事件
         attachTaskListEvents();
+        
+        // 初始化视频元素，确保视频正确显示和播放
+        initializeVideos();
     }
+}
+
+/**
+ * 初始化预览区域中的所有视频元素
+ * 确保视频有正确的属性和样式
+ */
+function initializeVideos() {
+    if (!markdownPreview) return;
+    
+    const videos = markdownPreview.querySelectorAll('video');
+    
+    videos.forEach((video, index) => {
+        const videoIndex = parseInt(video.getAttribute('data-video-index'), 10);
+        // 优先从 Map 中获取原始数据
+        const originalSrcFromMap = (!isNaN(videoIndex) && videoOriginalSrcMap.has(videoIndex)) 
+            ? videoOriginalSrcMap.get(videoIndex) 
+            : null;
+        const originalSrcFromAttr = video.getAttribute('data-original-src');
+        const currentSrc = video.getAttribute('src');
+        
+        // 使用 Map 中的数据（优先）或属性中的数据
+        const originalSrc = originalSrcFromMap || originalSrcFromAttr;
+        
+        // 如果有原始数据但当前 src 被截断，则恢复
+        if (originalSrc && currentSrc && originalSrc.length > currentSrc.length) {
+            video.setAttribute('src', originalSrc);
+            video.setAttribute('data-original-src', originalSrc);
+        }
+        
+        // 确保视频有 controls 属性
+        if (!video.hasAttribute('controls')) {
+            video.setAttribute('controls', 'true');
+        }
+        
+        // 确保视频有合适的尺寸限制
+        if (!video.style.maxWidth) {
+            video.style.maxWidth = '640px';
+        }
+        if (!video.style.maxHeight) {
+            video.style.maxHeight = '360px';
+        }
+    });
 }
 
 // -------------------- 预览区域事件绑定 --------------------

@@ -1,6 +1,6 @@
 // ============================================
-// 图片处理模块 (imageHandler.js)
-// 功能：图片上传、查看、拖拽处理、编辑、删除
+// 图片/视频处理模块 (imageHandler.js)
+// 功能：图片/视频上传、查看、拖拽处理、编辑、删除
 // 依赖：globals.js, preview.js, dialog.js
 // 注意：图片大小限制配置和 limitImageSize 函数在 globals.js 中定义
 // ============================================
@@ -22,6 +22,7 @@ if (imageUploadBtn) {
     });
 }
 
+
 // -------------------- 文件选择处理 --------------------
 
 if (imageFileInput) {
@@ -32,6 +33,13 @@ if (imageFileInput) {
         if (!file.type.startsWith('image/')) {
             customAlert('请选择图片文件');
             return;
+        }
+        
+        // 在弹出对话框之前保存光标位置
+        const selection = window.getSelection();
+        let savedRange = null;
+        if (selection.rangeCount > 0 && markdownPreview.contains(selection.anchorNode)) {
+            savedRange = selection.getRangeAt(0).cloneRange();
         }
         
         const reader = new FileReader();
@@ -63,14 +71,13 @@ if (imageFileInput) {
                 imageContainer = img;
             }
             
-            const selection = window.getSelection();
-            if (selection.rangeCount > 0) {
-                const range = selection.getRangeAt(0);
-                range.deleteContents();
-                range.insertNode(imageContainer);
+            // 使用保存的光标位置插入
+            if (savedRange) {
+                savedRange.deleteContents();
+                savedRange.insertNode(imageContainer);
                 const br = document.createElement('br');
-                range.setStartAfter(imageContainer);
-                range.insertNode(br);
+                savedRange.setStartAfter(imageContainer);
+                savedRange.insertNode(br);
             } else {
                 markdownPreview.appendChild(imageContainer);
                 markdownPreview.appendChild(document.createElement('br'));
@@ -78,6 +85,107 @@ if (imageFileInput) {
             
             syncPreviewToTextarea();
             imageFileInput.value = '';
+        };
+        reader.readAsDataURL(file);
+    });
+}
+
+// -------------------- 视频文件选择处理 --------------------
+
+/** 视频文件大小限制（5MB） */
+const MAX_VIDEO_SIZE = 5 * 1024 * 1024;
+
+if (videoFileInput) {
+    videoFileInput.addEventListener('change', async function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        if (!file.type.startsWith('video/')) {
+            customAlert('请选择视频文件');
+            return;
+        }
+        
+        // 检查视频大小
+        if (file.size > MAX_VIDEO_SIZE) {
+            const sizeMB = (file.size / 1024 / 1024).toFixed(1);
+            const confirmed = await customConfirm(`视频文件较大（${sizeMB}MB）！\n\n超过 5MB 的视频可能导致：\n• 保存的文件很大\n• 加载速度变慢\n• 浏览器卡顿\n\n确定要继续上传吗？`);
+            if (!confirmed) {
+                videoFileInput.value = '';
+                return;
+            }
+        }
+        
+        // 在弹出对话框之前保存光标位置
+        const selection = window.getSelection();
+        let savedRange = null;
+        if (selection.rangeCount > 0 && markdownPreview.contains(selection.anchorNode)) {
+            savedRange = selection.getRangeAt(0).cloneRange();
+        }
+        
+        const reader = new FileReader();
+        reader.onload = async function(e) {
+            const videoData = e.target.result;
+            const videoName = file.name || 'video';
+            
+            const caption = await customPrompt('输入视频标题（可选，直接按确定跳过）:', '');
+            
+            // 将视频保存到 IndexedDB
+            let videoStorageId = null;
+            if (typeof VideoStorage !== 'undefined') {
+                try {
+                    videoStorageId = await VideoStorage.saveVideo(videoData);
+                } catch (err) {
+                    console.error('保存视频到 IndexedDB 失败:', err);
+                }
+            }
+            
+            const video = document.createElement('video');
+            video.src = videoData;
+            video.controls = true;
+            video.style.maxWidth = '640px';
+            video.style.maxHeight = '360px';
+            video.title = videoName;
+            
+            // 添加 IndexedDB 存储 ID
+            if (videoStorageId) {
+                video.setAttribute('data-video-storage-id', videoStorageId);
+            }
+            
+            let videoContainer;
+            if (caption) {
+                videoContainer = document.createElement('figure');
+                videoContainer.className = 'video-container';
+                videoContainer.appendChild(video);
+                const figcaption = document.createElement('figcaption');
+                figcaption.textContent = caption;
+                videoContainer.appendChild(figcaption);
+            } else {
+                videoContainer = document.createElement('div');
+                videoContainer.className = 'video-container';
+                videoContainer.appendChild(video);
+            }
+            
+            // 使用保存的光标位置插入
+            if (savedRange) {
+                savedRange.deleteContents();
+                savedRange.insertNode(videoContainer);
+                const br = document.createElement('br');
+                savedRange.setStartAfter(videoContainer);
+                savedRange.insertNode(br);
+            } else {
+                markdownPreview.appendChild(videoContainer);
+                markdownPreview.appendChild(document.createElement('br'));
+            }
+            
+            // 确保同步到数据
+            syncPreviewToTextarea();
+            
+            // 检查是否有选中的目录
+            if (!currentMuluName) {
+                showToast('提示：请先选择一个目录，否则视频无法保存', 'warning', 3000);
+            }
+            
+            videoFileInput.value = '';
         };
         reader.readAsDataURL(file);
     });
@@ -505,9 +613,22 @@ if (markdownPreview) {
     });
     
     // 处理拖放
-    markdownPreview.addEventListener("drop", function(e) {
+    markdownPreview.addEventListener("drop", async function(e) {
         e.preventDefault();
         e.stopPropagation();
+        
+        // 在拖放时保存光标位置（使用拖放位置创建范围）
+        let savedRange = null;
+        if (document.caretRangeFromPoint) {
+            savedRange = document.caretRangeFromPoint(e.clientX, e.clientY);
+        } else if (document.caretPositionFromPoint) {
+            const pos = document.caretPositionFromPoint(e.clientX, e.clientY);
+            if (pos) {
+                savedRange = document.createRange();
+                savedRange.setStart(pos.offsetNode, pos.offset);
+                savedRange.collapse(true);
+            }
+        }
         
         const files = e.dataTransfer.files;
         if (files.length > 0) {
@@ -545,20 +666,92 @@ if (markdownPreview) {
                             imageContainer = img;
                         }
                         
-                        const selection = window.getSelection();
-                        if (selection.rangeCount > 0) {
-                            const range = selection.getRangeAt(0);
-                            range.deleteContents();
-                            range.insertNode(imageContainer);
+                        // 使用保存的拖放位置插入
+                        if (savedRange && markdownPreview.contains(savedRange.startContainer)) {
+                            savedRange.insertNode(imageContainer);
                             const br = document.createElement('br');
-                            range.setStartAfter(imageContainer);
-                            range.insertNode(br);
+                            savedRange.setStartAfter(imageContainer);
+                            savedRange.insertNode(br);
                         } else {
                             markdownPreview.appendChild(imageContainer);
                             markdownPreview.appendChild(document.createElement('br'));
                         }
                         
                         syncPreviewToTextarea();
+                    };
+                    reader.readAsDataURL(file);
+                } else if (file.type.startsWith('video/')) {
+                    // 检查视频大小
+                    if (file.size > MAX_VIDEO_SIZE) {
+                        const sizeMB = (file.size / 1024 / 1024).toFixed(1);
+                        const confirmed = await customConfirm(`视频文件较大（${sizeMB}MB）！\n\n超过 5MB 的视频可能导致：\n• 保存的文件很大\n• 加载速度变慢\n• 浏览器卡顿\n\n确定要继续上传吗？`);
+                        if (!confirmed) {
+                            return;
+                        }
+                    }
+                    
+                    // 处理视频拖拽
+                    const reader = new FileReader();
+                    reader.onload = async function(e) {
+                        const videoData = e.target.result;
+                        const videoName = file.name || '视频';
+                        
+                        const caption = await customPrompt('输入视频标题（可选，直接按确定跳过）:', '');
+                        
+                        // 将视频保存到 IndexedDB
+                        let videoStorageId = null;
+                        if (typeof VideoStorage !== 'undefined') {
+                            try {
+                                videoStorageId = await VideoStorage.saveVideo(videoData);
+                            } catch (err) {
+                                console.error('保存视频到 IndexedDB 失败:', err);
+                            }
+                        }
+                        
+                        const video = document.createElement('video');
+                        video.src = videoData;
+                        video.controls = true;
+                        video.style.maxWidth = '640px';
+                        video.style.maxHeight = '360px';
+                        video.title = videoName;
+                        
+                        // 添加 IndexedDB 存储 ID
+                        if (videoStorageId) {
+                            video.setAttribute('data-video-storage-id', videoStorageId);
+                        }
+                        
+                        let videoContainer;
+                        if (caption) {
+                            videoContainer = document.createElement('figure');
+                            videoContainer.className = 'video-container';
+                            videoContainer.appendChild(video);
+                            const figcaption = document.createElement('figcaption');
+                            figcaption.textContent = caption;
+                            videoContainer.appendChild(figcaption);
+                        } else {
+                            videoContainer = document.createElement('div');
+                            videoContainer.className = 'video-container';
+                            videoContainer.appendChild(video);
+                        }
+                        
+                        // 使用保存的拖放位置插入
+                        if (savedRange && markdownPreview.contains(savedRange.startContainer)) {
+                            savedRange.insertNode(videoContainer);
+                            const br = document.createElement('br');
+                            savedRange.setStartAfter(videoContainer);
+                            savedRange.insertNode(br);
+                        } else {
+                            markdownPreview.appendChild(videoContainer);
+                            markdownPreview.appendChild(document.createElement('br'));
+                        }
+                        
+                        // 确保同步到数据
+                        syncPreviewToTextarea();
+                        
+                        // 检查是否有选中的目录
+                        if (!currentMuluName) {
+                            showToast('提示：请先选择一个目录，否则视频无法保存', 'warning', 3000);
+                        }
                     };
                     reader.readAsDataURL(file);
                 }

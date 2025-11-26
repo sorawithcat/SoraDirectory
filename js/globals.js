@@ -207,6 +207,8 @@ const markdownPreview = document.querySelector(".markdown-preview");     // 预�
 const textFormatToolbar = document.querySelector(".text-format-toolbar"); // 悬浮格式工具栏
 const imageUploadBtn = document.getElementById("imageUploadBtn");        // 图片上传按钮
 const imageFileInput = document.getElementById("imageFileInput");        // 图片文件输入
+const topVideoUploadBtn = document.getElementById("topVideoUploadBtn");  // 顶部视频上传按钮
+const videoFileInput = document.getElementById("videoFileInput");        // 视频文件输入
 const wordsbox = document.querySelector(".wordsbox");                   // 内容区域容器
 
 // 右键菜单

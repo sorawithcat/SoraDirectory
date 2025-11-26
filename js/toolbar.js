@@ -137,10 +137,26 @@ if (topLoadBtn) {
                         currentMuluName = firstRootMulu.id;
                         RemoveOtherSelect();
                         firstRootMulu.classList.add("select");
-                        jiedianwords.value = findMulufileData(firstRootMulu);
-                        isUpdating = true;
-                        updateMarkdownPreview();
-                        isUpdating = false;
+                        
+                        let loadedContent = findMulufileData(firstRootMulu);
+                        
+                        // 如果内容包含 IndexedDB 视频引用，异步恢复视频数据
+                        if (loadedContent && loadedContent.includes('data-video-storage-id')) {
+                            (async function() {
+                                if (typeof VideoStorage !== 'undefined') {
+                                    loadedContent = await VideoStorage.processHtmlForLoad(loadedContent);
+                                }
+                                jiedianwords.value = loadedContent;
+                                isUpdating = true;
+                                updateMarkdownPreview();
+                                isUpdating = false;
+                            })();
+                        } else {
+                            jiedianwords.value = loadedContent;
+                            isUpdating = true;
+                            updateMarkdownPreview();
+                            isUpdating = false;
+                        }
                     }
                 }, 10);
                 
@@ -320,6 +336,15 @@ if (topImageUploadBtn) {
         e.preventDefault();
         e.stopPropagation();
         if (imageFileInput) imageFileInput.click();
+    });
+}
+
+// 顶部视频上传按钮
+if (topVideoUploadBtn) {
+    topVideoUploadBtn.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (videoFileInput) videoFileInput.click();
     });
 }
 
