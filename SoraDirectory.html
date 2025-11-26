@@ -517,6 +517,22 @@
             vertical-align: sub;
         }
         
+        /* 防剧透样式 */
+        .markdown-preview .spoiler {
+            background-color: #333;
+            color: transparent;
+            padding: 2px 4px;
+            border-radius: 3px;
+            transition: all 0.3s ease;
+            user-select: none;
+        }
+        
+        .markdown-preview .spoiler:hover {
+            background-color: #f0f0f0;
+            color: inherit;
+            user-select: text;
+        }
+        
         .markdown-preview .contains-task-list {
             list-style: none;
             padding-left: 0;
@@ -1247,8 +1263,10 @@
             <button class="top-toolbar-btn format-toolbar-btn" data-command="task-list" title="任务列表">任务</button>
             <button class="top-toolbar-btn format-toolbar-btn" data-command="quote" title="引用">引用</button>
             <button class="top-toolbar-btn format-toolbar-btn" data-command="table" title="表格">表格</button>
+            <button class="top-toolbar-btn format-toolbar-btn" data-command="paragraph" title="段落">¶</button>
             <button class="top-toolbar-btn format-toolbar-btn" data-command="hr" title="水平线">—</button>
             <button class="top-toolbar-btn format-toolbar-btn" data-command="highlight" title="高亮">高亮</button>
+            <button class="top-toolbar-btn format-toolbar-btn" data-command="spoiler" title="防剧透（悬停显示）">防剧透</button>
             <button class="top-toolbar-btn format-toolbar-btn" data-command="superscript" title="上标">x²</button>
             <button class="top-toolbar-btn format-toolbar-btn" data-command="subscript" title="下标">x₂</button>
         </div>
@@ -1299,17 +1317,14 @@
         <button class="format-btn format-btn-selection" data-command="code" title="行内代码">&lt;/&gt;</button>
         <button class="format-btn format-btn-selection" data-command="code-block" title="代码块">代码块</button>
         <button class="format-btn format-btn-selection" data-command="highlight" title="高亮">高亮</button>
+        <button class="format-btn format-btn-selection" data-command="spoiler" title="防剧透（悬停显示）">防剧透</button>
         <button class="format-btn format-btn-selection" data-command="superscript" title="上标">x²</button>
         <button class="format-btn format-btn-selection" data-command="subscript" title="下标">x₂</button>
-        <button class="format-btn" data-command="link" id="linkBtn" title="链接 (Ctrl+单击打开)">🔗</button>
-        <button class="format-btn" id="imageUploadBtn" title="插入图片">🖼️</button>
-        <button class="format-btn" data-command="paragraph" title="段落（选中文本转为段落，未选中则插入空行）">¶</button>
-        <button class="format-btn" data-command="unordered-list" title="无序列表">无序列表</button>
-        <button class="format-btn" data-command="ordered-list" title="有序列表">有序列表</button>
-        <button class="format-btn" data-command="task-list" title="任务列表">☑ 任务</button>
-        <button class="format-btn" data-command="quote" title="引用">" 引用</button>
-        <button class="format-btn" data-command="table" title="表格">表格</button>
-        <button class="format-btn" data-command="hr" title="水平线">—</button>
+        <button class="format-btn format-btn-selection" data-command="link" id="linkBtn" title="链接 (Ctrl+单击打开)">🔗</button>
+        <button class="format-btn format-btn-selection" data-command="unordered-list" title="无序列表">无序列表</button>
+        <button class="format-btn format-btn-selection" data-command="ordered-list" title="有序列表">有序列表</button>
+        <button class="format-btn format-btn-selection" data-command="task-list" title="任务列表">☑ 任务</button>
+        <button class="format-btn format-btn-selection" data-command="quote" title="引用">" 引用</button>
     </div>
     <input type="file" id="imageFileInput" accept="image/*" style="display: none;">
     <div class="rightmousemenu">

@@ -173,7 +173,7 @@ if (markdownPreview) {
     markdownPreview.addEventListener("mouseup", function(e) {
         setTimeout(() => {
             const previewSelection = getPreviewSelection();
-            // 有选中文字时显示完整工具栏，没有选中文字时不显示（右键会显示）
+            // 有选中文字时显示工具栏
             if (previewSelection && previewSelection.text && previewSelection.text.length > 0) {
                 showTextFormatToolbar(e);
             } else {
@@ -183,12 +183,6 @@ if (markdownPreview) {
         }, 10);
     });
     
-    // 右键点击时显示工具栏（不需要选中文字）
-    markdownPreview.addEventListener("contextmenu", function(e) {
-        setTimeout(() => {
-            showTextFormatToolbar(e);
-        }, 10);
-    });
 }
 
 // -------------------- 格式按钮事件绑定 --------------------
@@ -239,6 +233,7 @@ if (markdownPreview) {
                 target = target.parentNode;
             }
         }
+        
     });
 }
 
@@ -251,7 +246,7 @@ if (markdownPreview) {
  * 
  * 支持的命令：
  * - 标题：h1, h2, h3, h4, h5, h6
- * - 文本格式：bold, italic, underline, strikethrough, code, code-block, highlight, superscript, subscript
+ * - 文本格式：bold, italic, underline, strikethrough, code, code-block, highlight, spoiler, superscript, subscript
  * - 链接：link
  * - 列表：unordered-list, ordered-list, task-list
  * - 块级元素：quote, paragraph, hr, table
@@ -593,6 +588,26 @@ async function applyFormat(command) {
                 formattedHtml = '<mark>' + selectedHtml + '</mark>';
             }
             break;
+        case 'spoiler':
+            if (!selectedText) return;
+            unwrapTag = isWrappedInTag(range, ['SPAN']);
+            // 检查是否是防剧透标签（具有 spoiler 类）
+            if (unwrapTag && !unwrapTag.classList.contains('spoiler')) {
+                unwrapTag = null;
+            }
+            if (!unwrapTag) {
+                // 查找选中内容中的 spoiler span
+                const spoilerSpan = findTagInSelection(range, 'SPAN');
+                if (spoilerSpan && spoilerSpan.classList.contains('spoiler')) {
+                    unwrapTag = spoilerSpan;
+                }
+            }
+            if (unwrapTag) {
+                shouldUnwrap = true;
+            } else {
+                formattedHtml = '<span class="spoiler">' + selectedHtml + '</span>';
+            }
+            break;
         case 'superscript':
             if (!selectedText) return;
             unwrapTag = isWrappedInTag(range, ['SUP']);
@@ -842,7 +857,7 @@ async function applyFormat(command) {
         
         // 辅助函数：检查节点是否在格式标签内
         function isInFormatTag(node) {
-            const formatTags = ['EM', 'I', 'STRONG', 'B', 'U', 'S', 'STRIKE', 'DEL', 'CODE', 'MARK', 'SUP', 'SUB'];
+            const formatTags = ['EM', 'I', 'STRONG', 'B', 'U', 'S', 'STRIKE', 'DEL', 'CODE', 'MARK', 'SUP', 'SUB', 'SPAN'];
             let parent = node.nodeType === Node.TEXT_NODE ? node.parentNode : node;
             while (parent && parent !== markdownPreview) {
                 if (parent.nodeType === Node.ELEMENT_NODE && formatTags.includes(parent.tagName)) {
@@ -870,7 +885,7 @@ async function applyFormat(command) {
             const parent = insertedElement.parentNode;
             if (parent) {
                 // 检查插入的元素是否是行内格式标签
-                const inlineFormatTags = ['EM', 'I', 'STRONG', 'B', 'U', 'S', 'STRIKE', 'DEL', 'CODE', 'MARK', 'SUP', 'SUB', 'A'];
+                const inlineFormatTags = ['EM', 'I', 'STRONG', 'B', 'U', 'S', 'STRIKE', 'DEL', 'CODE', 'MARK', 'SUP', 'SUB', 'A', 'SPAN'];
                 const isInlineFormat = inlineFormatTags.includes(insertedElement.tagName);
                 
                 if (isInlineFormat) {
@@ -998,7 +1013,7 @@ async function applyFormat(command) {
                 // 检查光标是否在格式标签内
                 let container = currentRange.startContainer;
                 let node = container.nodeType === Node.TEXT_NODE ? container.parentNode : container;
-                const formatTags = ['EM', 'I', 'STRONG', 'B', 'U', 'S', 'STRIKE', 'DEL', 'CODE', 'MARK', 'SUP', 'SUB'];
+                const formatTags = ['EM', 'I', 'STRONG', 'B', 'U', 'S', 'STRIKE', 'DEL', 'CODE', 'MARK', 'SUP', 'SUB', 'SPAN'];
                 
                 while (node && node !== markdownPreview) {
                     if (node.nodeType === Node.ELEMENT_NODE && formatTags.includes(node.tagName)) {
