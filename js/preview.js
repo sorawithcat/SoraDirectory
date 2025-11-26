@@ -30,6 +30,16 @@ function removeSearchHighlights(html) {
  */
 function syncPreviewToTextarea() {
     if (markdownPreview && jiedianwords) {
+        // 同步复选框的 checked 状态到 HTML 属性
+        const checkboxes = markdownPreview.querySelectorAll('input[type="checkbox"]');
+        checkboxes.forEach(checkbox => {
+            if (checkbox.checked) {
+                checkbox.setAttribute('checked', 'checked');
+            } else {
+                checkbox.removeAttribute('checked');
+            }
+        });
+        
         // 移除搜索高亮标签，避免被保存到数据中
         const html = removeSearchHighlights(markdownPreview.innerHTML);
         

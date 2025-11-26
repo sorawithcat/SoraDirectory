@@ -523,6 +523,9 @@ async function handleSaveAsWebpage() {
         .content-body li { margin: 0.5em 0; }
         
         .content-body blockquote {
+            display: block;
+            width: 100%;
+            box-sizing: border-box;
             border-left: 4px solid #ddd;
             padding: 0.5em 1em;
             margin: 1em 0;
@@ -540,8 +543,10 @@ async function handleSaveAsWebpage() {
         }
         
         .content-body pre {
+            position: relative;
             background-color: #f6f8fa;
             padding: 1em;
+            padding-top: 2.5em;
             border-radius: 8px;
             overflow-x: auto;
             margin: 1em 0;
@@ -557,12 +562,88 @@ async function handleSaveAsWebpage() {
             word-wrap: break-word;
         }
         
+        .content-body pre .code-lang-label {
+            position: absolute;
+            top: 6px;
+            right: 8px;
+            padding: 3px 10px;
+            background-color: #e1e4e8;
+            border: none;
+            border-radius: 4px;
+            font-size: 11px;
+            color: #57606a;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            cursor: pointer;
+            transition: all 0.2s;
+            z-index: 10;
+        }
+        
+        .content-body pre .code-lang-label:hover {
+            background-color: #0066cc;
+            color: #fff;
+        }
+        
+        .content-body pre .code-lang-label.copied {
+            background-color: #2da44e;
+            color: #fff;
+        }
+        
         .content-body img {
             max-width: 100%;
             height: auto;
             border-radius: 5px;
             display: block;
             margin: 1em auto;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        
+        .content-body img:hover {
+            transform: scale(1.02);
+        }
+        
+        .image-viewer-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.9);
+            z-index: 9999;
+            cursor: pointer;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .image-viewer-overlay.active {
+            display: flex;
+        }
+        
+        .image-viewer-overlay img {
+            max-width: 90%;
+            max-height: 90%;
+            object-fit: contain;
+            border-radius: 4px;
+            cursor: default;
+        }
+        
+        .image-viewer-close {
+            position: absolute;
+            top: 20px;
+            right: 30px;
+            color: #fff;
+            font-size: 40px;
+            font-weight: bold;
+            cursor: pointer;
+            z-index: 10000;
+            line-height: 1;
+        }
+        
+        .image-viewer-close:hover {
+            color: #ccc;
         }
         
         .content-body table {
@@ -639,10 +720,18 @@ async function handleSaveAsWebpage() {
         .content-body .task-list-item {
             list-style: none;
             padding-left: 0;
+            display: flex;
+            align-items: flex-start;
+            margin: 0.5em 0;
         }
         
         .content-body .task-list-item-checkbox {
             margin-right: 8px;
+            margin-top: 4px;
+            pointer-events: none;
+            width: 16px;
+            height: 16px;
+            flex-shrink: 0;
         }
         
         .empty-state {
@@ -686,6 +775,11 @@ async function handleSaveAsWebpage() {
         </div>
     </div>
     
+    <div class="image-viewer-overlay" id="imageViewer">
+        <span class="image-viewer-close" id="imageViewerClose">&times;</span>
+        <img id="imageViewerImg" src="" alt="放大查看">
+    </div>
+    
     <script>
         const contentMap = ${JSON.stringify(contentMap)};
         
@@ -695,6 +789,121 @@ async function handleSaveAsWebpage() {
         });
         
         let currentSelected = null;
+        
+        function initCodeBlocks() {
+            const contentBody = document.getElementById('contentBody');
+            if (!contentBody) return;
+            
+            const codeBlocks = contentBody.querySelectorAll('pre');
+            codeBlocks.forEach(pre => {
+                if (pre.dataset.initialized) return;
+                pre.dataset.initialized = 'true';
+                
+                const lang = pre.getAttribute('data-lang') || 'code';
+                
+                const existingLabel = pre.querySelector('.code-lang-label');
+                if (existingLabel) {
+                    existingLabel.remove();
+                }
+                
+                const langLabel = document.createElement('button');
+                langLabel.className = 'code-lang-label';
+                langLabel.textContent = lang.toUpperCase();
+                langLabel.type = 'button';
+                langLabel.dataset.lang = lang.toUpperCase();
+                
+                pre.addEventListener('mouseenter', () => {
+                    if (!langLabel.classList.contains('copied')) {
+                        langLabel.textContent = '点击复制';
+                    }
+                });
+                
+                pre.addEventListener('mouseleave', () => {
+                    if (!langLabel.classList.contains('copied')) {
+                        langLabel.textContent = langLabel.dataset.lang;
+                    }
+                });
+                
+                langLabel.addEventListener('click', async (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    
+                    const codeElement = pre.querySelector('code');
+                    const code = codeElement ? codeElement.textContent : pre.textContent;
+                    
+                    try {
+                        await navigator.clipboard.writeText(code);
+                        langLabel.textContent = '已复制!';
+                        langLabel.classList.add('copied');
+                        
+                        setTimeout(() => {
+                            langLabel.textContent = langLabel.dataset.lang;
+                            langLabel.classList.remove('copied');
+                        }, 2000);
+                    } catch (err) {
+                        const textArea = document.createElement('textarea');
+                        textArea.value = code;
+                        textArea.style.position = 'fixed';
+                        textArea.style.left = '-9999px';
+                        document.body.appendChild(textArea);
+                        textArea.select();
+                        try {
+                            document.execCommand('copy');
+                            langLabel.textContent = '已复制!';
+                            langLabel.classList.add('copied');
+                            setTimeout(() => {
+                                langLabel.textContent = langLabel.dataset.lang;
+                                langLabel.classList.remove('copied');
+                            }, 2000);
+                        } catch (e) {
+                            langLabel.textContent = '复制失败';
+                            setTimeout(() => {
+                                langLabel.textContent = langLabel.dataset.lang;
+                            }, 2000);
+                        }
+                        document.body.removeChild(textArea);
+                    }
+                });
+                
+                pre.appendChild(langLabel);
+            });
+        }
+        
+        const imageViewer = document.getElementById('imageViewer');
+        const imageViewerImg = document.getElementById('imageViewerImg');
+        const imageViewerClose = document.getElementById('imageViewerClose');
+        
+        function initImageViewer() {
+            const contentBody = document.getElementById('contentBody');
+            if (!contentBody) return;
+            
+            const images = contentBody.querySelectorAll('img');
+            images.forEach(img => {
+                if (img.dataset.viewerInit) return;
+                img.dataset.viewerInit = 'true';
+                
+                img.addEventListener('click', () => {
+                    imageViewerImg.src = img.src;
+                    imageViewer.classList.add('active');
+                });
+            });
+        }
+        
+        imageViewerClose.addEventListener('click', () => {
+            imageViewer.classList.remove('active');
+        });
+        
+        imageViewer.addEventListener('click', (e) => {
+            if (e.target === imageViewer) {
+                imageViewer.classList.remove('active');
+            }
+        });
+        
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && imageViewer.classList.contains('active')) {
+                imageViewer.classList.remove('active');
+            }
+        });
         
         function selectDirectory(dirId, toggleExpand = false) {
             if (currentSelected) {
@@ -717,6 +926,9 @@ async function handleSaveAsWebpage() {
             
             document.getElementById('contentTitle').textContent = title;
             document.getElementById('contentBody').innerHTML = content || '<div class="empty-state">此目录暂无内容</div>';
+            
+            initCodeBlocks();
+            initImageViewer();
         }
         
         function toggleDirectory(dirId, event) {
