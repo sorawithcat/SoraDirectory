@@ -6,7 +6,7 @@
     <title>SoraList</title>
     <style>
         :root {
-            --toolbar-height: 80px; /* 初始工具栏高度，JavaScript会动态更新 */
+            --toolbar-height: 80px;
         }
         
         * {
@@ -298,21 +298,33 @@
             border: 1px solid #d0d7de;
         }
         
-        /* 语言标签 */
-        .markdown-preview pre[data-lang]::after {
-            content: attr(data-lang);
+        /* 语言标签（可点击复制） */
+        .markdown-preview pre .code-lang-label {
             position: absolute;
             top: 4px;
             right: 8px;
             padding: 2px 8px;
             background-color: #e1e4e8;
+            border: none;
             border-radius: 4px;
             font-size: 11px;
             color: #57606a;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             text-transform: uppercase;
             letter-spacing: 0.5px;
-            pointer-events: none;
+            cursor: pointer;
+            transition: all 0.2s;
+            z-index: 10;
+        }
+        
+        .markdown-preview pre .code-lang-label:hover {
+            background-color: #0066cc;
+            color: #fff;
+        }
+        
+        .markdown-preview pre .code-lang-label.copied {
+            background-color: #2da44e;
+            color: #fff;
         }
         
         .markdown-preview pre code {
@@ -358,6 +370,7 @@
         .markdown-preview pre.code-block-editable:hover::before {
             opacity: 1;
         }
+        
         
         /* 语法高亮 - GitHub 风格 */
         .markdown-preview pre code .keyword { color: #cf222e; font-weight: 500; }
