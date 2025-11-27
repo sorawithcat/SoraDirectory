@@ -385,7 +385,124 @@ const MediaStorage = (function() {
     }
     
     /**
+     * 创建分块文件的流式读取器
+     * 用于真正的流式下载，避免将所有数据加载到内存
+     * @param {string} mediaId - 媒体 ID
+     * @returns {Promise<ReadableStream|null>} - 返回 ReadableStream 或 null
+     */
+    async function getChunkedBlobStream(mediaId) {
+        const database = await initDB();
+        
+        // 先获取主记录
+        const record = await new Promise((resolve, reject) => {
+            const transaction = database.transaction([STORE_NAME], 'readonly');
+            const store = transaction.objectStore(STORE_NAME);
+            const request = store.get(mediaId);
+            
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+        
+        if (!record) {
+            console.error('MediaStorage: 记录不存在', mediaId);
+            return null;
+        }
+        
+        // 如果是分块存储，创建流
+        if (record.chunked && record.chunks) {
+            // 显示开始提示
+            showProgressToast(`加载中: 0/${record.chunks.length} (0%)`);
+            
+            // 使用 ReadableStream 流式读取分块
+            return new ReadableStream({
+                async start(controller) {
+                    try {
+                        // 二进制分块（新格式）
+                        if (record.blobChunked) {
+                            for (let i = 0; i < record.chunks.length; i++) {
+                                const chunkId = record.chunks[i];
+                                
+                                // 报告进度
+                                reportProgress(i + 1, record.chunks.length, 'loading');
+                                
+                                // 读取单个分块
+                                const chunkData = await new Promise((resolve, reject) => {
+                                    const transaction = database.transaction([STORE_NAME], 'readonly');
+                                    const store = transaction.objectStore(STORE_NAME);
+                                    const request = store.get(chunkId);
+                                    
+                                    request.onsuccess = () => resolve(request.result?.data);
+                                    request.onerror = () => reject(request.error);
+                                });
+                                
+                                if (!chunkData) {
+                                    controller.error(new Error(`分块 ${i} 数据丢失`));
+                                    return;
+                                }
+                                
+                                // 将分块数据推送到流中
+                                if (chunkData instanceof ArrayBuffer) {
+                                    controller.enqueue(new Uint8Array(chunkData));
+                                } else if (chunkData instanceof Uint8Array) {
+                                    controller.enqueue(chunkData);
+                                } else {
+                                    controller.error(new Error(`分块 ${i} 数据格式错误`));
+                                    return;
+                                }
+                            }
+                        } else {
+                            // base64 分块（旧格式兼容）
+                            for (let i = 0; i < record.chunks.length; i++) {
+                                const chunkId = record.chunks[i];
+                                
+                                // 报告进度
+                                reportProgress(i + 1, record.chunks.length, 'loading');
+                                
+                                const chunkData = await new Promise((resolve, reject) => {
+                                    const transaction = database.transaction([STORE_NAME], 'readonly');
+                                    const store = transaction.objectStore(STORE_NAME);
+                                    const request = store.get(chunkId);
+                                    
+                                    request.onsuccess = () => resolve(request.result?.data);
+                                    request.onerror = () => reject(request.error);
+                                });
+                                
+                                if (!chunkData) {
+                                    controller.error(new Error(`分块 ${i} 数据丢失`));
+                                    return;
+                                }
+                                
+                                // 解码 base64 为二进制
+                                try {
+                                    const binaryString = atob(chunkData);
+                                    const bytes = new Uint8Array(binaryString.length);
+                                    for (let j = 0; j < binaryString.length; j++) {
+                                        bytes[j] = binaryString.charCodeAt(j);
+                                    }
+                                    controller.enqueue(bytes);
+                                } catch (e) {
+                                    console.error(`解码分块 ${i} 失败:`, e);
+                                    controller.error(new Error(`分块 ${i} 解码失败`));
+                                    return;
+                                }
+                            }
+                        }
+                        
+                        // 所有分块读取完成
+                        controller.close();
+                    } catch (error) {
+                        controller.error(error);
+                    }
+                }
+            });
+        }
+        
+        return null;
+    }
+    
+    /**
      * 获取分块存储的文件，直接返回 Blob
+     * 使用流式读取，避免一次性加载所有分块到内存
      * @param {string} mediaId - 媒体 ID
      * @returns {Promise<Blob|null>} - 返回 Blob 或 null
      */
@@ -410,81 +527,110 @@ const MediaStorage = (function() {
         // 确定 MIME 类型
         let mimeType = record.mimeType || 'application/octet-stream';
         
-        // 如果是分块存储
+        // 如果是分块存储，使用流式读取
         if (record.chunked && record.chunks) {
             // 显示开始提示
             showProgressToast(`加载中: 0/${record.chunks.length} (0%)`);
             
-            const blobParts = [];
-            
-            // 二进制分块（新格式）
-            if (record.blobChunked) {
-                for (let i = 0; i < record.chunks.length; i++) {
-                    const chunkId = record.chunks[i];
-                    
-                    // 报告进度
-                    reportProgress(i + 1, record.chunks.length, 'loading');
-                    
-                    const chunkData = await new Promise((resolve, reject) => {
-                        const transaction = database.transaction([STORE_NAME], 'readonly');
-                        const store = transaction.objectStore(STORE_NAME);
-                        const request = store.get(chunkId);
+            // 使用 ReadableStream 流式读取分块，避免一次性加载所有数据到内存
+            const stream = new ReadableStream({
+                async start(controller) {
+                    try {
+                        // 二进制分块（新格式）
+                        if (record.blobChunked) {
+                            for (let i = 0; i < record.chunks.length; i++) {
+                                const chunkId = record.chunks[i];
+                                
+                                // 报告进度
+                                reportProgress(i + 1, record.chunks.length, 'loading');
+                                
+                                // 读取单个分块
+                                const chunkData = await new Promise((resolve, reject) => {
+                                    const transaction = database.transaction([STORE_NAME], 'readonly');
+                                    const store = transaction.objectStore(STORE_NAME);
+                                    const request = store.get(chunkId);
+                                    
+                                    request.onsuccess = () => resolve(request.result?.data);
+                                    request.onerror = () => reject(request.error);
+                                });
+                                
+                                if (!chunkData) {
+                                    controller.error(new Error(`分块 ${i} 数据丢失`));
+                                    return;
+                                }
+                                
+                                // 将分块数据推送到流中
+                                // 如果是 ArrayBuffer，转换为 Uint8Array
+                                if (chunkData instanceof ArrayBuffer) {
+                                    controller.enqueue(new Uint8Array(chunkData));
+                                } else if (chunkData instanceof Uint8Array) {
+                                    controller.enqueue(chunkData);
+                                } else {
+                                    controller.error(new Error(`分块 ${i} 数据格式错误`));
+                                    return;
+                                }
+                                
+                                // 释放分块数据的引用，让 GC 可以回收
+                                // 注意：这里不能立即释放，因为流还在使用
+                                // 但通过不保留引用，可以让 GC 在适当时机回收
+                            }
+                        } else {
+                            // base64 分块（旧格式兼容）
+                            if (record.header) {
+                                const mimeMatch = record.header.match(/data:([^;]+)/);
+                                if (mimeMatch) {
+                                    mimeType = mimeMatch[1];
+                                }
+                            }
+                            
+                            for (let i = 0; i < record.chunks.length; i++) {
+                                const chunkId = record.chunks[i];
+                                
+                                // 报告进度
+                                reportProgress(i + 1, record.chunks.length, 'loading');
+                                
+                                const chunkData = await new Promise((resolve, reject) => {
+                                    const transaction = database.transaction([STORE_NAME], 'readonly');
+                                    const store = transaction.objectStore(STORE_NAME);
+                                    const request = store.get(chunkId);
+                                    
+                                    request.onsuccess = () => resolve(request.result?.data);
+                                    request.onerror = () => reject(request.error);
+                                });
+                                
+                                if (!chunkData) {
+                                    controller.error(new Error(`分块 ${i} 数据丢失`));
+                                    return;
+                                }
+                                
+                                // 解码 base64 为二进制
+                                try {
+                                    const binaryString = atob(chunkData);
+                                    const bytes = new Uint8Array(binaryString.length);
+                                    for (let j = 0; j < binaryString.length; j++) {
+                                        bytes[j] = binaryString.charCodeAt(j);
+                                    }
+                                    controller.enqueue(bytes);
+                                } catch (e) {
+                                    console.error(`解码分块 ${i} 失败:`, e);
+                                    controller.error(new Error(`分块 ${i} 解码失败`));
+                                    return;
+                                }
+                            }
+                        }
                         
-                        request.onsuccess = () => resolve(request.result?.data);
-                        request.onerror = () => reject(request.error);
-                    });
-                    
-                    if (!chunkData) {
-                        throw new Error(`分块 ${i} 数据丢失`);
+                        // 所有分块读取完成
+                        controller.close();
+                    } catch (error) {
+                        controller.error(error);
                     }
-                    
-                    // ArrayBuffer 直接添加
-                    blobParts.push(chunkData);
                 }
-                
-                return new Blob(blobParts, { type: mimeType });
-            }
+            });
             
-            // base64 分块（旧格式兼容）
-            if (record.header) {
-                const mimeMatch = record.header.match(/data:([^;]+)/);
-                if (mimeMatch) {
-                    mimeType = mimeMatch[1];
-                }
-            }
-            
-            for (let i = 0; i < record.chunks.length; i++) {
-                const chunkId = record.chunks[i];
-                
-                const chunkData = await new Promise((resolve, reject) => {
-                    const transaction = database.transaction([STORE_NAME], 'readonly');
-                    const store = transaction.objectStore(STORE_NAME);
-                    const request = store.get(chunkId);
-                    
-                    request.onsuccess = () => resolve(request.result?.data);
-                    request.onerror = () => reject(request.error);
-                });
-                
-                if (!chunkData) {
-                    throw new Error(`分块 ${i} 数据丢失`);
-                }
-                
-                // 解码 base64 为二进制
-                try {
-                    const binaryString = atob(chunkData);
-                    const bytes = new Uint8Array(binaryString.length);
-                    for (let j = 0; j < binaryString.length; j++) {
-                        bytes[j] = binaryString.charCodeAt(j);
-                    }
-                    blobParts.push(bytes);
-                } catch (e) {
-                    console.error(`解码分块 ${i} 失败:`, e);
-                    throw new Error(`分块 ${i} 解码失败`);
-                }
-                
-            }
-            
-            return new Blob(blobParts, { type: mimeType });
+            // 将流转换为 Response，然后转换为 Blob
+            // 这样浏览器可以更高效地处理大文件
+            const response = new Response(stream);
+            return await response.blob();
         }
         
         // 非分块文件，直接转换
@@ -684,6 +830,7 @@ const MediaStorage = (function() {
     
     /**
      * 处理 HTML 内容，从 IndexedDB 恢复媒体数据（视频和图片）
+     * 如果文件中有 base64 data URL，会先保存到 IndexedDB，然后再恢复
      * 支持 data-media-storage-id 属性，支持分块存储
      * @param {string} html - 包含媒体引用的 HTML
      * @returns {Promise<string>} - 恢复后的 HTML
@@ -702,6 +849,26 @@ const MediaStorage = (function() {
             while ((match = videoRegex.exec(result)) !== null) {
                 const fullMatch = match[0];
                 const mediaId = match[2];
+                
+                // 检查是否已经有有效的 src（base64 data URL）
+                const srcMatch = fullMatch.match(/\ssrc=["']([^"']+)["']/);
+                const existingSrc = srcMatch ? srcMatch[1] : '';
+                
+                // 如果已经有有效的 base64 data URL，先保存到 IndexedDB（如果还没有）
+                if (existingSrc && existingSrc.startsWith('data:') && !existingSrc.includes('about:blank')) {
+                    try {
+                        // 检查 IndexedDB 中是否已有该媒体
+                        const existingMedia = await getMedia(mediaId);
+                        if (!existingMedia) {
+                            // 如果 IndexedDB 中没有，保存 base64 data URL 到 IndexedDB
+                            await saveMedia(existingSrc, 'video', mediaId);
+                        }
+                    } catch (err) {
+                        console.error('保存视频到 IndexedDB 失败:', err);
+                    }
+                    continue; // 跳过，已经有有效数据
+                }
+                
                 // 使用新的函数，支持分块存储
                 const mediaUrl = await getMediaAsUrl(mediaId);
                 
@@ -730,6 +897,26 @@ const MediaStorage = (function() {
             while ((match = imgRegex.exec(result)) !== null) {
                 const fullMatch = match[0];
                 const mediaId = match[2];
+                
+                // 检查是否已经有有效的 src（base64 data URL）
+                const srcMatch = fullMatch.match(/\ssrc=["']([^"']+)["']/);
+                const existingSrc = srcMatch ? srcMatch[1] : '';
+                
+                // 如果已经有有效的 base64 data URL，先保存到 IndexedDB（如果还没有）
+                if (existingSrc && existingSrc.startsWith('data:') && !existingSrc.includes('about:blank')) {
+                    try {
+                        // 检查 IndexedDB 中是否已有该媒体
+                        const existingMedia = await getMedia(mediaId);
+                        if (!existingMedia) {
+                            // 如果 IndexedDB 中没有，保存 base64 data URL 到 IndexedDB
+                            await saveMedia(existingSrc, 'image', mediaId);
+                        }
+                    } catch (err) {
+                        console.error('保存图片到 IndexedDB 失败:', err);
+                    }
+                    continue; // 跳过，已经有有效数据
+                }
+                
                 // 使用新的函数，支持分块存储
                 const mediaUrl = await getMediaAsUrl(mediaId);
                 
@@ -745,6 +932,77 @@ const MediaStorage = (function() {
             }
             
             for (const { from, to } of imgReplacements) {
+                result = result.replace(from, to);
+            }
+        }
+        
+        // 处理没有 data-media-storage-id 但有 base64 data URL 的图片和视频
+        // 这种情况是从旧文件或分享的文件加载的，需要为它们生成 storage-id 并保存
+        if (result.includes('src="data:')) {
+            // 处理图片
+            const imgRegex = /<img([^>]*)\ssrc=["'](data:[^"']+)["']([^>]*)>/gi;
+            let match;
+            const imgReplacements = [];
+            
+            while ((match = imgRegex.exec(result)) !== null) {
+                const fullMatch = match[0];
+                const beforeSrc = match[1];
+                const dataUrl = match[2];
+                const afterSrc = match[3];
+                
+                // 如果已经有 data-media-storage-id，跳过
+                if (fullMatch.includes('data-media-storage-id')) {
+                    continue;
+                }
+                
+                // 生成新的 media ID 并保存到 IndexedDB
+                try {
+                    const mediaId = generateMediaId('image');
+                    await saveMedia(dataUrl, 'image', mediaId);
+                    
+                    // 添加 data-media-storage-id 属性
+                    let newTag = fullMatch;
+                    newTag = newTag.replace('<img', `<img data-media-storage-id="${mediaId}"`);
+                    imgReplacements.push({ from: fullMatch, to: newTag });
+                } catch (err) {
+                    console.error('保存图片到 IndexedDB 失败:', err);
+                }
+            }
+            
+            for (const { from, to } of imgReplacements) {
+                result = result.replace(from, to);
+            }
+            
+            // 处理视频
+            const videoRegex = /<video([^>]*)\ssrc=["'](data:[^"']+)["']([^>]*)>/gi;
+            const videoReplacements = [];
+            
+            while ((match = videoRegex.exec(result)) !== null) {
+                const fullMatch = match[0];
+                const beforeSrc = match[1];
+                const dataUrl = match[2];
+                const afterSrc = match[3];
+                
+                // 如果已经有 data-media-storage-id，跳过
+                if (fullMatch.includes('data-media-storage-id')) {
+                    continue;
+                }
+                
+                // 生成新的 media ID 并保存到 IndexedDB
+                try {
+                    const mediaId = generateMediaId('video');
+                    await saveMedia(dataUrl, 'video', mediaId);
+                    
+                    // 添加 data-media-storage-id 属性
+                    let newTag = fullMatch;
+                    newTag = newTag.replace('<video', `<video data-media-storage-id="${mediaId}"`);
+                    videoReplacements.push({ from: fullMatch, to: newTag });
+                } catch (err) {
+                    console.error('保存视频到 IndexedDB 失败:', err);
+                }
+            }
+            
+            for (const { from, to } of videoReplacements) {
                 result = result.replace(from, to);
             }
         }
@@ -806,6 +1064,14 @@ const MediaStorage = (function() {
         if (!html) return html;
         
         let result = html;
+        let totalMediaCount = 0;
+        let processedCount = 0;
+        
+        // 先统计需要处理的媒体数量
+        if (result.includes('data-media-storage-id')) {
+            const allMatches = result.match(/data-media-storage-id=["']([^"']+)["']/gi);
+            totalMediaCount = allMatches ? allMatches.length : 0;
+        }
         
         // 处理视频
         if (result.includes('data-media-storage-id')) {
@@ -816,7 +1082,24 @@ const MediaStorage = (function() {
             while ((match = videoRegex.exec(result)) !== null) {
                 const fullMatch = match[0];
                 const mediaId = match[2];
+                
+                // 检查是否已经有有效的 base64 data URL
+                const srcMatch = fullMatch.match(/\ssrc=["']([^"']+)["']/);
+                const existingSrc = srcMatch ? srcMatch[1] : '';
+                
+                // 如果已经有有效的 base64 data URL，保留它（用于分享文件）
+                if (existingSrc && existingSrc.startsWith('data:') && !existingSrc.includes('about:blank')) {
+                    continue; // 跳过，已经有有效数据
+                }
+                
+                // 显示进度
+                processedCount++;
+                if (totalMediaCount > 1) {
+                    showProgressToast(`正在处理媒体文件... (${processedCount}/${totalMediaCount})`);
+                }
+                
                 // 使用 getMediaAsDataUrl 确保返回 base64 data URL
+                // 注意：对于分块存储的大文件，会先合并所有分块，再转换为 base64，确保完整不截断
                 const dataUrl = await getMediaAsDataUrl(mediaId);
                 
                 if (dataUrl) {
@@ -844,7 +1127,24 @@ const MediaStorage = (function() {
             while ((match = imgRegex.exec(result)) !== null) {
                 const fullMatch = match[0];
                 const mediaId = match[2];
+                
+                // 检查是否已经有有效的 base64 data URL
+                const srcMatch = fullMatch.match(/\ssrc=["']([^"']+)["']/);
+                const existingSrc = srcMatch ? srcMatch[1] : '';
+                
+                // 如果已经有有效的 base64 data URL，保留它（用于分享文件）
+                if (existingSrc && existingSrc.startsWith('data:') && !existingSrc.includes('about:blank')) {
+                    continue; // 跳过，已经有有效数据
+                }
+                
+                // 显示进度
+                processedCount++;
+                if (totalMediaCount > 1) {
+                    showProgressToast(`正在处理媒体文件... (${processedCount}/${totalMediaCount})`);
+                }
+                
                 // 使用 getMediaAsDataUrl 确保返回 base64 data URL
+                // 注意：对于分块存储的大文件，会先合并所有分块，再转换为 base64，确保完整不截断
                 const dataUrl = await getMediaAsDataUrl(mediaId);
                 
                 if (dataUrl) {
@@ -863,7 +1163,13 @@ const MediaStorage = (function() {
             }
         }
         
+        // 处理完成，隐藏进度提示
+        if (totalMediaCount > 0) {
+            hideProgressToast();
+        }
+        
         // 处理压缩文件附件（div.archive-attachment）
+        // 导出时需要将压缩包数据嵌入到文件中，否则别人打开文件时无法下载
         if (result.includes('data-media-storage-id')) {
             const archiveRegex = /<div([^>]*)class=["']archive-attachment["']([^>]*)data-media-storage-id=["']([^"']+)["']([^>]*)>/gi;
             const archiveRegex2 = /<div([^>]*)data-media-storage-id=["']([^"']+)["']([^>]*)class=["']archive-attachment["']([^>]*)>/gi;
@@ -878,11 +1184,21 @@ const MediaStorage = (function() {
                     // 根据正则的不同，mediaId 在不同的捕获组
                     const mediaId = regex === archiveRegex ? match[3] : match[2];
                     
-                    // 获取压缩文件数据
+                    // 检查是否已经有 data-export-url（已有数据）
+                    const urlMatch = fullMatch.match(/\sdata-export-url=["']([^"']+)["']/);
+                    const existingUrl = urlMatch ? urlMatch[1] : '';
+                    
+                    // 如果已经有有效的 base64 data URL，保留它
+                    if (existingUrl && existingUrl.startsWith('data:') && !existingUrl.includes('about:blank')) {
+                        continue; // 跳过，已经有有效数据
+                    }
+                    
+                    // 获取压缩文件数据并转换为 base64 data URL
+                    // 注意：大文件会显示进度提示
                     const dataUrl = await getMediaAsDataUrl(mediaId);
                     
                     if (dataUrl) {
-                        // 将 data URL 添加到 data-export-url 属性中，供导出的网页下载使用
+                        // 将 data URL 添加到 data-export-url 属性中
                         let newTag = fullMatch;
                         if (/\sdata-export-url=["'][^"']*["']/.test(newTag)) {
                             newTag = newTag.replace(/\sdata-export-url=["'][^"']*["']/, ` data-export-url="${dataUrl}"`);
@@ -914,6 +1230,7 @@ const MediaStorage = (function() {
         saveMedia,
         getMedia,
         getChunkedBlob,  // 大文件下载专用（直接返回 Blob）
+        getChunkedBlobStream,  // 流式下载专用（返回 ReadableStream，避免内存溢出）
         getMediaAsUrl,   // 获取媒体 URL（支持分块存储）
         setProgressCallback,  // 设置进度回调
         hideProgressToast,    // 隐藏进度提示

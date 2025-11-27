@@ -109,9 +109,18 @@ const videoOriginalSrcMap = new Map();
 /**
  * 从 textarea 同步内容到预览区域
  */
-function updateMarkdownPreview() {
+async function updateMarkdownPreview() {
     if (markdownPreview && jiedianwords) {
-        const content = jiedianwords.value || '';
+        let content = jiedianwords.value || '';
+        
+        // 如果内容包含 IndexedDB 媒体引用，先恢复媒体数据
+        if (content && content.includes('data-media-storage-id') && typeof MediaStorage !== 'undefined') {
+            try {
+                content = await MediaStorage.processHtmlForLoad(content);
+            } catch (err) {
+                console.error('恢复媒体数据失败:', err);
+            }
+        }
         
         // 在设置 innerHTML 之前，提取并保存视频的原始 src
         // 这是为了防止浏览器在处理 innerHTML 时截断 base64 数据
@@ -139,6 +148,25 @@ function updateMarkdownPreview() {
                 video.setAttribute('data-original-src', videoOriginalSrcMap.get(index));
             }
         });
+        
+        // 恢复图片和视频：如果 src 是 about:blank，从 IndexedDB 恢复
+        // 注意：processHtmlForLoad 已经处理了大部分情况，这里作为后备方案
+        const mediaElements = markdownPreview.querySelectorAll('img[data-media-storage-id], video[data-media-storage-id]');
+        if (mediaElements.length > 0 && typeof MediaStorage !== 'undefined') {
+            mediaElements.forEach(async (element) => {
+                const storageId = element.getAttribute('data-media-storage-id');
+                if (storageId && (!element.src || element.src === 'about:blank' || element.src.includes('about:blank'))) {
+                    try {
+                        const mediaUrl = await MediaStorage.getMediaAsUrl(storageId);
+                        if (mediaUrl) {
+                            element.src = mediaUrl;
+                        }
+                    } catch (err) {
+                        console.error('恢复媒体失败:', err);
+                    }
+                }
+            });
+        }
         
         // 绑定任务列表复选框事件
         attachTaskListEvents();

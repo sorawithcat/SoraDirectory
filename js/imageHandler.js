@@ -1451,17 +1451,30 @@ if (markdownPreview) {
         if (files.length > 0) {
             for (let i = 0; i < files.length; i++) {
                 const file = files[i];
-                if (file.type.startsWith('image/')) {
-                    const reader = new FileReader();
-                    reader.onload = async function(e) {
-                        const rawImageData = e.target.result;
+                
+                // 检测文件类型：优先使用 MIME 类型，如果没有则使用文件扩展名
+                const isImage = file.type.startsWith('image/') || 
+                    /\.(jpg|jpeg|png|gif|bmp|webp|svg|ico)$/i.test(file.name);
+                const isVideo = file.type.startsWith('video/') || 
+                    /\.(mp4|webm|ogg|ogv|avi|mov|wmv|flv|mkv|m4v)$/i.test(file.name);
+                
+                if (isImage) {
+                    // 顺序处理图片，避免并发问题
+                    try {
+                        const rawImageData = await new Promise((resolve, reject) => {
+                            const reader = new FileReader();
+                            reader.onload = (e) => resolve(e.target.result);
+                            reader.onerror = (e) => reject(new Error('读取图片文件失败'));
+                            reader.readAsDataURL(file);
+                        });
+                        
                         const imageName = file.name || '图片';
                         
                         const caption = await customPrompt('输入图片图注（可选，直接按确定跳过，取消则不上传）:', '');
                         
                         // 用户点击取消，中止上传
                         if (caption === null) {
-                            return;
+                            continue;
                         }
                         
                         // 压缩图片（不影响质量）
@@ -1486,7 +1499,7 @@ if (markdownPreview) {
                             if (useBlobStorage) MediaStorage.hideProgressToast();
                             console.error('保存图片到 IndexedDB 失败:', err);
                             showToast('保存图片失败：' + err.message, 'error', 3000);
-                            return;
+                            continue;
                         }
                         
                         const img = document.createElement('img');
@@ -1531,9 +1544,12 @@ if (markdownPreview) {
                         if (typeof updateStorageInfo === 'function') {
                             updateStorageInfo();
                         }
-                    };
-                    reader.readAsDataURL(file);
-                } else if (file.type.startsWith('video/')) {
+                    } catch (err) {
+                        console.error('处理图片失败:', err);
+                        showToast('处理图片失败：' + (err.message || err), 'error', 3000);
+                        continue;
+                    }
+                } else if (isVideo) {
                     const videoName = file.name || '视频';
                     const sizeMB = (file.size / 1024 / 1024).toFixed(1);
                     
@@ -1600,11 +1616,18 @@ if (markdownPreview) {
                                 useBlobStorage = true;
                                 videoBlob = file;
                             } else {
-                                videoData = await new Promise((resolve) => {
-                                    const reader = new FileReader();
-                                    reader.onload = (ev) => resolve(ev.target.result);
-                                    reader.readAsDataURL(file);
-                                });
+                                try {
+                                    videoData = await new Promise((resolve, reject) => {
+                                        const reader = new FileReader();
+                                        reader.onload = (ev) => resolve(ev.target.result);
+                                        reader.onerror = (e) => reject(new Error('读取视频文件失败'));
+                                        reader.readAsDataURL(file);
+                                    });
+                                } catch (err) {
+                                    console.error('读取视频文件失败:', err);
+                                    showToast('读取视频文件失败：' + (err.message || err), 'error', 3000);
+                                    continue;
+                                }
                             }
                         }
                     } else {
@@ -1615,11 +1638,18 @@ if (markdownPreview) {
                             videoBlob = file;
                         } else {
                             // 小文件使用 base64
-                            videoData = await new Promise((resolve) => {
-                                const reader = new FileReader();
-                                reader.onload = (ev) => resolve(ev.target.result);
-                                reader.readAsDataURL(file);
-                            });
+                            try {
+                                videoData = await new Promise((resolve, reject) => {
+                                    const reader = new FileReader();
+                                    reader.onload = (ev) => resolve(ev.target.result);
+                                    reader.onerror = (e) => reject(new Error('读取视频文件失败'));
+                                    reader.readAsDataURL(file);
+                                });
+                            } catch (err) {
+                                console.error('读取视频文件失败:', err);
+                                showToast('读取视频文件失败：' + (err.message || err), 'error', 3000);
+                                continue;
+                            }
                         }
                     }
                     
@@ -1643,6 +1673,14 @@ if (markdownPreview) {
                         }
                     }
                     
+                    // 创建视频元素
+                    const video = document.createElement('video');
+                    if (useBlobStorage) {
+                        // Blob 存储：创建临时 URL 用于显示
+                        video.src = URL.createObjectURL(videoBlob);
+                    } else {
+                        video.src = videoData;
+                    }
                     video.controls = true;
                     video.style.maxWidth = '640px';
                     video.style.maxHeight = '360px';
@@ -2015,7 +2053,58 @@ async function downloadArchive(archiveElement) {
     }
     
     try {
-        // 获取文件数据（进度会自动显示）
+        // 检查是否支持 File System Access API（用于大文件流式下载）
+        if (window.showSaveFilePicker && typeof MediaStorage.getChunkedBlobStream === 'function') {
+            // 使用 File System Access API 进行真正的流式下载，避免内存溢出
+            try {
+                const fileHandle = await window.showSaveFilePicker({
+                    suggestedName: fileName,
+                    types: [{
+                        description: '压缩文件',
+                        accept: {
+                            'application/zip': ['.zip'],
+                            'application/x-rar-compressed': ['.rar'],
+                            'application/x-7z-compressed': ['.7z'],
+                            'application/x-tar': ['.tar']
+                        }
+                    }]
+                });
+                
+                // 获取可写流
+                const writableStream = await fileHandle.createWritable();
+                
+                // 获取分块文件的流式读取器
+                const readableStream = await MediaStorage.getChunkedBlobStream(storageId);
+                
+                if (!readableStream) {
+                    await writableStream.close();
+                    MediaStorage.hideProgressToast();
+                    showToast('无法获取文件数据', 'error', 2000);
+                    return;
+                }
+                
+                // 将读取流直接管道到写入流，实现真正的流式传输
+                // 这样不会将所有数据加载到内存中
+                await readableStream.pipeTo(writableStream);
+                
+                MediaStorage.hideProgressToast();
+                showToast(`已保存：${fileName}`, 'success', 2000);
+                return;
+            } catch (fsError) {
+                // 用户取消或 API 不支持，回退到传统下载方式
+                if (fsError.name !== 'AbortError') {
+                    console.log('File System Access API 不可用，使用传统下载方式:', fsError);
+                } else {
+                    // 用户取消
+                    MediaStorage.hideProgressToast();
+                    return;
+                }
+            }
+        }
+        
+        // 传统下载方式（使用 Blob URL）
+        // 注意：对于超大文件，这仍可能占用较多内存
+        // 但通过流式读取分块，已经优化了内存使用
         const blob = await MediaStorage.getChunkedBlob(storageId);
         MediaStorage.hideProgressToast();
         

@@ -2,3 +2,10 @@
 
 keyGenerator.html
 js/keyGenerator.js
+node_modules/
+dist/
+*.log
+.DS_Store
+Thumbs.db
+
+/desktop-app

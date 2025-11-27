@@ -2008,10 +2008,10 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                     newTag = newTag.replace(/>$/, ` data-placeholder-id="${placeholderId}">`);
                     archiveReplacements.push({ from: fullMatch, to: newTag });
                     
-                    // 记录需要处理的媒体（延迟处理）
+                    // 记录压缩包信息，导出时会加载数据到 mediaDataMap
                     mediaIdsToProcess.push({ 
                         mediaId, 
-                        placeholderId, 
+                        placeholderId,
                         type: 'archive', 
                         name: archiveName, 
                         size: archiveSize,
@@ -2046,10 +2046,40 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                             const srcMatch = processed.match(/\ssrc=["']([^"']+)["']/);
                             if (srcMatch) dataUrl = srcMatch[1];
                         } else if (type === 'archive') {
-                            const tempHtml = `<div class="archive-attachment" data-media-storage-id="${mediaId}"></div>`;
-                            const processed = await MediaStorage.processHtmlForExport(tempHtml);
-                            const urlMatch = processed.match(/\sdata-export-url=["']([^"']+)["']/);
-                            if (urlMatch) dataUrl = urlMatch[1];
+                            // 导出网页时需要加载压缩包数据，否则别人打开文件时无法下载
+                            // 显示进度提示，避免卡崩
+                            try {
+                                const dataUrl = await MediaStorage.getMediaAsDataUrl(mediaId);
+                                if (dataUrl) {
+                                    mediaDataMap[placeholderId] = {
+                                        type: 'archive',
+                                        data: dataUrl,
+                                        name: name,
+                                        size: size,
+                                        originalTag: originalTag
+                                    };
+                                } else {
+                                    // 如果加载失败，至少保存 mediaId，尝试从 IndexedDB 读取
+                                    mediaDataMap[placeholderId] = {
+                                        type: 'archive',
+                                        mediaId: mediaId,
+                                        name: name,
+                                        size: size,
+                                        originalTag: originalTag
+                                    };
+                                }
+                            } catch (err) {
+                                console.error('加载压缩包数据失败:', err);
+                                // 加载失败时，至少保存 mediaId
+                                mediaDataMap[placeholderId] = {
+                                    type: 'archive',
+                                    mediaId: mediaId,
+                                    name: name,
+                                    size: size,
+                                    originalTag: originalTag
+                                };
+                            }
+                            return; // 压缩包已处理，不需要后续的 dataUrl 检查
                         }
                         
                         if (dataUrl) {
@@ -2687,19 +2717,50 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                         if (record) {
                             if (record.chunked && record.chunks) {
                                 const blobParts = [];
-                                for (const chunkId of record.chunks) {
-                                    const chunkRecord = await new Promise((resolve, reject) => {
-                                        const transaction = db.transaction([storeName], 'readonly');
-                                        const store = transaction.objectStore(storeName);
-                                        const request = store.get(chunkId);
-                                        request.onsuccess = () => resolve(request.result);
-                                        request.onerror = () => reject(request.error);
-                                    });
-                                    if (chunkRecord && chunkRecord.data) {
-                                        blobParts.push(chunkRecord.data);
+                                const mimeType = record.mimeType || 'application/octet-stream';
+                                
+                                // 二进制分块（新格式）
+                                if (record.blobChunked) {
+                                    for (const chunkId of record.chunks) {
+                                        const chunkRecord = await new Promise((resolve, reject) => {
+                                            const transaction = db.transaction([storeName], 'readonly');
+                                            const store = transaction.objectStore(storeName);
+                                            const request = store.get(chunkId);
+                                            request.onsuccess = () => resolve(request.result);
+                                            request.onerror = () => reject(request.error);
+                                        });
+                                        if (chunkRecord && chunkRecord.data) {
+                                            // ArrayBuffer 直接添加
+                                            blobParts.push(chunkRecord.data);
+                                        }
+                                    }
+                                } else {
+                                    // base64 分块（旧格式兼容）
+                                    for (const chunkId of record.chunks) {
+                                        const chunkRecord = await new Promise((resolve, reject) => {
+                                            const transaction = db.transaction([storeName], 'readonly');
+                                            const store = transaction.objectStore(storeName);
+                                            const request = store.get(chunkId);
+                                            request.onsuccess = () => resolve(request.result);
+                                            request.onerror = () => reject(request.error);
+                                        });
+                                        if (chunkRecord && chunkRecord.data) {
+                                            // 解码 base64 为二进制
+                                            try {
+                                                const binaryString = atob(chunkRecord.data);
+                                                const bytes = new Uint8Array(binaryString.length);
+                                                for (let j = 0; j < binaryString.length; j++) {
+                                                    bytes[j] = binaryString.charCodeAt(j);
+                                                }
+                                                blobParts.push(bytes);
+                                            } catch (e) {
+                                                console.error('解码分块失败:', e);
+                                            }
+                                        }
                                     }
                                 }
-                                const blob = new Blob(blobParts, { type: record.mimeType || 'application/octet-stream' });
+                                
+                                const blob = new Blob(blobParts, { type: mimeType });
                                 dataUrl = await new Promise((resolve) => {
                                     const reader = new FileReader();
                                     reader.onloadend = () => resolve(reader.result);
@@ -2797,23 +2858,80 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                     
                     if (record) {
                         if (record.chunked && record.chunks) {
-                            const blobParts = [];
-                            for (const chunkId of record.chunks) {
-                                const chunkRecord = await new Promise((resolve, reject) => {
-                                    const transaction = db.transaction([storeName], 'readonly');
-                                    const store = transaction.objectStore(storeName);
-                                    const request = store.get(chunkId);
-                                    request.onsuccess = () => resolve(request.result);
-                                    request.onerror = () => reject(request.error);
-                                });
-                                if (chunkRecord && chunkRecord.data) {
-                                    blobParts.push(chunkRecord.data);
+                            // 使用流式读取，避免一次性加载所有分块到内存
+                            const stream = new ReadableStream({
+                                async start(controller) {
+                                    try {
+                                        const mimeType = record.mimeType || 'application/octet-stream';
+                                        
+                                        // 二进制分块（新格式）
+                                        if (record.blobChunked) {
+                                            for (let i = 0; i < record.chunks.length; i++) {
+                                                const chunkId = record.chunks[i];
+                                                
+                                                const chunkRecord = await new Promise((resolve, reject) => {
+                                                    const transaction = db.transaction([storeName], 'readonly');
+                                                    const store = transaction.objectStore(storeName);
+                                                    const request = store.get(chunkId);
+                                                    request.onsuccess = () => resolve(request.result);
+                                                    request.onerror = () => reject(request.error);
+                                                });
+                                                
+                                                if (chunkRecord && chunkRecord.data) {
+                                                    // ArrayBuffer 转换为 Uint8Array 并推送到流
+                                                    if (chunkRecord.data instanceof ArrayBuffer) {
+                                                        controller.enqueue(new Uint8Array(chunkRecord.data));
+                                                    } else if (chunkRecord.data instanceof Uint8Array) {
+                                                        controller.enqueue(chunkRecord.data);
+                                                    }
+                                                }
+                                            }
+                                        } else {
+                                            // base64 分块（旧格式兼容）
+                                            for (let i = 0; i < record.chunks.length; i++) {
+                                                const chunkId = record.chunks[i];
+                                                
+                                                const chunkRecord = await new Promise((resolve, reject) => {
+                                                    const transaction = db.transaction([storeName], 'readonly');
+                                                    const store = transaction.objectStore(storeName);
+                                                    const request = store.get(chunkId);
+                                                    request.onsuccess = () => resolve(request.result);
+                                                    request.onerror = () => reject(request.error);
+                                                });
+                                                
+                                                if (chunkRecord && chunkRecord.data) {
+                                                    // 解码 base64 为二进制
+                                                    try {
+                                                        const binaryString = atob(chunkRecord.data);
+                                                        const bytes = new Uint8Array(binaryString.length);
+                                                        for (let j = 0; j < binaryString.length; j++) {
+                                                            bytes[j] = binaryString.charCodeAt(j);
+                                                        }
+                                                        controller.enqueue(bytes);
+                                                    } catch (e) {
+                                                        console.error('解码分块失败:', e);
+                                                        controller.error(e);
+                                                        return;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        
+                                        controller.close();
+                                    } catch (error) {
+                                        controller.error(error);
+                                    }
                                 }
-                            }
-                            const blob = new Blob(blobParts, { type: record.mimeType || 'application/octet-stream' });
-                            return await new Promise((resolve) => {
+                            });
+                            
+                            // 将流转换为 Blob，然后转换为 data URL
+                            const response = new Response(stream);
+                            const blob = await response.blob();
+                            
+                            return await new Promise((resolve, reject) => {
                                 const reader = new FileReader();
                                 reader.onloadend = () => resolve(reader.result);
+                                reader.onerror = () => reject(reader.error);
                                 reader.readAsDataURL(blob);
                             });
                         } else {
