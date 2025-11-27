@@ -209,6 +209,8 @@ const imageUploadBtn = document.getElementById("imageUploadBtn");        // 图�
 const imageFileInput = document.getElementById("imageFileInput");        // 图片文件输入
 const topVideoUploadBtn = document.getElementById("topVideoUploadBtn");  // 顶部视频上传按钮
 const videoFileInput = document.getElementById("videoFileInput");        // 视频文件输入
+const topArchiveUploadBtn = document.getElementById("topArchiveUploadBtn"); // 顶部压缩文件上传按钮
+const archiveFileInput = document.getElementById("archiveFileInput");    // 压缩文件输入
 const wordsbox = document.querySelector(".wordsbox");                   // 内容区域容器
 
 // 右键菜单

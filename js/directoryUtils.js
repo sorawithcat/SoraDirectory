@@ -129,12 +129,22 @@ function updateMulufileData(element, newContent) {
     // 优先使用缓存查找
     const data = getMulufileByDirId(dirId);
     if (data) {
-        data[3] = newContent;
-        // 调试：检查是否包含视频
-        if (newContent && newContent.includes('<video')) {
-            console.log('updateMulufileData: 已保存视频内容到 mulufile');
-            console.log('  - dirId:', dirId);
-            console.log('  - 内容长度:', newContent.length);
+        // 检查内容是否真的改变了
+        const oldContent = data[3];
+        if (oldContent !== newContent) {
+            data[3] = newContent;
+            
+            // 标记有未保存的更改
+            if (typeof markUnsavedChanges === 'function') {
+                markUnsavedChanges();
+            }
+            
+            // 调试：检查是否包含视频
+            if (newContent && newContent.includes('<video')) {
+                console.log('updateMulufileData: 已保存视频内容到 mulufile');
+                console.log('  - dirId:', dirId);
+                console.log('  - 内容长度:', newContent.length);
+            }
         }
         return true;
     }

@@ -1544,6 +1544,19 @@ if (markdownPreview) {
             return;
         }
         
+        // 检查是否选中或在压缩包附件附近
+        const archiveElement = getSelectedArchive(range, e.key);
+        if (archiveElement) {
+            e.preventDefault();
+            if (typeof deleteArchiveElement === 'function') {
+                deleteArchiveElement(archiveElement);
+            } else {
+                archiveElement.remove();
+                syncPreviewToTextarea();
+            }
+            return;
+        }
+        
         // 检查是否在 figcaption 中，阻止单独删除图注/注释
         const figcaption = container.nodeType === Node.TEXT_NODE 
             ? container.parentNode.closest('figcaption') 

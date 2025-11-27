@@ -42,7 +42,7 @@ function syncPreviewToTextarea() {
         // 移除搜索高亮标签，避免被保存到数据中
         let html = removeSearchHighlights(markdownPreview.innerHTML);
         
-        // 使用 IndexedDB 方案：对于有 data-media-storage-id 的媒体（视频/图片），
+        // 使用 IndexedDB 方案：对于有 data-media-storage-id 的媒体（视频/图片/压缩文件），
         // 将 src 替换为占位符（媒体数据已保存在 IndexedDB 中）
         if (html.includes('data-media-storage-id')) {
             // 处理视频
@@ -145,7 +145,37 @@ function updateMarkdownPreview() {
         
         // 初始化视频元素，确保视频正确显示和播放
         initializeVideos();
+        
+        // 初始化压缩文件下载按钮
+        initializeArchiveDownloadButtons();
     }
+}
+
+/**
+ * 初始化预览区域中的压缩文件下载按钮
+ * 为动态加载的压缩文件附件添加事件监听
+ */
+function initializeArchiveDownloadButtons() {
+    if (!markdownPreview) return;
+    
+    const archiveElements = markdownPreview.querySelectorAll('.archive-attachment');
+    archiveElements.forEach(element => {
+        // 确保压缩包元素不可编辑
+        element.setAttribute('contenteditable', 'false');
+        
+        const downloadBtn = element.querySelector('.archive-download-btn');
+        if (downloadBtn && !downloadBtn.hasAttribute('data-initialized')) {
+            downloadBtn.setAttribute('data-initialized', 'true');
+            downloadBtn.addEventListener('click', async function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                // 调用 imageHandler.js 中定义的下载函数
+                if (typeof downloadArchive === 'function') {
+                    await downloadArchive(element);
+                }
+            });
+        }
+    });
 }
 
 /**

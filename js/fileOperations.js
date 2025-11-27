@@ -4,16 +4,869 @@
 // 依赖：globals.js, SoraDirectoryJS.js
 // ============================================
 
+// -------------------- File System Access API 支持 --------------------
+
+/** 当前打开文件的句柄（用于直接保存） */
+let currentFileHandle = null;
+
+/** 当前文件名 */
+let currentFileName = null;
+
+/** 目录修改追踪（哈希映射） */
+const directoryHashes = new Map();
+
+/** 未保存更改标记 */
+let hasUnsavedChanges = false;
+
+/**
+ * 检查浏览器是否支持 File System Access API
+ * @returns {boolean}
+ */
+function isFileSystemAccessSupported() {
+    return 'showOpenFilePicker' in window && 'showSaveFilePicker' in window;
+}
+
+/**
+ * 计算字符串的简单哈希值（用于追踪变化）
+ * @param {string} str - 输入字符串
+ * @returns {string} - 哈希值
+ */
+function simpleHash(str) {
+    if (!str) return '0';
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+        const char = str.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash; // Convert to 32bit integer
+    }
+    return hash.toString(16);
+}
+
+/**
+ * 计算所有目录的哈希值并保存
+ * 同时缓存原始内容用于差异计算
+ */
+function calculateAllHashes() {
+    directoryHashes.clear();
+    originalContentCache.clear();
+    for (let i = 0; i < mulufile.length; i++) {
+        if (mulufile[i].length === 4) {
+            const dirId = mulufile[i][2];
+            const content = JSON.stringify(mulufile[i]);
+            directoryHashes.set(dirId, simpleHash(content));
+            // 同时缓存原始内容用于差异计算
+            originalContentCache.set(dirId, mulufile[i][3] || '');
+        }
+    }
+}
+
+/**
+ * 检查目录是否有变化
+ * @param {string} dirId - 目录 ID
+ * @returns {boolean} - 是否有变化
+ */
+function hasDirectoryChanged(dirId) {
+    const dirData = getMulufileByDirId(dirId);
+    if (!dirData) return false;
+    
+    const currentHash = simpleHash(JSON.stringify(dirData));
+    const savedHash = directoryHashes.get(dirId);
+    
+    return currentHash !== savedHash;
+}
+
+/**
+ * 获取所有已修改的目录
+ * @returns {Array} - 已修改的目录 ID 列表
+ */
+function getModifiedDirectories() {
+    const modified = [];
+    for (let i = 0; i < mulufile.length; i++) {
+        if (mulufile[i].length === 4) {
+            const dirId = mulufile[i][2];
+            if (hasDirectoryChanged(dirId)) {
+                modified.push(dirId);
+            }
+        }
+    }
+    return modified;
+}
+
+/**
+ * 标记有未保存的更改
+ */
+function markUnsavedChanges() {
+    if (!hasUnsavedChanges) {
+        hasUnsavedChanges = true;
+        updateSaveButtonState();
+    }
+}
+
+/**
+ * 清除未保存更改标记
+ */
+function clearUnsavedChanges() {
+    hasUnsavedChanges = false;
+    calculateAllHashes();
+    updateSaveButtonState();
+}
+
+/**
+ * 更新保存按钮状态（显示是否有未保存更改）
+ */
+function updateSaveButtonState() {
+    if (topSaveBtn) {
+        if (hasUnsavedChanges) {
+            topSaveBtn.textContent = '保存 *';
+            topSaveBtn.title = '有未保存的更改 (Ctrl+S)';
+            topSaveBtn.style.color = '#e74c3c';
+        } else {
+            topSaveBtn.textContent = '保存';
+            topSaveBtn.title = '保存 (Ctrl+S)';
+            topSaveBtn.style.color = '';
+        }
+    }
+    
+    // 更新页面标题
+    updatePageTitle();
+}
+
+/**
+ * 更新页面标题（显示文件名和未保存状态）
+ */
+function updatePageTitle() {
+    const baseName = currentFileName || 'SoraList';
+    document.title = hasUnsavedChanges ? `* ${baseName}` : baseName;
+}
+
+/**
+ * 使用 File System Access API 打开文件
+ * @returns {Promise<boolean>} - 是否成功打开
+ */
+async function openFileWithFSAPI() {
+    if (!isFileSystemAccessSupported()) {
+        return false;
+    }
+    
+    try {
+        const [fileHandle] = await window.showOpenFilePicker({
+            types: [
+                {
+                    description: 'SoraList 文件',
+                    accept: {
+                        'application/json': ['.json'],
+                        'text/plain': ['.txt'],
+                        'application/xml': ['.xml'],
+                        'text/csv': ['.csv']
+                    }
+                }
+            ],
+            multiple: false
+        });
+        
+        const file = await fileHandle.getFile();
+        const content = await file.text();
+        
+        // 解析文件内容（可能是 Promise，处理加密文件）
+        let parsedData = parseFileContent(content, file.name);
+        if (parsedData instanceof Promise) {
+            parsedData = await parsedData;
+        }
+        
+        if (!parsedData) {
+            // 用户取消解密
+            return false;
+        }
+        
+        // 检查是否是差异补丁文件
+        if (isDiffFile(parsedData)) {
+            // 差异文件必须有现有数据才能应用
+            if (!mulufile || mulufile.length === 0) {
+                customAlert("差异补丁文件需要先加载基础数据才能应用");
+                return false;
+            }
+            
+            const result = applyDiffPatches(parsedData);
+            
+            // 重新加载目录
+            LoadMulu();
+            
+            // 标记有未保存更改
+            markUnsavedChanges();
+            
+            setTimeout(() => {
+                if (typeof expandAllDirectories === 'function') expandAllDirectories();
+                selectFirstRootDirectory();
+            }, 10);
+            
+            bigbox.style.display = "block";
+            wordsbox.style.display = "block";
+            
+            let msg = `已应用差异补丁：${result.applied} 个目录`;
+            if (result.notFound > 0) msg += `（新建 ${result.notFound} 个）`;
+            if (result.failed > 0) msg += `，${result.failed} 个失败`;
+            showToast(msg, result.failed > 0 ? 'warning' : 'success', 3000);
+            return true;
+        }
+        
+        // 验证数据格式（必须是数组）
+        if (!Array.isArray(parsedData) || parsedData.length === 0) {
+            customAlert("文件格式错误：无法解析为有效的目录数据");
+            return false;
+        }
+        
+        // 检查是否是增量文件
+        const isIncremental = parsedData[0].length >= 4 && parsedData[0][0] !== "mulu";
+        
+        // 如果当前有数据，询问是替换还是合并
+        let loadMode = 'replace';
+        if (mulufile && mulufile.length > 0) {
+            const modeOptions = [
+                { value: 'replace', label: '替换 - 清空现有数据，加载新文件' },
+                { value: 'merge', label: '合并 - 将新数据合并到现有数据' }
+            ];
+            
+            const defaultMode = isIncremental ? 'merge' : 'replace';
+            const hint = isIncremental ? '（检测到增量文件，建议合并）' : '';
+            
+            loadMode = await customSelect(`选择加载方式${hint}：`, modeOptions, defaultMode, '加载文件');
+            if (loadMode === null) {
+                showToast('已取消加载', 'info', 2000);
+                return false;
+            }
+        }
+        
+        if (loadMode === 'merge') {
+            // 合并模式
+            const mergeResult = mergeDirectoryData(mulufile, parsedData);
+            mulufile = mergeResult.data;
+            
+            // 重建索引
+            rebuildMulufileIndex();
+            
+            // 重新加载目录
+            LoadMulu();
+            
+            // 标记有未保存更改
+            markUnsavedChanges();
+            
+            setTimeout(() => {
+                if (typeof expandAllDirectories === 'function') {
+                    expandAllDirectories();
+                }
+                selectFirstRootDirectory();
+            }, 10);
+            
+            bigbox.style.display = "block";
+            wordsbox.style.display = "block";
+            
+            showToast(`已合并：新增 ${mergeResult.added} 个，更新 ${mergeResult.updated} 个目录`, 'success', 3000);
+            return true;
+        }
+        
+        // 替换模式 - 验证完整文件格式
+        if (parsedData[0].length < 4 || parsedData[0][0] !== "mulu") {
+            customAlert("文件格式错误：第一个目录必须以'mulu'开头\n\n如果这是增量文件，请选择【合并】模式加载");
+            return false;
+        }
+        
+        // 保存文件句柄
+        currentFileHandle = fileHandle;
+        currentFileName = file.name;
+        
+        // 更新数据
+        mulufile = parsedData;
+        
+        // 加载目录
+        LoadMulu();
+        
+        // 计算初始哈希
+        calculateAllHashes();
+        hasUnsavedChanges = false;
+        updateSaveButtonState();
+        
+        setTimeout(() => {
+            // 展开所有目录
+            if (typeof expandAllDirectories === 'function') {
+                expandAllDirectories();
+            }
+            
+            // 选中第一个根目录
+            selectFirstRootDirectory();
+        }, 10);
+        
+        bigbox.style.display = "block";
+        wordsbox.style.display = "block";
+        
+        // 更新文件名输入框（移除各种后缀）
+        if (fileNameInput) {
+            let nameWithoutExt = file.name
+                .replace(/\s*\(\d+\)\s*\./g, '.')       // 移除浏览器添加的 (1), (2) 等
+                .replace(/\.(json|txt|xml|csv)$/i, '')  // 移除文件扩展名
+                .replace(/\.(encrypted|patch)$/i, '')   // 移除加密/补丁后缀
+                .replace(/_incremental$/i, '');         // 移除增量后缀
+            fileNameInput.value = nameWithoutExt;
+        }
+        
+        showToast(`已打开：${file.name}（支持直接保存）`, 'success', 3000);
+        return true;
+        
+    } catch (err) {
+        if (err.name === 'AbortError') {
+            // 用户取消
+            return false;
+        }
+        console.error('打开文件失败:', err);
+        return false;
+    }
+}
+
+/**
+ * 使用 File System Access API 直接保存到当前文件
+ * @returns {Promise<boolean>} - 是否成功保存
+ */
+async function saveToCurrentFile() {
+    if (!currentFileHandle) {
+        return false;
+    }
+    
+    try {
+        // 获取修改的目录数量
+        const modifiedCount = getModifiedDirectories().length;
+        
+        // 准备数据
+        const dataToSave = await prepareDataForExport(mulufile);
+        const ext = currentFileName.split('.').pop().toLowerCase();
+        const stringData = (ext === 'json')
+            ? JSON.stringify(dataToSave, null, 2)
+            : formatDataByExtension(dataToSave, currentFileName);
+        
+        // 写入文件
+        const writable = await currentFileHandle.createWritable();
+        await writable.write(stringData);
+        await writable.close();
+        
+        // 更新哈希并清除未保存标记
+        clearUnsavedChanges();
+        
+        if (modifiedCount > 0) {
+            showToast(`已保存 ${modifiedCount} 个修改的目录到 ${currentFileName}`, 'success', 2500);
+        } else {
+            showToast(`已保存：${currentFileName}`, 'success', 2000);
+        }
+        
+        return true;
+        
+    } catch (err) {
+        if (err.name === 'AbortError') {
+            return false;
+        }
+        console.error('保存文件失败:', err);
+        showToast('保存失败：' + err.message, 'error', 3000);
+        return false;
+    }
+}
+
+/**
+ * 使用 File System Access API 另存为新文件
+ * @returns {Promise<boolean>} - 是否成功保存
+ */
+async function saveAsWithFSAPI() {
+    if (!isFileSystemAccessSupported()) {
+        return false;
+    }
+    
+    try {
+        const baseName = (fileNameInput && fileNameInput.value.trim()) || "soralist";
+        
+        const fileHandle = await window.showSaveFilePicker({
+            suggestedName: `${baseName}.json`,
+            types: [
+                {
+                    description: 'JSON 格式',
+                    accept: { 'application/json': ['.json'] }
+                },
+                {
+                    description: '文本格式',
+                    accept: { 'text/plain': ['.txt'] }
+                },
+                {
+                    description: 'XML 格式',
+                    accept: { 'application/xml': ['.xml'] }
+                },
+                {
+                    description: 'CSV 格式',
+                    accept: { 'text/csv': ['.csv'] }
+                }
+            ]
+        });
+        
+        const fileName = fileHandle.name;
+        const ext = fileName.split('.').pop().toLowerCase();
+        
+        // 准备数据
+        const dataToSave = await prepareDataForExport(mulufile);
+        const stringData = (ext === 'json')
+            ? JSON.stringify(dataToSave, null, 2)
+            : formatDataByExtension(dataToSave, fileName);
+        
+        // 写入文件
+        const writable = await fileHandle.createWritable();
+        await writable.write(stringData);
+        await writable.close();
+        
+        // 更新文件句柄
+        currentFileHandle = fileHandle;
+        currentFileName = fileName;
+        
+        // 更新文件名输入框（移除各种后缀）
+        if (fileNameInput) {
+            let nameWithoutExt = fileName
+                .replace(/\s*\(\d+\)\s*\./g, '.')       // 移除浏览器添加的 (1), (2) 等
+                .replace(/\.(json|txt|xml|csv)$/i, '')
+                .replace(/\.(encrypted|patch)$/i, '')
+                .replace(/_incremental$/i, '');
+            fileNameInput.value = nameWithoutExt;
+        }
+        
+        // 清除未保存标记
+        clearUnsavedChanges();
+        
+        showToast(`已保存：${fileName}`, 'success', 2500);
+        return true;
+        
+    } catch (err) {
+        if (err.name === 'AbortError') {
+            return false;
+        }
+        console.error('另存为失败:', err);
+        return false;
+    }
+}
+
+// -------------------- 加密功能 (AES-GCM) --------------------
+
+/** 加密文件标识 */
+const ENCRYPTED_FILE_HEADER = 'SORALIST_ENCRYPTED_V1';
+
+/**
+ * 从密码派生加密密钥
+ * @param {string} password - 用户密码
+ * @param {Uint8Array} salt - 盐值
+ * @returns {Promise<CryptoKey>} - 派生的密钥
+ */
+async function deriveKey(password, salt) {
+    const encoder = new TextEncoder();
+    const keyMaterial = await crypto.subtle.importKey(
+        'raw',
+        encoder.encode(password),
+        'PBKDF2',
+        false,
+        ['deriveKey']
+    );
+    
+    return crypto.subtle.deriveKey(
+        {
+            name: 'PBKDF2',
+            salt: salt,
+            iterations: 100000,
+            hash: 'SHA-256'
+        },
+        keyMaterial,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['encrypt', 'decrypt']
+    );
+}
+
+/**
+ * 加密数据
+ * @param {string} data - 要加密的数据
+ * @param {string} password - 密码
+ * @returns {Promise<string>} - 加密后的 base64 数据（包含 salt 和 iv）
+ */
+async function encryptData(data, password) {
+    const encoder = new TextEncoder();
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const key = await deriveKey(password, salt);
+    
+    const encrypted = await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv: iv },
+        key,
+        encoder.encode(data)
+    );
+    
+    // 组合 salt + iv + encrypted
+    const combined = new Uint8Array(salt.length + iv.length + encrypted.byteLength);
+    combined.set(salt, 0);
+    combined.set(iv, salt.length);
+    combined.set(new Uint8Array(encrypted), salt.length + iv.length);
+    
+    // 转换为 base64
+    return btoa(String.fromCharCode(...combined));
+}
+
+/**
+ * 解密数据
+ * @param {string} encryptedBase64 - 加密的 base64 数据
+ * @param {string} password - 密码
+ * @returns {Promise<string>} - 解密后的数据
+ */
+async function decryptData(encryptedBase64, password) {
+    const decoder = new TextDecoder();
+    const combined = Uint8Array.from(atob(encryptedBase64), c => c.charCodeAt(0));
+    
+    const salt = combined.slice(0, 16);
+    const iv = combined.slice(16, 28);
+    const encrypted = combined.slice(28);
+    
+    const key = await deriveKey(password, salt);
+    
+    const decrypted = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: iv },
+        key,
+        encrypted
+    );
+    
+    return decoder.decode(decrypted);
+}
+
+/**
+ * 检查内容是否是加密的
+ * @param {string} content - 文件内容
+ * @returns {boolean}
+ */
+function isEncryptedContent(content) {
+    return content && content.startsWith(ENCRYPTED_FILE_HEADER + ':');
+}
+
+/**
+ * 解析加密文件（提示输入密码并解密）
+ * @param {string} content - 加密的文件内容
+ * @returns {Promise<string|null>} - 解密后的内容，失败返回 null
+ */
+async function parseEncryptedContent(content) {
+    if (!isEncryptedContent(content)) return null;
+    
+    const encryptedData = content.substring(ENCRYPTED_FILE_HEADER.length + 1);
+    
+    // 最多尝试 3 次
+    for (let attempt = 0; attempt < 3; attempt++) {
+        const password = await customPrompt(
+            attempt === 0 ? '此文件已加密，请输入密码：' : '密码错误，请重试：',
+            '',
+            '解密文件'
+        );
+        
+        if (password === null) {
+            showToast('已取消解密', 'info', 2000);
+            return null;
+        }
+        
+        try {
+            const decrypted = await decryptData(encryptedData, password);
+            showToast('解密成功', 'success', 2000);
+            return decrypted;
+        } catch (e) {
+            console.warn('解密失败:', e);
+            if (attempt === 2) {
+                customAlert('密码错误次数过多，解密失败');
+                return null;
+            }
+        }
+    }
+    
+    return null;
+}
+
+/**
+ * 保存加密文件
+ * @param {string} data - 要保存的数据
+ * @param {string} filename - 文件名
+ * @param {string} password - 加密密码
+ */
+async function saveEncryptedFile(data, filename, password) {
+    try {
+        const encrypted = await encryptData(data, password);
+        const content = ENCRYPTED_FILE_HEADER + ':' + encrypted;
+        
+        const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        
+        URL.revokeObjectURL(url);
+        showToast(`已保存加密文件：${filename}`, 'success', 2500);
+    } catch (e) {
+        console.error('加密保存失败:', e);
+        showToast('加密保存失败', 'error', 2000);
+    }
+}
+
+/**
+ * 另存为加密文件
+ */
+async function handleSaveEncrypted() {
+    // 输入密码
+    const password = await customPrompt('设置加密密码：', '', '加密保存');
+    if (!password) {
+        showToast('已取消', 'info', 2000);
+        return;
+    }
+    
+    // 确认密码
+    const confirmPassword = await customPrompt('确认密码：', '', '加密保存');
+    if (confirmPassword !== password) {
+        customAlert('两次输入的密码不一致');
+        return;
+    }
+    
+    // 获取文件名
+    let baseName = (fileNameInput && fileNameInput.value.trim()) || "soralist";
+    baseName = baseName.replace(/\.(json|txt|xml|csv|encrypted)$/i, '');
+    const filename = `${baseName}.encrypted.json`;
+    
+    // 准备数据
+    const dataToSave = await prepareDataForExport(mulufile);
+    const stringData = JSON.stringify(dataToSave, null, 2);
+    
+    // 加密并保存
+    await saveEncryptedFile(stringData, filename, password);
+    
+    // 清除未保存标记
+    clearUnsavedChanges();
+}
+
+/**
+ * 导出为加密 HTML 网页（自带解密功能）
+ */
+async function handleSaveEncryptedWebpage() {
+    // 输入密码
+    const password = await customPrompt('设置加密密码：', '', '加密导出');
+    if (!password) {
+        showToast('已取消', 'info', 2000);
+        return;
+    }
+    
+    // 确认密码
+    const confirmPassword = await customPrompt('确认密码：', '', '加密导出');
+    if (confirmPassword !== password) {
+        customAlert('两次输入的密码不一致');
+        return;
+    }
+    
+    // 获取文件名
+    let baseName = (fileNameInput && fileNameInput.value.trim()) || "soralist";
+    baseName = baseName.replace(/\.(json|txt|xml|csv|html|encrypted)$/i, '');
+    const filename = `${baseName}.encrypted.html`;
+    
+    // 准备数据
+    const dataToSave = await prepareDataForExport(mulufile);
+    const stringData = JSON.stringify(dataToSave);
+    
+    // 加密数据
+    const encryptedData = await encryptData(stringData, password);
+    
+    // 生成自解密 HTML
+    const html = generateSelfDecryptingHtml(baseName, encryptedData);
+    
+    // 下载
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    
+    URL.revokeObjectURL(url);
+    showToast(`已导出加密网页：${filename}`, 'success', 2500);
+}
+
+/**
+ * 生成自解密 HTML 页面
+ * @param {string} title - 页面标题
+ * @param {string} encryptedData - 加密的数据
+ * @returns {string} - 完整的 HTML
+ */
+function generateSelfDecryptingHtml(title, encryptedData) {
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${title} - 加密文档</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; justify-content: center; align-items: center; }
+        .container { background: white; padding: 40px; border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); max-width: 400px; width: 90%; text-align: center; }
+        .lock-icon { font-size: 64px; margin-bottom: 20px; }
+        h1 { color: #333; margin-bottom: 10px; font-size: 24px; }
+        p { color: #666; margin-bottom: 20px; font-size: 14px; }
+        input[type="password"] { width: 100%; padding: 12px 16px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 16px; margin-bottom: 16px; transition: border-color 0.2s; }
+        input[type="password"]:focus { outline: none; border-color: #667eea; }
+        button { width: 100%; padding: 14px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
+        button:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4); }
+        button:active { transform: translateY(0); }
+        .error { color: #e74c3c; margin-top: 12px; font-size: 14px; display: none; }
+        .content { display: none; padding: 20px; max-width: 900px; margin: 0 auto; }
+        .content h1, .content h2, .content h3 { margin: 1em 0 0.5em; }
+        .content p { margin: 1em 0; line-height: 1.6; }
+        .content ul, .content ol { margin: 1em 0; padding-left: 2em; }
+        .content img { max-width: 100%; height: auto; }
+        .content video { max-width: 100%; }
+        .dir-item { border: 1px solid #ddd; margin: 10px 0; border-radius: 8px; overflow: hidden; }
+        .dir-title { background: #f5f5f5; padding: 10px 15px; font-weight: bold; cursor: pointer; }
+        .dir-title:hover { background: #eee; }
+        .dir-content { padding: 15px; border-top: 1px solid #ddd; }
+        .back-btn { position: fixed; top: 20px; left: 20px; padding: 10px 20px; background: #667eea; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div class="container" id="loginContainer">
+        <div class="lock-icon">🔐</div>
+        <h1>${title}</h1>
+        <p>此文档已加密，请输入密码查看</p>
+        <input type="password" id="passwordInput" placeholder="输入密码" autofocus>
+        <button onclick="decrypt()">解锁</button>
+        <div class="error" id="error">密码错误，请重试</div>
+    </div>
+    <div class="content" id="contentContainer">
+        <button class="back-btn" onclick="location.reload()">🔒 重新锁定</button>
+        <div id="content"></div>
+    </div>
+    <script>
+        const encryptedData = '${encryptedData}';
+        
+        async function deriveKey(password, salt) {
+            const enc = new TextEncoder();
+            const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveKey']);
+            return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' }, keyMaterial, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+        }
+        
+        async function decrypt() {
+            const password = document.getElementById('passwordInput').value;
+            if (!password) return;
+            
+            try {
+                const combined = Uint8Array.from(atob(encryptedData), c => c.charCodeAt(0));
+                const salt = combined.slice(0, 16);
+                const iv = combined.slice(16, 28);
+                const encrypted = combined.slice(28);
+                const key = await deriveKey(password, salt);
+                const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, encrypted);
+                const data = JSON.parse(new TextDecoder().decode(decrypted));
+                
+                document.getElementById('loginContainer').style.display = 'none';
+                document.getElementById('contentContainer').style.display = 'block';
+                document.body.style.background = '#f5f5f5';
+                
+                renderContent(data);
+            } catch (e) {
+                document.getElementById('error').style.display = 'block';
+                document.getElementById('passwordInput').value = '';
+                document.getElementById('passwordInput').focus();
+            }
+        }
+        
+        function renderContent(data) {
+            const container = document.getElementById('content');
+            const tree = buildTree(data);
+            container.innerHTML = renderTree(tree);
+        }
+        
+        function buildTree(data) {
+            const map = {};
+            data.forEach(item => { if (item.length === 4) map[item[2]] = { parent: item[0], name: item[1], id: item[2], content: item[3], children: [] }; });
+            const roots = [];
+            Object.values(map).forEach(item => { if (item.parent === 'mulu') roots.push(item); else if (map[item.parent]) map[item.parent].children.push(item); });
+            return roots;
+        }
+        
+        function renderTree(items, level = 0) {
+            return items.map(item => \`
+                <div class="dir-item" style="margin-left: \${level * 20}px">
+                    <div class="dir-title" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'">\${item.name}</div>
+                    <div class="dir-content">\${item.content || '<em>无内容</em>'}\${item.children.length ? renderTree(item.children, level + 1) : ''}</div>
+                </div>
+            \`).join('');
+        }
+        
+        document.getElementById('passwordInput').addEventListener('keypress', e => { if (e.key === 'Enter') decrypt(); });
+    </script>
+</body>
+</html>`;
+}
+
+/**
+ * 选中第一个根目录
+ */
+function selectFirstRootDirectory() {
+    let firstRootMulu = null;
+    let allMulusForSelect = document.querySelectorAll(".mulu");
+    for (let i = 0; i < allMulusForSelect.length; i++) {
+        let mulu = allMulusForSelect[i];
+        let parentId = mulu.getAttribute("data-parent-id");
+        if (!parentId || parentId === "mulu") {
+            firstRootMulu = mulu;
+            break;
+        }
+    }
+    
+    if (firstRootMulu) {
+        currentMuluName = firstRootMulu.id;
+        RemoveOtherSelect();
+        firstRootMulu.classList.add("select");
+        
+        let loadedContent = findMulufileData(firstRootMulu);
+        
+        // 如果内容包含 IndexedDB 媒体引用，异步恢复媒体数据
+        if (loadedContent && loadedContent.includes('data-media-storage-id')) {
+            (async function() {
+                if (typeof MediaStorage !== 'undefined') {
+                    loadedContent = await MediaStorage.processHtmlForLoad(loadedContent);
+                }
+                jiedianwords.value = loadedContent;
+                isUpdating = true;
+                updateMarkdownPreview();
+                isUpdating = false;
+            })();
+        } else {
+            jiedianwords.value = loadedContent;
+            isUpdating = true;
+            updateMarkdownPreview();
+            isUpdating = false;
+        }
+    }
+}
+
 /**
  * 解析不同格式的文件内容
- * 支持 JSON、XML、CSV 和旧版字符串格式
+ * 支持 JSON、XML、CSV、加密格式和旧版字符串格式
  * @param {string} content - 文件内容
  * @param {string} filename - 文件名（用于判断格式）
- * @returns {Array} - 解析后的目录数据数组
+ * @returns {Array|Promise<Array>} - 解析后的目录数据数组（加密文件返回 Promise）
  * @throws {Error} - 解析失败时抛出错误
  */
 function parseFileContent(content, filename) {
     let ext = filename ? filename.toLowerCase().split('.').pop() : '';
+    
+    // 检查是否是加密文件
+    if (isEncryptedContent(content)) {
+        // 返回 Promise，由调用方处理
+        return (async () => {
+            const decrypted = await parseEncryptedContent(content);
+            if (!decrypted) {
+                throw new Error('解密失败或已取消');
+            }
+            // 递归解析解密后的内容
+            return parseFileContent(decrypted, filename.replace('.encrypted', ''));
+        })();
+    }
     
     // 尝试解析 XML 格式
     if (ext === 'xml' || content.trim().startsWith('<?xml')) {
@@ -152,40 +1005,141 @@ function formatDataByExtension(data, filename) {
 }
 
 /**
- * 保存文件（提供格式选择）
+ * 保存文件（智能选择保存方式）
+ * 始终先询问保存选项（范围、是否加密），然后选择最佳保存方式
  */
 async function handleSave() {
-    // 格式选项列表
-    const formatOptions = [
-        { value: 'json', label: 'JSON 格式 (.json) - 推荐' },
-        { value: 'txt', label: '文本格式 (.txt)' },
-        { value: 'xml', label: 'XML 格式 (.xml)' },
-        { value: 'csv', label: 'CSV 格式 (.csv)' }
+    const modifiedDirs = getModifiedDirectories();
+    const hasModifications = modifiedDirs.length > 0;
+    
+    // 1. 如果有修改，询问保存范围
+    let saveMode = 'all';  // 'all', 'modified', 或 'diff'
+    if (hasModifications && mulufile.length > modifiedDirs.length) {
+        const modeOptions = [
+            { value: 'all', label: `保存全部（${mulufile.length} 个目录）` },
+            { value: 'modified', label: `仅保存修改的目录（${modifiedDirs.length} 个完整目录）` },
+            { value: 'diff', label: `仅保存差异（最小化，只保存变化的内容）` }
+        ];
+        saveMode = await customSelect('选择保存范围：', modeOptions, 'all', '保存文件');
+        if (saveMode === null) {
+            showToast('已取消保存', 'info', 2000);
+            return;
+        }
+    }
+    
+    // 2. 询问是否加密
+    const encryptOptions = [
+        { value: 'no', label: '不加密' },
+        { value: 'yes', label: '加密保存（设置密码）' }
     ];
-    
-    // 显示格式选择对话框
-    const format = await customSelect('选择保存格式：', formatOptions, 'json', '保存文件');
-    
-    if (format === null) {
+    const encrypt = await customSelect('是否加密？', encryptOptions, 'no', '保存文件');
+    if (encrypt === null) {
         showToast('已取消保存', 'info', 2000);
         return;
     }
     
-    // 从输入框获取文件名
+    // 3. 如果选择加密，获取密码
+    let password = null;
+    if (encrypt === 'yes') {
+        password = await customPrompt('设置加密密码：', '', '加密保存');
+        if (!password) {
+            showToast('已取消', 'info', 2000);
+            return;
+        }
+        const confirmPassword = await customPrompt('确认密码：', '', '加密保存');
+        if (confirmPassword !== password) {
+            customAlert('两次输入的密码不一致');
+            return;
+        }
+    }
+    
+    // 4. 准备数据
+    let dataToSave;
+    if (saveMode === 'diff') {
+        dataToSave = await prepareDiffDataForExport(modifiedDirs);
+    } else if (saveMode === 'modified') {
+        dataToSave = await prepareModifiedDataForExport(modifiedDirs);
+    } else {
+        dataToSave = await prepareDataForExport(mulufile);
+    }
+    
+    // 5. 格式化数据
+    let stringData = JSON.stringify(dataToSave, null, 2);
+    
+    // 6. 加密（如果需要）
+    if (password) {
+        const encrypted = await encryptData(stringData, password);
+        stringData = ENCRYPTED_FILE_HEADER + ':' + encrypted;
+    }
+    
+    // 7. 生成文件名后缀
+    let fileSuffix = '';
+    if (saveMode === 'diff') {
+        fileSuffix = '.patch';
+    } else if (saveMode === 'modified') {
+        fileSuffix = '_incremental';
+    }
+    if (password) {
+        fileSuffix += '.encrypted';
+    }
+    
+    // 8. 选择保存方式
+    // 如果是加密或增量/差异模式，不能直接保存到原文件，需要另存为
+    const canSaveToCurrentFile = currentFileHandle && !password && saveMode === 'all';
+    
+    if (canSaveToCurrentFile) {
+        // 直接保存到当前文件
+        try {
+            const writable = await currentFileHandle.createWritable();
+            await writable.write(stringData);
+            await writable.close();
+            
+            clearUnsavedChanges();
+            showToast(`已保存：${currentFileName}`, 'success', 2500);
+            return;
+        } catch (err) {
+            if (err.name === 'AbortError') return;
+            console.error('保存失败，尝试另存为:', err);
+            // 降级到另存为
+        }
+    }
+    
+    // 另存为（使用 File System Access API 或传统下载）
     let baseName = (fileNameInput && fileNameInput.value.trim()) || "soralist";
-    // 移除可能的扩展名
-    baseName = baseName.replace(/\.(json|txt|xml|csv)$/i, '');
-    let filename = `${baseName}.${format}`;
+    baseName = baseName.replace(/\.(json|txt|xml|csv|encrypted|diff|patch)$/i, '');
     
-    // 准备数据（从 IndexedDB 恢复视频数据）
-    let dataToSave = await prepareDataForExport(mulufile);
+    if (isFileSystemAccessSupported() && !password) {
+        // 使用 File System Access API 另存为（非加密文件）
+        try {
+            const fileHandle = await window.showSaveFilePicker({
+                suggestedName: `${baseName}${fileSuffix}.json`,
+                types: [{ description: 'JSON 文件', accept: { 'application/json': ['.json'] } }]
+            });
+            
+            const writable = await fileHandle.createWritable();
+            await writable.write(stringData);
+            await writable.close();
+            
+            // 如果是全量保存，更新文件句柄
+            if (saveMode === 'all') {
+                currentFileHandle = fileHandle;
+                currentFileName = fileHandle.name;
+                clearUnsavedChanges();
+            }
+            
+            const modeText = saveMode === 'diff' ? '（差异补丁）' : (saveMode === 'modified' ? '（增量）' : '');
+            showToast(`已保存${modeText}：${fileHandle.name}`, 'success', 2500);
+            return;
+        } catch (err) {
+            if (err.name === 'AbortError') return;
+            console.error('File System API 保存失败:', err);
+            // 降级到传统下载
+        }
+    }
     
-    let mimeType = getMimeType(filename);
-    let stringData = (format === 'json')
-        ? JSON.stringify(dataToSave, null, 2)
-        : formatDataByExtension(dataToSave, filename);
-    
-    // 创建并下载文件
+    // 传统下载方式
+    const filename = `${baseName}${fileSuffix}.json`;
+    const mimeType = 'application/json';
     const blob = new Blob([stringData], { type: `${mimeType};charset=utf-8` });
     const objectURL = URL.createObjectURL(blob);
     
@@ -195,7 +1149,476 @@ async function handleSave() {
     aTag.click();
     
     URL.revokeObjectURL(objectURL);
-    showToast(`已保存：${filename}`, 'success', 2500);
+    
+    // 更新状态
+    if (saveMode === 'all' && !password) {
+        clearUnsavedChanges();
+    }
+    currentFileName = filename;
+    updatePageTitle();
+    
+    const modeText = saveMode === 'diff' ? '（差异补丁）' : (saveMode === 'modified' ? '（增量）' : '');
+    const encryptText = password ? '（已加密）' : '';
+    showToast(`已保存${modeText}${encryptText}：${filename}`, 'success', 2500);
+}
+
+/**
+ * 传统保存方式（下载文件）
+ * 支持增量保存和加密
+ */
+async function handleSaveFallback() {
+    const modifiedDirs = getModifiedDirectories();
+    const hasModifications = modifiedDirs.length > 0;
+    
+    // 1. 如果有修改，询问保存范围
+    let saveMode = 'all';  // 'all', 'modified', 或 'diff'
+    if (hasModifications && mulufile.length > modifiedDirs.length) {
+        const modeOptions = [
+            { value: 'all', label: `保存全部（${mulufile.length} 个目录）` },
+            { value: 'modified', label: `仅保存修改的目录（${modifiedDirs.length} 个完整目录）` },
+            { value: 'diff', label: `仅保存差异（最小化，只保存变化的内容）` }
+        ];
+        saveMode = await customSelect('选择保存范围：', modeOptions, 'all', '保存文件');
+        if (saveMode === null) {
+            showToast('已取消保存', 'info', 2000);
+            return;
+        }
+    }
+    
+    // 2. 询问是否加密
+    const encryptOptions = [
+        { value: 'no', label: '不加密' },
+        { value: 'yes', label: '加密保存（设置密码）' }
+    ];
+    const encrypt = await customSelect('是否加密？', encryptOptions, 'no', '保存文件');
+    if (encrypt === null) {
+        showToast('已取消保存', 'info', 2000);
+        return;
+    }
+    
+    // 3. 如果选择加密，获取密码
+    let password = null;
+    if (encrypt === 'yes') {
+        password = await customPrompt('设置加密密码：', '', '加密保存');
+        if (!password) {
+            showToast('已取消', 'info', 2000);
+            return;
+        }
+        const confirmPassword = await customPrompt('确认密码：', '', '加密保存');
+        if (confirmPassword !== password) {
+            customAlert('两次输入的密码不一致');
+            return;
+        }
+    }
+    
+    // 4. 选择格式（仅非加密时）
+    let format = 'json';
+    if (!password) {
+        const formatOptions = [
+            { value: 'json', label: 'JSON 格式 (.json) - 推荐' },
+            { value: 'txt', label: '文本格式 (.txt)' },
+            { value: 'xml', label: 'XML 格式 (.xml)' },
+            { value: 'csv', label: 'CSV 格式 (.csv)' }
+        ];
+        format = await customSelect('选择保存格式：', formatOptions, 'json', '保存文件');
+        if (format === null) {
+            showToast('已取消保存', 'info', 2000);
+            return;
+        }
+    }
+    
+    // 5. 准备数据
+    let dataToSave;
+    if (saveMode === 'diff') {
+        dataToSave = await prepareDiffDataForExport(modifiedDirs);
+    } else if (saveMode === 'modified') {
+        dataToSave = await prepareModifiedDataForExport(modifiedDirs);
+    } else {
+        dataToSave = await prepareDataForExport(mulufile);
+    }
+    
+    // 6. 生成文件名
+    let baseName = (fileNameInput && fileNameInput.value.trim()) || "soralist";
+    baseName = baseName.replace(/\.(json|txt|xml|csv|encrypted|diff|patch)$/i, '');
+    
+    let filename;
+    if (password) {
+        if (saveMode === 'diff') {
+            filename = `${baseName}.patch.encrypted.json`;
+        } else if (saveMode === 'modified') {
+            filename = `${baseName}_incremental.encrypted.json`;
+        } else {
+            filename = `${baseName}.encrypted.json`;
+        }
+    } else {
+        if (saveMode === 'diff') {
+            filename = `${baseName}.patch.json`;
+        } else if (saveMode === 'modified') {
+            filename = `${baseName}_incremental.${format}`;
+        } else {
+            filename = `${baseName}.${format}`;
+        }
+    }
+    
+    // 7. 格式化数据
+    let stringData = (format === 'json' || password)
+        ? JSON.stringify(dataToSave, null, 2)
+        : formatDataByExtension(dataToSave, filename);
+    
+    // 8. 加密（如果需要）
+    if (password) {
+        const encrypted = await encryptData(stringData, password);
+        stringData = ENCRYPTED_FILE_HEADER + ':' + encrypted;
+    }
+    
+    // 9. 下载文件
+    const mimeType = password ? 'text/plain' : getMimeType(filename);
+    const blob = new Blob([stringData], { type: `${mimeType};charset=utf-8` });
+    const objectURL = URL.createObjectURL(blob);
+    
+    const aTag = document.createElement('a');
+    aTag.href = objectURL;
+    aTag.download = filename;
+    aTag.click();
+    
+    URL.revokeObjectURL(objectURL);
+    
+    // 10. 更新状态
+    if (saveMode === 'all') {
+        clearUnsavedChanges();
+    }
+    currentFileName = filename;
+    updatePageTitle();
+    
+    const modeText = saveMode === 'diff' ? '（差异补丁）' : (saveMode === 'modified' ? '（增量）' : '');
+    const encryptText = password ? '（已加密）' : '';
+    showToast(`已保存${modeText}${encryptText}：${filename}`, 'success', 2500);
+}
+
+/**
+ * 准备仅修改的数据用于导出
+ * @param {Array} modifiedDirIds - 修改的目录 ID 列表
+ * @returns {Promise<Array>} - 仅包含修改目录的数据
+ */
+async function prepareModifiedDataForExport(modifiedDirIds) {
+    const modifiedData = [];
+    
+    for (const dirId of modifiedDirIds) {
+        const data = getMulufileByDirId(dirId);
+        if (data) {
+            // 创建副本
+            const dataCopy = [...data];
+            // 如果内容包含 IndexedDB 媒体引用，恢复媒体数据
+            if (dataCopy[3] && dataCopy[3].includes('data-media-storage-id') && typeof MediaStorage !== 'undefined') {
+                dataCopy[3] = await MediaStorage.processHtmlForExport(dataCopy[3]);
+            }
+            modifiedData.push(dataCopy);
+        }
+    }
+    
+    return modifiedData;
+}
+
+// -------------------- 内容差异（Diff/Patch）功能 --------------------
+
+/** 原始内容缓存（用于计算差异） */
+const originalContentCache = new Map();
+
+/**
+ * 保存目录的原始内容（用于后续差异计算）
+ * 在文件加载后调用
+ */
+function cacheOriginalContent() {
+    originalContentCache.clear();
+    for (let i = 0; i < mulufile.length; i++) {
+        if (mulufile[i].length === 4) {
+            const dirId = mulufile[i][2];
+            const content = mulufile[i][3] || '';
+            originalContentCache.set(dirId, content);
+        }
+    }
+}
+
+/**
+ * 计算两个字符串的行级差异
+ * 使用简化的 LCS 算法
+ * @param {string} oldText - 原始文本
+ * @param {string} newText - 新文本
+ * @returns {Array} - 差异操作数组 [{op: 'keep'|'add'|'del', line: string}, ...]
+ */
+function computeLineDiff(oldText, newText) {
+    const oldLines = (oldText || '').split('\n');
+    const newLines = (newText || '').split('\n');
+    
+    // 构建 LCS 表
+    const m = oldLines.length;
+    const n = newLines.length;
+    const dp = Array(m + 1).fill(null).map(() => Array(n + 1).fill(0));
+    
+    for (let i = 1; i <= m; i++) {
+        for (let j = 1; j <= n; j++) {
+            if (oldLines[i - 1] === newLines[j - 1]) {
+                dp[i][j] = dp[i - 1][j - 1] + 1;
+            } else {
+                dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+            }
+        }
+    }
+    
+    // 回溯生成差异
+    const diff = [];
+    let i = m, j = n;
+    const tempDiff = [];
+    
+    while (i > 0 || j > 0) {
+        if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
+            tempDiff.push({ op: '=', line: oldLines[i - 1] });
+            i--; j--;
+        } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+            tempDiff.push({ op: '+', line: newLines[j - 1] });
+            j--;
+        } else {
+            tempDiff.push({ op: '-', line: oldLines[i - 1] });
+            i--;
+        }
+    }
+    
+    // 反转并压缩差异
+    tempDiff.reverse();
+    
+    // 压缩连续的保持行（只记录行号范围）
+    let keepStart = -1;
+    let keepCount = 0;
+    
+    for (const item of tempDiff) {
+        if (item.op === '=') {
+            if (keepStart === -1) keepStart = diff.length;
+            keepCount++;
+        } else {
+            if (keepCount > 0) {
+                // 如果保持行超过3行，压缩为范围
+                if (keepCount > 3) {
+                    diff.push({ op: '=', count: keepCount });
+                } else {
+                    // 保持行较少，直接记录
+                    for (let k = 0; k < keepCount; k++) {
+                        diff.push({ op: '=', line: tempDiff[keepStart + k].line });
+                    }
+                }
+                keepStart = -1;
+                keepCount = 0;
+            }
+            diff.push(item);
+        }
+    }
+    
+    // 处理末尾的保持行
+    if (keepCount > 0) {
+        if (keepCount > 3) {
+            diff.push({ op: '=', count: keepCount });
+        } else {
+            for (let k = 0; k < keepCount; k++) {
+                diff.push({ op: '=', line: tempDiff[keepStart + k].line });
+            }
+        }
+    }
+    
+    return diff;
+}
+
+/**
+ * 应用差异补丁到原始文本
+ * @param {string} oldText - 原始文本
+ * @param {Array} diff - 差异操作数组
+ * @returns {string} - 应用补丁后的文本
+ */
+function applyLinePatch(oldText, diff) {
+    const oldLines = (oldText || '').split('\n');
+    const newLines = [];
+    let oldIndex = 0;
+    
+    for (const item of diff) {
+        if (item.op === '=') {
+            if (item.count !== undefined) {
+                // 压缩的保持范围
+                for (let i = 0; i < item.count && oldIndex < oldLines.length; i++) {
+                    newLines.push(oldLines[oldIndex++]);
+                }
+            } else {
+                // 单行保持
+                newLines.push(item.line);
+                oldIndex++;
+            }
+        } else if (item.op === '+') {
+            // 添加行
+            newLines.push(item.line);
+        } else if (item.op === '-') {
+            // 删除行（跳过原始行）
+            oldIndex++;
+        }
+    }
+    
+    return newLines.join('\n');
+}
+
+/**
+ * 准备差异数据用于导出（只保存变化部分）
+ * @param {Array} modifiedDirIds - 修改的目录 ID 列表
+ * @returns {Promise<Object>} - 包含差异的数据对象
+ */
+async function prepareDiffDataForExport(modifiedDirIds) {
+    const diffData = {
+        _type: 'soralist_diff',  // 标识为差异文件
+        _version: 1,
+        patches: []
+    };
+    
+    for (const dirId of modifiedDirIds) {
+        const data = getMulufileByDirId(dirId);
+        if (data) {
+            const originalContent = originalContentCache.get(dirId) || '';
+            let currentContent = data[3] || '';
+            
+            // 如果内容包含 IndexedDB 媒体引用，恢复媒体数据
+            if (currentContent.includes('data-media-storage-id') && typeof MediaStorage !== 'undefined') {
+                currentContent = await MediaStorage.processHtmlForExport(currentContent);
+            }
+            
+            // 计算差异
+            const diff = computeLineDiff(originalContent, currentContent);
+            
+            // 计算压缩率
+            const originalSize = originalContent.length;
+            const diffSize = JSON.stringify(diff).length;
+            const fullSize = currentContent.length;
+            
+            // 如果差异比完整内容还大，就保存完整内容
+            if (diffSize >= fullSize * 0.8) {
+                diffData.patches.push({
+                    dirId: dirId,
+                    parentId: data[0],
+                    name: data[1],
+                    mode: 'full',  // 完整内容模式
+                    content: currentContent
+                });
+            } else {
+                diffData.patches.push({
+                    dirId: dirId,
+                    parentId: data[0],
+                    name: data[1],
+                    mode: 'diff',  // 差异模式
+                    diff: diff
+                });
+            }
+        }
+    }
+    
+    return diffData;
+}
+
+/**
+ * 应用差异补丁文件
+ * @param {Object} diffData - 差异数据对象
+ * @returns {Object} - { applied: 成功数, failed: 失败数, notFound: 未找到数 }
+ */
+function applyDiffPatches(diffData) {
+    if (!diffData || diffData._type !== 'soralist_diff') {
+        return { applied: 0, failed: 0, notFound: 0, error: '无效的差异文件' };
+    }
+    
+    let applied = 0;
+    let failed = 0;
+    let notFound = 0;
+    
+    for (const patch of diffData.patches) {
+        const data = getMulufileByDirId(patch.dirId);
+        
+        if (!data) {
+            // 目录不存在，创建新目录
+            mulufile.push([patch.parentId, patch.name, patch.dirId, patch.mode === 'full' ? patch.content : '']);
+            if (patch.mode === 'diff') {
+                // 对于新目录的差异模式，直接组装内容
+                const newContent = applyLinePatch('', patch.diff);
+                mulufile[mulufile.length - 1][3] = newContent;
+            }
+            applied++;
+            notFound++;
+            continue;
+        }
+        
+        try {
+            if (patch.mode === 'full') {
+                // 完整内容模式
+                data[3] = patch.content;
+            } else {
+                // 差异模式
+                const originalContent = data[3] || '';
+                const newContent = applyLinePatch(originalContent, patch.diff);
+                data[3] = newContent;
+            }
+            applied++;
+        } catch (e) {
+            console.error('应用补丁失败:', patch.dirId, e);
+            failed++;
+        }
+    }
+    
+    // 重建索引
+    rebuildMulufileIndex();
+    
+    return { applied, failed, notFound };
+}
+
+/**
+ * 检查是否是差异文件
+ * @param {any} data - 解析后的数据
+ * @returns {boolean}
+ */
+function isDiffFile(data) {
+    return data && typeof data === 'object' && data._type === 'soralist_diff';
+}
+
+/**
+ * 合并目录数据（将新数据合并到现有数据）
+ * @param {Array} existingData - 现有目录数据
+ * @param {Array} newData - 新的目录数据
+ * @returns {Object} - { data: 合并后的数据, added: 新增数量, updated: 更新数量 }
+ */
+function mergeDirectoryData(existingData, newData) {
+    // 创建现有数据的 ID 到索引的映射
+    const existingMap = new Map();
+    for (let i = 0; i < existingData.length; i++) {
+        if (existingData[i].length >= 4) {
+            existingMap.set(existingData[i][2], i);  // [2] 是目录 ID
+        }
+    }
+    
+    let added = 0;
+    let updated = 0;
+    
+    // 合并新数据
+    for (const item of newData) {
+        if (item.length >= 4) {
+            const dirId = item[2];
+            
+            if (existingMap.has(dirId)) {
+                // 更新现有目录
+                const index = existingMap.get(dirId);
+                existingData[index] = [...item];  // 替换整个数组
+                updated++;
+            } else {
+                // 添加新目录
+                existingData.push([...item]);
+                added++;
+            }
+        }
+    }
+    
+    return {
+        data: existingData,
+        added: added,
+        updated: updated
+    };
 }
 
 /**
@@ -264,15 +1687,69 @@ async function handleSaveAs(customName) {
 }
 
 /**
+ * 另存为加密文件
+ * @param {string} customName - 自定义文件名
+ * @param {string} password - 加密密码
+ */
+async function handleSaveAsEncrypted(customName, password) {
+    if (!customName || !password) {
+        customAlert("已取消保存");
+        return;
+    }
+    
+    // 确保文件名有扩展名
+    let filename = customName;
+    if (!filename.includes('.')) {
+        filename += '.json';
+    }
+    
+    // 准备数据
+    let dataToSave = await prepareDataForExport(mulufile);
+    let stringData = JSON.stringify(dataToSave, null, 2);
+    
+    // 加密数据
+    const encrypted = await encryptData(stringData, password);
+    const encryptedContent = ENCRYPTED_FILE_HEADER + ':' + encrypted;
+    
+    // 创建并下载文件
+    const blob = new Blob([encryptedContent], { type: 'text/plain;charset=utf-8' });
+    const objectURL = URL.createObjectURL(blob);
+    
+    const aTag = document.createElement('a');
+    aTag.href = objectURL;
+    aTag.download = filename;
+    aTag.click();
+    
+    URL.revokeObjectURL(objectURL);
+    showToast(`已保存加密文件：${filename}`, 'success', 2500);
+}
+
+/**
  * 另存为网页功能
  * 生成一个独立可浏览的HTML网页
+ * @param {boolean} encrypt - 是否加密
+ * @param {string} password - 加密密码（仅当 encrypt 为 true 时需要）
  */
-async function handleSaveAsWebpage() {
+async function handleSaveAsWebpage(encrypt = false, password = null) {
+    // 如果需要加密但没有密码，询问用户
+    if (encrypt && !password) {
+        password = await customPrompt('设置加密密码：', '', '加密导出');
+        if (!password) {
+            showToast('已取消', 'info', 2000);
+            return;
+        }
+        const confirmPassword = await customPrompt('确认密码：', '', '加密导出');
+        if (confirmPassword !== password) {
+            customAlert('两次输入的密码不一致');
+            return;
+        }
+    }
+    
     // 从输入框获取文件名
     let baseName = (fileNameInput && fileNameInput.value.trim()) || "soralist";
     // 移除可能的扩展名
-    baseName = baseName.replace(/\.(json|txt|xml|csv|html)$/i, '');
-    let filename = `${baseName}.html`;
+    baseName = baseName.replace(/\.(json|txt|xml|csv|html|encrypted)$/i, '');
+    let filename = encrypt ? `${baseName}.encrypted.html` : `${baseName}.html`;
     
     // 构建目录树结构
     function buildDirectoryTree(muluData) {
@@ -1045,8 +2522,15 @@ async function handleSaveAsWebpage() {
 </body>
 </html>`;
     
+    // 如果加密，包装 HTML
+    let finalContent = htmlContent;
+    if (encrypt && password) {
+        const encryptedHtml = await encryptData(htmlContent, password);
+        finalContent = generateEncryptedHtmlWrapper(baseName, encryptedHtml);
+    }
+    
     // 创建并下载文件
-    const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+    const blob = new Blob([finalContent], { type: 'text/html;charset=utf-8' });
     const objectURL = URL.createObjectURL(blob);
     
     const aTag = document.createElement('a');
@@ -1055,7 +2539,57 @@ async function handleSaveAsWebpage() {
     aTag.click();
     
     URL.revokeObjectURL(objectURL);
-    showToast(`已导出网页：${filename}`, 'success', 2500);
+    showToast(`已导出${encrypt ? '加密' : ''}网页：${filename}`, 'success', 2500);
+}
+
+/**
+ * 生成加密 HTML 包装器（解密后显示原始网页）
+ * @param {string} title - 页面标题
+ * @param {string} encryptedHtml - 加密的 HTML 内容
+ * @returns {string} - 包装后的 HTML
+ */
+function generateEncryptedHtmlWrapper(title, encryptedHtml) {
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${title} - 加密文档</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #f5f5f5; }
+        .box { background: #fff; padding: 30px; border-radius: 8px; border: 1px solid #ddd; text-align: center; }
+        h3 { margin: 0 0 15px; color: #333; }
+        input { padding: 8px 12px; border: 1px solid #ccc; border-radius: 4px; width: 200px; margin-right: 8px; }
+        button { padding: 8px 16px; background: #0066cc; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+        button:hover { background: #0052a3; }
+        .error { color: #e74c3c; margin-top: 10px; font-size: 13px; display: none; }
+    </style>
+</head>
+<body>
+    <div class="box">
+        <h3>${title}</h3>
+        <div>
+            <input type="password" id="pwd" placeholder="输入密码" autofocus>
+            <button onclick="decrypt()">解锁</button>
+        </div>
+        <div class="error" id="err">密码错误</div>
+    </div>
+    <script>
+        const D='${encryptedHtml}';
+        async function decrypt(){
+            const p=document.getElementById('pwd').value;
+            if(!p)return;
+            try{
+                const c=Uint8Array.from(atob(D),x=>x.charCodeAt(0));
+                const k=await crypto.subtle.deriveKey({name:'PBKDF2',salt:c.slice(0,16),iterations:100000,hash:'SHA-256'},await crypto.subtle.importKey('raw',new TextEncoder().encode(p),'PBKDF2',false,['deriveKey']),{name:'AES-GCM',length:256},false,['decrypt']);
+                const h=new TextDecoder().decode(await crypto.subtle.decrypt({name:'AES-GCM',iv:c.slice(16,28)},k,c.slice(28)));
+                document.open();document.write(h);document.close();
+            }catch(e){document.getElementById('err').style.display='block';document.getElementById('pwd').value='';document.getElementById('pwd').focus();}
+        }
+        document.getElementById('pwd').onkeypress=e=>{if(e.key==='Enter')decrypt();};
+    </script>
+</body>
+</html>`;
 }
 
 /**

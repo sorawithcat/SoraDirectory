@@ -14,6 +14,25 @@ document.oncontextmenu = function (e) {
     return false;
 };
 
+// 页面关闭前提示（如果有未保存的更改）
+window.addEventListener('beforeunload', function(e) {
+    if (typeof hasUnsavedChanges !== 'undefined' && hasUnsavedChanges) {
+        e.preventDefault();
+        e.returnValue = '您有未保存的更改，确定要离开吗？';
+        return e.returnValue;
+    }
+});
+
+// Ctrl+S 快捷键保存
+document.addEventListener('keydown', function(e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        if (typeof handleSave === 'function') {
+            handleSave();
+        }
+    }
+});
+
 // DOM 加载完成后初始化
 document.addEventListener("DOMContentLoaded", function () {
     // 为所有元素生成唯一 ID
@@ -23,6 +42,24 @@ document.addEventListener("DOMContentLoaded", function () {
     
     // 加载目录数据
     LoadMulu();
+    
+    // 计算初始哈希（用于变化追踪）
+    if (typeof calculateAllHashes === 'function') {
+        calculateAllHashes();
+    }
+    
+    // 显示 File System Access API 支持情况
+    if (typeof isFileSystemAccessSupported === 'function') {
+        if (isFileSystemAccessSupported()) {
+            console.log('✓ File System Access API 已启用：支持直接保存到文件');
+        } else {
+            console.log('✗ File System Access API 不可用：将使用传统下载方式');
+            // 更新加载按钮提示
+            if (topLoadBtn) {
+                topLoadBtn.title = '加载文件（不支持直接保存）';
+            }
+        }
+    }
     
     // 延迟执行初始化（确保 DOM 完全渲染）
     setTimeout(() => {

@@ -169,11 +169,31 @@ if (imageFileInput) {
             // 压缩图片（不影响质量）
             const imageData = await compressImage(rawImageData);
             
-            // 保存压缩后的图片到 IndexedDB
-            const imageStorageId = await MediaStorage.saveImage(imageData);
+            // 大图片阈值：超过 5MB 使用 Blob 存储
+            const LARGE_IMAGE_THRESHOLD = 5 * 1024 * 1024;
+            const useBlobStorage = file.size > LARGE_IMAGE_THRESHOLD;
+            
+            // 保存图片到 IndexedDB
+            let imageStorageId;
+            try {
+                if (useBlobStorage) {
+                    // 大图片：直接存储 File（分块）
+                    imageStorageId = await MediaStorage.save(file, 'image');
+                    MediaStorage.hideProgressToast();
+                } else {
+                    // 小图片：存储压缩后的 base64
+                    imageStorageId = await MediaStorage.saveImage(imageData);
+                }
+            } catch (err) {
+                if (useBlobStorage) MediaStorage.hideProgressToast();
+                console.error('保存图片到 IndexedDB 失败:', err);
+                showToast('保存图片失败：' + err.message, 'error', 3000);
+                imageFileInput.value = '';
+                return;
+            }
             
             const img = document.createElement('img');
-            img.src = imageData; // 显示时使用压缩后的数据
+            img.src = imageData; // 显示时使用压缩后的数据（即使是大图片也用压缩版显示）
             img.setAttribute('data-media-storage-id', imageStorageId); // 存储引用 ID
             img.alt = imageName;
             if (caption) img.title = caption;
@@ -208,6 +228,12 @@ if (imageFileInput) {
             }
             
             syncPreviewToTextarea();
+            
+            // 更新存储空间信息
+            if (typeof updateStorageInfo === 'function') {
+                updateStorageInfo();
+            }
+            
             imageFileInput.value = '';
         };
         reader.readAsDataURL(file);
@@ -625,7 +651,12 @@ if (videoFileInput) {
         }
         
         // 处理视频
-        let videoData;
+        let videoData = null;
+        let videoBlob = null;
+        let useBlobStorage = false;
+        
+        // 大文件阈值：超过 30MB 使用 Blob 存储
+        const LARGE_VIDEO_THRESHOLD = 30 * 1024 * 1024;
         
         if (shouldCompress) {
             try {
@@ -642,34 +673,63 @@ if (videoFileInput) {
                 hideCompressProgress();
                 console.error('视频压缩失败:', err);
                 showToast('压缩失败，使用原始视频', 'warning', 2000);
-                // 压缩失败，读取原始数据
+                // 压缩失败，大文件使用 Blob 存储
+                if (file.size > LARGE_VIDEO_THRESHOLD) {
+                    useBlobStorage = true;
+                    videoBlob = file;
+                } else {
+                    videoData = await new Promise((resolve) => {
+                        const reader = new FileReader();
+                        reader.onload = (e) => resolve(e.target.result);
+                        reader.readAsDataURL(file);
+                    });
+                }
+            }
+        } else {
+            // 不压缩
+            if (file.size > LARGE_VIDEO_THRESHOLD) {
+                // 大文件使用 Blob 存储
+                useBlobStorage = true;
+                videoBlob = file;
+            } else {
+                // 小文件使用 base64
                 videoData = await new Promise((resolve) => {
                     const reader = new FileReader();
                     reader.onload = (e) => resolve(e.target.result);
                     reader.readAsDataURL(file);
                 });
             }
-        } else {
-            // 不压缩，直接读取
-            videoData = await new Promise((resolve) => {
-                const reader = new FileReader();
-                reader.onload = (e) => resolve(e.target.result);
-                reader.readAsDataURL(file);
-            });
         }
         
         // 将视频保存到 IndexedDB
         let videoStorageId = null;
         if (typeof MediaStorage !== 'undefined') {
             try {
-                videoStorageId = await MediaStorage.saveVideo(videoData);
+                if (useBlobStorage) {
+                    // 大文件：直接存储 Blob（分块）
+                    videoStorageId = await MediaStorage.save(videoBlob, 'video');
+                    MediaStorage.hideProgressToast();
+                } else {
+                    // 小文件：存储 base64
+                    videoStorageId = await MediaStorage.saveVideo(videoData);
+                }
             } catch (err) {
+                if (useBlobStorage) MediaStorage.hideProgressToast();
                 console.error('保存视频到 IndexedDB 失败:', err);
+                showToast('保存视频失败：' + err.message, 'error', 3000);
+                videoFileInput.value = '';
+                return;
             }
         }
         
+        // 创建视频元素
         const video = document.createElement('video');
-        video.src = videoData;
+        if (useBlobStorage) {
+            // Blob 存储：创建临时 URL 用于显示
+            video.src = URL.createObjectURL(videoBlob);
+        } else {
+            video.src = videoData;
+        }
         video.controls = true;
         video.style.maxWidth = '640px';
         video.style.maxHeight = '360px';
@@ -710,6 +770,11 @@ if (videoFileInput) {
         // 检查是否有选中的目录
         if (!currentMuluName) {
             showToast('提示：请先选择一个目录，否则视频无法保存', 'warning', 3000);
+        }
+        
+        // 更新存储空间信息
+        if (typeof updateStorageInfo === 'function') {
+            updateStorageInfo();
         }
         
         videoFileInput.value = '';
@@ -833,11 +898,25 @@ async function editMediaCaption(media, type = 'image') {
 }
 
 /**
- * 删除媒体元素（连同 figure 一起删除）
+ * 删除媒体元素（连同 figure 一起删除，同时删除 IndexedDB 数据）
  * @param {HTMLImageElement|HTMLVideoElement} media - 媒体元素
  */
-function deleteMediaElement(media) {
+async function deleteMediaElement(media) {
     if (!media) return;
+    
+    // 获取存储 ID 并删除 IndexedDB 数据
+    const storageId = media.getAttribute('data-media-storage-id');
+    if (storageId && typeof MediaStorage !== 'undefined') {
+        try {
+            await MediaStorage.deleteMedia(storageId);
+            // 更新存储空间信息
+            if (typeof updateStorageInfo === 'function') {
+                updateStorageInfo();
+            }
+        } catch (err) {
+            console.error('删除媒体数据失败:', err);
+        }
+    }
     
     const figure = media.closest('figure');
     if (figure) {
@@ -846,6 +925,31 @@ function deleteMediaElement(media) {
         media.remove();
     }
     
+    syncPreviewToTextarea();
+}
+
+/**
+ * 删除压缩包元素（同时删除 IndexedDB 数据）
+ * @param {HTMLElement} archiveElement - 压缩包元素
+ */
+async function deleteArchiveElement(archiveElement) {
+    if (!archiveElement) return;
+    
+    // 获取存储 ID 并删除 IndexedDB 数据
+    const storageId = archiveElement.getAttribute('data-media-storage-id');
+    if (storageId && typeof MediaStorage !== 'undefined') {
+        try {
+            await MediaStorage.deleteMedia(storageId);
+            // 更新存储空间信息
+            if (typeof updateStorageInfo === 'function') {
+                updateStorageInfo();
+            }
+        } catch (err) {
+            console.error('删除压缩包数据失败:', err);
+        }
+    }
+    
+    archiveElement.remove();
     syncPreviewToTextarea();
 }
 
@@ -1141,6 +1245,90 @@ function getSelectedMedia(range, key) {
     return { element: null, type: null };
 }
 
+/**
+ * 检查选中范围是否包含压缩包元素
+ * @param {Range} range - 选中范围
+ * @param {string} key - 按下的键 ('Backspace' 或 'Delete')
+ * @returns {HTMLElement|null} - 选中的压缩包元素
+ */
+function getSelectedArchive(range, key) {
+    if (!range) return null;
+    
+    const startContainer = range.startContainer;
+    const startOffset = range.startOffset;
+    
+    // 检查选中内容是否包含压缩包
+    const contents = range.cloneContents();
+    const archive = contents.querySelector('.archive-attachment');
+    if (archive) {
+        const allArchives = markdownPreview.querySelectorAll('.archive-attachment');
+        for (const arch of allArchives) {
+            if (range.intersectsNode(arch)) {
+                return arch;
+            }
+        }
+    }
+    
+    // 检查光标是否在压缩包内
+    let archiveElement = null;
+    if (startContainer.nodeType === Node.TEXT_NODE) {
+        archiveElement = startContainer.parentNode.closest('.archive-attachment');
+    } else if (startContainer.closest) {
+        archiveElement = startContainer.closest('.archive-attachment');
+    }
+    
+    if (archiveElement) {
+        return archiveElement;
+    }
+    
+    // 检查选中范围的起点或终点是否直接在压缩包元素上
+    if (startContainer.nodeType === Node.ELEMENT_NODE) {
+        const childAtOffset = startContainer.childNodes[startOffset];
+        if (childAtOffset && childAtOffset.classList?.contains('archive-attachment')) {
+            return childAtOffset;
+        }
+        
+        if (key === 'Backspace' && startOffset > 0) {
+            const prevChild = startContainer.childNodes[startOffset - 1];
+            if (prevChild && prevChild.classList?.contains('archive-attachment')) {
+                return prevChild;
+            }
+        }
+        
+        if (key === 'Delete' && startOffset < startContainer.childNodes.length) {
+            const nextChild = startContainer.childNodes[startOffset];
+            if (nextChild && nextChild.classList?.contains('archive-attachment')) {
+                return nextChild;
+            }
+        }
+    }
+    
+    // 检查文本节点情况下，光标前后是否有压缩包元素
+    if (startContainer.nodeType === Node.TEXT_NODE) {
+        if (key === 'Backspace' && startOffset === 0) {
+            let prevSibling = startContainer.previousSibling;
+            while (prevSibling && prevSibling.nodeType === Node.TEXT_NODE && !prevSibling.textContent.trim()) {
+                prevSibling = prevSibling.previousSibling;
+            }
+            if (prevSibling && prevSibling.classList?.contains('archive-attachment')) {
+                return prevSibling;
+            }
+        }
+        
+        if (key === 'Delete' && startOffset === startContainer.textContent.length) {
+            let nextSibling = startContainer.nextSibling;
+            while (nextSibling && nextSibling.nodeType === Node.TEXT_NODE && !nextSibling.textContent.trim()) {
+                nextSibling = nextSibling.nextSibling;
+            }
+            if (nextSibling && nextSibling.classList?.contains('archive-attachment')) {
+                return nextSibling;
+            }
+        }
+    }
+    
+    return null;
+}
+
 
 /**
  * 清理孤立的 figcaption 和空的 figure 元素
@@ -1279,8 +1467,27 @@ if (markdownPreview) {
                         // 压缩图片（不影响质量）
                         const imageData = await compressImage(rawImageData);
                         
-                        // 保存压缩后的图片到 IndexedDB
-                        const imageStorageId = await MediaStorage.saveImage(imageData);
+                        // 大图片阈值：超过 5MB 使用 Blob 存储
+                        const LARGE_IMAGE_THRESHOLD = 5 * 1024 * 1024;
+                        const useBlobStorage = file.size > LARGE_IMAGE_THRESHOLD;
+                        
+                        // 保存图片到 IndexedDB
+                        let imageStorageId;
+                        try {
+                            if (useBlobStorage) {
+                                // 大图片：直接存储 File（分块）
+                                imageStorageId = await MediaStorage.save(file, 'image');
+                                MediaStorage.hideProgressToast();
+                            } else {
+                                // 小图片：存储压缩后的 base64
+                                imageStorageId = await MediaStorage.saveImage(imageData);
+                            }
+                        } catch (err) {
+                            if (useBlobStorage) MediaStorage.hideProgressToast();
+                            console.error('保存图片到 IndexedDB 失败:', err);
+                            showToast('保存图片失败：' + err.message, 'error', 3000);
+                            return;
+                        }
                         
                         const img = document.createElement('img');
                         img.src = imageData; // 显示时使用压缩后的数据
@@ -1319,6 +1526,11 @@ if (markdownPreview) {
                         }
                         
                         syncPreviewToTextarea();
+                        
+                        // 更新存储空间信息
+                        if (typeof updateStorageInfo === 'function') {
+                            updateStorageInfo();
+                        }
                     };
                     reader.readAsDataURL(file);
                 } else if (file.type.startsWith('video/')) {
@@ -1361,7 +1573,12 @@ if (markdownPreview) {
                     }
                     
                     // 处理视频
-                    let videoData;
+                    let videoData = null;
+                    let videoBlob = null;
+                    let useBlobStorage = false;
+                    
+                    // 大文件阈值：超过 30MB 使用 Blob 存储
+                    const LARGE_VIDEO_THRESHOLD = 30 * 1024 * 1024;
                     
                     if (shouldCompress) {
                         try {
@@ -1378,34 +1595,54 @@ if (markdownPreview) {
                             hideCompressProgress();
                             console.error('视频压缩失败:', err);
                             showToast('压缩失败，使用原始视频', 'warning', 2000);
-                            // 压缩失败，读取原始数据
+                            // 压缩失败，大文件使用 Blob 存储
+                            if (file.size > LARGE_VIDEO_THRESHOLD) {
+                                useBlobStorage = true;
+                                videoBlob = file;
+                            } else {
+                                videoData = await new Promise((resolve) => {
+                                    const reader = new FileReader();
+                                    reader.onload = (ev) => resolve(ev.target.result);
+                                    reader.readAsDataURL(file);
+                                });
+                            }
+                        }
+                    } else {
+                        // 不压缩
+                        if (file.size > LARGE_VIDEO_THRESHOLD) {
+                            // 大文件使用 Blob 存储
+                            useBlobStorage = true;
+                            videoBlob = file;
+                        } else {
+                            // 小文件使用 base64
                             videoData = await new Promise((resolve) => {
                                 const reader = new FileReader();
                                 reader.onload = (ev) => resolve(ev.target.result);
                                 reader.readAsDataURL(file);
                             });
                         }
-                    } else {
-                        // 不压缩，直接读取
-                        videoData = await new Promise((resolve) => {
-                            const reader = new FileReader();
-                            reader.onload = (ev) => resolve(ev.target.result);
-                            reader.readAsDataURL(file);
-                        });
                     }
                     
                     // 将视频保存到 IndexedDB
                     let videoStorageId = null;
                     if (typeof MediaStorage !== 'undefined') {
                         try {
-                            videoStorageId = await MediaStorage.saveVideo(videoData);
+                            if (useBlobStorage) {
+                                // 大文件：直接存储 Blob（分块）
+                                videoStorageId = await MediaStorage.save(videoBlob, 'video');
+                                MediaStorage.hideProgressToast();
+                            } else {
+                                // 小文件：存储 base64
+                                videoStorageId = await MediaStorage.saveVideo(videoData);
+                            }
                         } catch (err) {
+                            if (useBlobStorage) MediaStorage.hideProgressToast();
                             console.error('保存视频到 IndexedDB 失败:', err);
+                            showToast('保存视频失败：' + err.message, 'error', 3000);
+                            continue;
                         }
                     }
                     
-                    const video = document.createElement('video');
-                    video.src = videoData;
                     video.controls = true;
                     video.style.maxWidth = '640px';
                     video.style.maxHeight = '360px';
@@ -1446,8 +1683,390 @@ if (markdownPreview) {
                     if (!currentMuluName) {
                         showToast('提示：请先选择一个目录，否则视频无法保存', 'warning', 3000);
                     }
+                    
+                    // 更新存储空间信息
+                    if (typeof updateStorageInfo === 'function') {
+                        updateStorageInfo();
+                    }
+                } else {
+                    // 检查是否是压缩文件
+                    const allowedArchiveExtensions = ['.zip', '.rar', '.7z', '.tar', '.gz', '.tar.gz', '.tgz', '.bz2', '.tar.bz2', '.xz', '.tar.xz'];
+                    const fileNameLower = file.name.toLowerCase();
+                    const isArchive = allowedArchiveExtensions.some(ext => fileNameLower.endsWith(ext));
+                    
+                    if (isArchive) {
+                        const archiveName = file.name;
+                        const fileSize = file.size;
+                        const sizeMB = (fileSize / 1024 / 1024).toFixed(2);
+                        
+                        // 文件大小警告（超过 50MB）
+                        if (fileSize > 50 * 1024 * 1024) {
+                            const confirmLarge = await customConfirm(
+                                `文件较大（${sizeMB}MB），将自动分块存储。\n\n• 大文件会分成多个 10MB 的块存储\n• 下载时自动合并还原\n• 加载可能需要一些时间\n\n确定要插入此文件吗？`,
+                                '确定',
+                                '取消',
+                                '大文件提示'
+                            );
+                            if (!confirmLarge) {
+                                continue;
+                            }
+                        }
+                        
+                        // 直接保存 File 对象到 IndexedDB（不转换 base64）
+                        let archiveStorageId = null;
+                        if (typeof MediaStorage !== 'undefined') {
+                            try {
+                                // 直接传入 File 对象，会自动分块存储（进度会自动显示）
+                                archiveStorageId = await MediaStorage.save(file, 'archive');
+                                MediaStorage.hideProgressToast();
+                            } catch (err) {
+                                MediaStorage.hideProgressToast();
+                                console.error('保存压缩文件到 IndexedDB 失败:', err);
+                                showToast('保存压缩文件失败：' + err.message, 'error', 3000);
+                                continue;
+                            }
+                        } else {
+                            showToast('浏览器不支持大文件存储', 'error', 3000);
+                            continue;
+                        }
+                        
+                        if (!archiveStorageId) {
+                            showToast('保存压缩文件失败，请重试', 'error', 3000);
+                            continue;
+                        }
+                        
+                        // 创建压缩文件显示元素（不传入 archiveData，只使用 storageId）
+                        const archiveContainer = createArchiveElement(archiveName, fileSize, null, archiveStorageId);
+                        
+                        // 使用保存的拖放位置插入
+                        if (savedRange && markdownPreview.contains(savedRange.startContainer)) {
+                            savedRange.insertNode(archiveContainer);
+                            const br = document.createElement('br');
+                            savedRange.setStartAfter(archiveContainer);
+                            savedRange.insertNode(br);
+                        } else {
+                            markdownPreview.appendChild(archiveContainer);
+                            markdownPreview.appendChild(document.createElement('br'));
+                        }
+                        
+                        // 确保同步到数据
+                        syncPreviewToTextarea();
+                        
+                        // 检查是否有选中的目录
+                        if (!currentMuluName) {
+                            showToast('提示：请先选择一个目录，否则压缩文件无法保存', 'warning', 3000);
+                        } else {
+                            showToast(`已插入压缩文件：${archiveName}`, 'success', 2000);
+                        }
+                        
+                        // 更新存储空间信息
+                        if (typeof updateStorageInfo === 'function') {
+                            updateStorageInfo();
+                        }
+                    }
                 }
             }
         }
     });
+}
+
+// ============================================
+// 压缩文件处理模块
+// ============================================
+
+// -------------------- 压缩文件支持的格式 --------------------
+
+/** 压缩文件扩展名到图标的映射 */
+const ARCHIVE_ICONS = {
+    'zip': '📦',
+    'rar': '📦',
+    '7z': '📦',
+    'tar': '📁',
+    'gz': '📁',
+    'tgz': '📁',
+    'bz2': '📁',
+    'xz': '📁',
+    'default': '📦'
+};
+
+/** 根据文件扩展名获取图标 */
+function getArchiveIcon(filename) {
+    const ext = filename.toLowerCase().split('.').pop();
+    return ARCHIVE_ICONS[ext] || ARCHIVE_ICONS['default'];
+}
+
+/** 格式化文件大小 */
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+// -------------------- 压缩文件上传按钮 --------------------
+
+if (topArchiveUploadBtn) {
+    topArchiveUploadBtn.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (archiveFileInput) {
+            archiveFileInput.click();
+        }
+    });
+}
+
+// -------------------- 压缩文件选择处理 --------------------
+
+if (archiveFileInput) {
+    archiveFileInput.addEventListener('change', async function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        // 验证文件类型
+        const allowedExtensions = ['.zip', '.rar', '.7z', '.tar', '.gz', '.tar.gz', '.tgz', '.bz2', '.tar.bz2', '.xz', '.tar.xz'];
+        const fileName = file.name.toLowerCase();
+        const isValidArchive = allowedExtensions.some(ext => fileName.endsWith(ext));
+        
+        if (!isValidArchive) {
+            customAlert('请选择有效的压缩文件格式（zip, rar, 7z, tar, gz 等）');
+            archiveFileInput.value = '';
+            return;
+        }
+        
+        // 在弹出对话框之前保存光标位置
+        const selection = window.getSelection();
+        let savedRange = null;
+        if (selection.rangeCount > 0 && markdownPreview.contains(selection.anchorNode)) {
+            savedRange = selection.getRangeAt(0).cloneRange();
+        }
+        
+        const archiveName = file.name;
+        const fileSize = file.size;
+        const sizeMB = (fileSize / 1024 / 1024).toFixed(2);
+        
+        // 文件大小警告（超过 50MB）
+        if (fileSize > 50 * 1024 * 1024) {
+            const confirmLarge = await customConfirm(
+                `文件较大（${sizeMB}MB），将自动分块存储。\n\n• 大文件会分成多个 10MB 的块存储\n• 下载时自动合并还原\n• 加载可能需要一些时间\n\n确定要插入此文件吗？`,
+                '确定',
+                '取消',
+                '大文件提示'
+            );
+            if (!confirmLarge) {
+                archiveFileInput.value = '';
+                return;
+            }
+        }
+        
+        // 直接保存 File 对象到 IndexedDB（不转换 base64，节省内存）
+        let archiveStorageId = null;
+        
+        if (typeof MediaStorage === 'undefined') {
+            showToast('浏览器不支持 IndexedDB，无法保存大文件', 'error', 3000);
+            archiveFileInput.value = '';
+            return;
+        }
+        
+        try {
+            // 直接传入 File 对象，会自动分块存储（进度会自动显示）
+            archiveStorageId = await MediaStorage.save(file, 'archive');
+            MediaStorage.hideProgressToast();
+        } catch (err) {
+            MediaStorage.hideProgressToast();
+            console.error('保存压缩文件到 IndexedDB 失败:', err);
+            showToast('保存压缩文件失败：' + err.message, 'error', 3000);
+            archiveFileInput.value = '';
+            return;
+        }
+        
+        if (!archiveStorageId) {
+            showToast('保存压缩文件失败，请重试', 'error', 3000);
+            archiveFileInput.value = '';
+            return;
+        }
+        
+        // 创建压缩文件显示元素
+        const archiveContainer = createArchiveElement(archiveName, fileSize, null, archiveStorageId);
+        
+        // 使用保存的光标位置插入
+        if (savedRange) {
+            savedRange.deleteContents();
+            savedRange.insertNode(archiveContainer);
+            const br = document.createElement('br');
+            savedRange.setStartAfter(archiveContainer);
+            savedRange.insertNode(br);
+        } else {
+            markdownPreview.appendChild(archiveContainer);
+            markdownPreview.appendChild(document.createElement('br'));
+        }
+        
+        // 确保同步到数据
+        syncPreviewToTextarea();
+        
+        // 检查是否有选中的目录
+        if (!currentMuluName) {
+            showToast('提示：请先选择一个目录，否则压缩文件无法保存', 'warning', 3000);
+        } else {
+            showToast(`已插入压缩文件：${archiveName}`, 'success', 2000);
+        }
+        
+        // 更新存储空间信息
+        if (typeof updateStorageInfo === 'function') {
+            updateStorageInfo();
+        }
+        
+        archiveFileInput.value = '';
+    });
+}
+
+/**
+ * 创建压缩文件显示元素
+ * @param {string} fileName - 文件名
+ * @param {number} fileSize - 文件大小（字节）
+ * @param {string} fileData - base64 编码的文件数据
+ * @param {string|null} storageId - IndexedDB 存储 ID
+ * @returns {HTMLElement} - 压缩文件容器元素
+ */
+function createArchiveElement(fileName, fileSize, fileData, storageId = null) {
+    const container = document.createElement('div');
+    container.className = 'archive-attachment';
+    container.setAttribute('contenteditable', 'false'); // 禁止编辑压缩包元素
+    container.setAttribute('data-archive-name', fileName);
+    container.setAttribute('data-archive-size', fileSize.toString());
+    
+    // 保存 IndexedDB 存储 ID
+    if (storageId) {
+        container.setAttribute('data-media-storage-id', storageId);
+    }
+    
+    // 文件图标
+    const icon = document.createElement('span');
+    icon.className = 'archive-icon';
+    icon.textContent = getArchiveIcon(fileName);
+    container.appendChild(icon);
+    
+    // 文件信息
+    const info = document.createElement('div');
+    info.className = 'archive-info';
+    
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'archive-name';
+    nameSpan.textContent = fileName;
+    nameSpan.title = fileName;
+    info.appendChild(nameSpan);
+    
+    const sizeSpan = document.createElement('span');
+    sizeSpan.className = 'archive-size';
+    sizeSpan.textContent = formatFileSize(fileSize);
+    info.appendChild(sizeSpan);
+    
+    container.appendChild(info);
+    
+    // 按钮容器
+    const btnContainer = document.createElement('div');
+    btnContainer.className = 'archive-buttons';
+    btnContainer.style.cssText = 'display: flex; gap: 5px;';
+    
+    // 下载按钮
+    const downloadBtn = document.createElement('button');
+    downloadBtn.className = 'archive-download-btn';
+    downloadBtn.innerHTML = '⬇ 下载';
+    downloadBtn.title = '下载文件（不消耗额外流量）';
+    downloadBtn.addEventListener('click', async function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        await downloadArchive(container);
+    });
+    btnContainer.appendChild(downloadBtn);
+    
+    // 删除按钮
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'archive-delete-btn';
+    deleteBtn.innerHTML = '✕';
+    deleteBtn.title = '删除文件';
+    deleteBtn.style.cssText = 'background: #f44336; color: white; border: none; padding: 4px 8px; border-radius: 3px; cursor: pointer;';
+    deleteBtn.addEventListener('click', async function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const confirmed = await customConfirm('确定要删除这个压缩文件吗？');
+        if (confirmed) {
+            await deleteArchiveElement(container);
+        }
+    });
+    btnContainer.appendChild(deleteBtn);
+    
+    container.appendChild(btnContainer);
+    
+    return container;
+}
+
+/**
+ * 下载压缩文件
+ * @param {HTMLElement} archiveElement - 压缩文件元素
+ */
+async function downloadArchive(archiveElement) {
+    const fileName = archiveElement.getAttribute('data-archive-name') || 'archive.zip';
+    const storageId = archiveElement.getAttribute('data-media-storage-id');
+    
+    if (!storageId) {
+        showToast('文件数据不存在', 'error', 2000);
+        return;
+    }
+    
+    try {
+        // 获取文件数据（进度会自动显示）
+        const blob = await MediaStorage.getChunkedBlob(storageId);
+        MediaStorage.hideProgressToast();
+        
+        if (!blob) {
+            showToast('无法获取文件数据', 'error', 2000);
+            return;
+        }
+        
+        // 创建下载链接
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        a.click();
+        
+        // 清理
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        showToast(`正在下载：${fileName}`, 'success', 2000);
+        
+    } catch (err) {
+        MediaStorage.hideProgressToast();
+        console.error('下载压缩文件失败:', err);
+        showToast(`下载失败: ${err.message}`, 'error', 3000);
+    }
+}
+
+/**
+ * 初始化页面中已存在的压缩文件元素
+ * 为下载按钮添加事件监听
+ */
+function initArchiveElements() {
+    const archiveElements = document.querySelectorAll('.archive-attachment');
+    archiveElements.forEach(element => {
+        // 确保压缩包元素不可编辑
+        element.setAttribute('contenteditable', 'false');
+        
+        const downloadBtn = element.querySelector('.archive-download-btn');
+        if (downloadBtn && !downloadBtn.hasAttribute('data-initialized')) {
+            downloadBtn.setAttribute('data-initialized', 'true');
+            downloadBtn.addEventListener('click', async function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                await downloadArchive(element);
+            });
+        }
+    });
+}
+
+// 页面加载完成后初始化
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initArchiveElements);
+} else {
+    initArchiveElements();
 }

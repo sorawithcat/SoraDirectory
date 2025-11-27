@@ -99,6 +99,39 @@
             color: #999;
         }
         
+        /* 存储空间信息显示 */
+        .storage-info-group {
+            margin-left: auto; /* 推到右侧 */
+        }
+        
+        .storage-info {
+            font-size: 11px;
+            padding: 4px 8px;
+            background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%);
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            white-space: nowrap;
+        }
+        
+        .storage-info:hover {
+            background: linear-gradient(135deg, #c8e6c9 0%, #a5d6a7 100%);
+        }
+        
+        .storage-info.warning {
+            background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%);
+            color: #e65100;
+        }
+        
+        .storage-info.danger {
+            background: linear-gradient(135deg, #ffebee 0%, #ffcdd2 100%);
+            color: #c62828;
+        }
+        
+        .storage-info.calculating {
+            background: #f5f5f5;
+            color: #999;
+        }
 
         .mulu {
             min-height: 30px;
@@ -545,6 +578,78 @@
             background-color: #f0f0f0;
             color: inherit;
             user-select: text;
+        }
+        
+        /* 压缩文件附件样式 */
+        .archive-attachment {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 16px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            border: 1px solid #ced4da;
+            border-radius: 8px;
+            margin: 8px 0;
+            max-width: 400px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            transition: all 0.2s ease;
+        }
+        
+        .archive-attachment:hover {
+            border-color: #0066cc;
+            box-shadow: 0 4px 8px rgba(0,102,204,0.15);
+        }
+        
+        .archive-icon {
+            font-size: 28px;
+            flex-shrink: 0;
+        }
+        
+        .archive-info {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        
+        .archive-name {
+            font-weight: 600;
+            color: #333;
+            font-size: 14px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .archive-size {
+            font-size: 12px;
+            color: #666;
+        }
+        
+        .archive-download-btn {
+            padding: 6px 12px;
+            background-color: #0066cc;
+            color: #fff;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+            flex-shrink: 0;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        
+        .archive-download-btn:hover {
+            background-color: #0052a3;
+            transform: translateY(-1px);
+        }
+        
+        .archive-download-btn:active {
+            transform: translateY(0);
         }
         
         .markdown-preview .contains-task-list {
@@ -1273,6 +1378,7 @@
             <button class="top-toolbar-btn format-toolbar-btn" data-command="link" id="topLinkBtn" title="链接">🔗</button>
             <button class="top-toolbar-btn" id="topImageUploadBtn" title="插入图片">🖼️</button>
             <button class="top-toolbar-btn" id="topVideoUploadBtn" title="插入视频">🎬</button>
+            <button class="top-toolbar-btn" id="topArchiveUploadBtn" title="插入压缩文件">📦</button>
             <button class="top-toolbar-btn format-toolbar-btn" data-command="unordered-list" title="无序列表">无序列表</button>
             <button class="top-toolbar-btn format-toolbar-btn" data-command="ordered-list" title="有序列表">有序列表</button>
             <button class="top-toolbar-btn format-toolbar-btn" data-command="task-list" title="任务列表">任务</button>
@@ -1301,6 +1407,10 @@
             <span class="top-toolbar-label">视图</span>
             <button class="top-toolbar-btn" id="toggleSidebarBtn" title="切换侧边栏">切换侧边栏</button>
             <button class="top-toolbar-btn" id="fullscreenBtn" title="全屏">全屏</button>
+        </div>
+        <div class="top-toolbar-group storage-info-group">
+            <span class="top-toolbar-label">存储</span>
+            <span id="storageInfo" class="storage-info" title="点击刷新存储信息">计算中...</span>
         </div>
     </div>
     
@@ -1343,6 +1453,7 @@
     </div>
     <input type="file" id="imageFileInput" accept="image/*" style="display: none;">
     <input type="file" id="videoFileInput" accept="video/*" style="display: none;">
+    <input type="file" id="archiveFileInput" accept=".zip,.rar,.7z,.tar,.gz,.tar.gz,.tgz,.bz2,.tar.bz2,.xz,.tar.xz" style="display: none;">
     <div class="rightmousemenu">
         <div class="copyMuluWithChildren">复制目录（含子目录）</div>
         <div class="copyMuluWithoutChildren">复制目录（不含子目录）</div>
