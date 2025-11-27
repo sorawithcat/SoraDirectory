@@ -34,7 +34,16 @@ document.addEventListener('keydown', function(e) {
 });
 
 // DOM 加载完成后初始化
-document.addEventListener("DOMContentLoaded", function () {
+document.addEventListener("DOMContentLoaded", async function () {
+    // 刷新页面时清理所有媒体数据
+    if (typeof MediaStorage !== 'undefined' && MediaStorage.clearAll) {
+        await MediaStorage.clearAll();
+        // 更新存储信息显示
+        if (typeof updateStorageInfo === 'function') {
+            await updateStorageInfo();
+        }
+    }
+    
     // 为所有元素生成唯一 ID
     for (let i = 0; i < allThins.length; i++) {
         allThins[i].id = getOneId(10, 0);
