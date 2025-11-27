@@ -207,13 +207,13 @@ async function prepareDataForExport(muluData) {
     // 创建数据副本
     const exportData = JSON.parse(JSON.stringify(muluData));
     
-    // 遍历并恢复视频数据
+    // 遍历并恢复媒体数据（视频/图片）
     for (let i = 0; i < exportData.length; i++) {
         if (exportData[i].length === 4) {
             let content = exportData[i][3];
-            // 如果内容包含 IndexedDB 视频引用，恢复视频数据
-            if (content && content.includes('data-video-storage-id') && typeof VideoStorage !== 'undefined') {
-                exportData[i][3] = await VideoStorage.processHtmlForExport(content);
+            // 如果内容包含 IndexedDB 媒体引用，恢复媒体数据
+            if (content && content.includes('data-media-storage-id') && typeof MediaStorage !== 'undefined') {
+                exportData[i][3] = await MediaStorage.processHtmlForExport(content);
             }
         }
     }
@@ -371,9 +371,9 @@ async function handleSaveAsWebpage() {
         for (const item of muluData) {
             if (item.length === 4) {
                 let content = item[3];
-                // 如果内容包含 IndexedDB 视频引用，恢复视频数据
-                if (content && content.includes('data-video-storage-id') && typeof VideoStorage !== 'undefined') {
-                    content = await VideoStorage.processHtmlForExport(content);
+                // 如果内容包含 IndexedDB 媒体引用（视频/图片），恢复媒体数据
+                if (content && content.includes('data-media-storage-id') && typeof MediaStorage !== 'undefined') {
+                    content = await MediaStorage.processHtmlForExport(content);
                 }
                 contentMap[item[2]] = content;
             }
@@ -623,13 +623,16 @@ async function handleSaveAsWebpage() {
         }
         
         .content-body img {
-            max-width: 100%;
+            max-width: 800px;
+            max-height: 600px;
+            width: auto;
             height: auto;
             border-radius: 5px;
             display: block;
             margin: 1em auto;
             cursor: pointer;
             transition: transform 0.2s;
+            object-fit: contain;
         }
         
         .content-body img:hover {
@@ -646,23 +649,6 @@ async function handleSaveAsWebpage() {
             border-radius: 5px;
         }
         
-        .content-body .video-container {
-            display: block;
-            text-align: center;
-            margin: 1em 0;
-        }
-        
-        .content-body .video-container video {
-            margin: 0 auto;
-        }
-        
-        .content-body .video-container figcaption {
-            margin-top: 0.5em;
-            font-size: 0.9em;
-            color: #666;
-            font-style: italic;
-            text-align: center;
-        }
         
         .image-viewer-overlay {
             display: none;
@@ -748,6 +734,16 @@ async function handleSaveAsWebpage() {
         .content-body figure {
             margin: 1em 0;
             text-align: center;
+        }
+        
+        .content-body figure img {
+            display: block;
+            margin: 0 auto;
+        }
+        
+        .content-body figure video {
+            display: block;
+            margin: 0 auto;
         }
         
         .content-body figcaption {

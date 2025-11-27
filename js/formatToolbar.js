@@ -1535,16 +1535,16 @@ if (markdownPreview) {
         const range = selection.getRangeAt(0);
         let container = range.startContainer;
         
-        // 检查是否选中了图片或光标在图片/figure 附近
-        // 处理图片删除：同时删除整个 figure
-        const selectedImg = getSelectedImage(range, e.key);
-        if (selectedImg) {
+        // 检查是否选中了媒体元素（图片或视频）或光标在媒体/figure 附近
+        // 处理媒体删除：同时删除整个 figure
+        const selectedMedia = getSelectedMedia(range, e.key);
+        if (selectedMedia.element) {
             e.preventDefault();
-            deleteImage(selectedImg);
+            deleteMediaElement(selectedMedia.element);
             return;
         }
         
-        // 检查是否在 figcaption 中，阻止单独删除图注
+        // 检查是否在 figcaption 中，阻止单独删除图注/注释
         const figcaption = container.nodeType === Node.TEXT_NODE 
             ? container.parentNode.closest('figcaption') 
             : container.closest?.('figcaption');
@@ -1555,9 +1555,10 @@ if (markdownPreview) {
                 const figcaptionText = figcaption.textContent || '';
                 if (!figcaptionText.trim() || range.toString() === figcaptionText) {
                     e.preventDefault();
-                    const img = figure.querySelector('img');
-                    if (img) {
-                        deleteImage(img);
+                    // 查找图片或视频
+                    const media = figure.querySelector('img') || figure.querySelector('video');
+                    if (media) {
+                        deleteMediaElement(media);
                     }
                     return;
                 }

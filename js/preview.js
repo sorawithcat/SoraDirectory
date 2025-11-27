@@ -42,15 +42,25 @@ function syncPreviewToTextarea() {
         // 移除搜索高亮标签，避免被保存到数据中
         let html = removeSearchHighlights(markdownPreview.innerHTML);
         
-        // 使用 IndexedDB 方案：对于有 data-video-storage-id 的视频，
-        // 将 src 替换为占位符（视频数据已保存在 IndexedDB 中）
-        if (html.includes('data-video-storage-id')) {
+        // 使用 IndexedDB 方案：对于有 data-media-storage-id 的媒体（视频/图片），
+        // 将 src 替换为占位符（媒体数据已保存在 IndexedDB 中）
+        if (html.includes('data-media-storage-id')) {
+            // 处理视频
             html = html.replace(
-                /(<video[^>]*data-video-storage-id=["'][^"']+["'][^>]*)\ssrc=["'][^"']*["']([^>]*>)/gi,
+                /(<video[^>]*data-media-storage-id=["'][^"']+["'][^>]*)\ssrc=["'][^"']*["']([^>]*>)/gi,
                 '$1 src="about:blank"$2'
             );
             html = html.replace(
-                /(<video[^>]*)\ssrc=["'][^"']*["']([^>]*data-video-storage-id=["'][^"']+["'][^>]*>)/gi,
+                /(<video[^>]*)\ssrc=["'][^"']*["']([^>]*data-media-storage-id=["'][^"']+["'][^>]*>)/gi,
+                '$1 src="about:blank"$2'
+            );
+            // 处理图片
+            html = html.replace(
+                /(<img[^>]*data-media-storage-id=["'][^"']+["'][^>]*)\ssrc=["'][^"']*["']([^>]*>)/gi,
+                '$1 src="about:blank"$2'
+            );
+            html = html.replace(
+                /(<img[^>]*)\ssrc=["'][^"']*["']([^>]*data-media-storage-id=["'][^"']+["'][^>]*>)/gi,
                 '$1 src="about:blank"$2'
             );
         }
@@ -454,13 +464,31 @@ if (markdownPreview) {
                 const reader = new FileReader();
                 
                 reader.onload = async function(e) {
-                    const imageData = e.target.result;
-                    const caption = await customPrompt('输入图片图注（可选，直接按确定跳过）:', '');
+                    const rawImageData = e.target.result;
+                    const caption = await customPrompt('输入图片图注（可选，直接按确定跳过，取消则不上传）:', '');
+                    
+                    // 用户点击取消，中止上传
+                    if (caption === null) {
+                        return;
+                    }
+                    
+                    // 压缩图片（不影响质量）
+                    const imageData = typeof compressImage === 'function' 
+                        ? await compressImage(rawImageData) 
+                        : rawImageData;
+                    
+                    // 保存压缩后的图片到 IndexedDB
+                    const imageStorageId = typeof MediaStorage !== 'undefined'
+                        ? await MediaStorage.saveImage(imageData)
+                        : null;
                     
                     const img = document.createElement('img');
                     img.src = imageData;
                     img.alt = '粘贴的图片';
                     if (caption) img.title = caption;
+                    if (imageStorageId) {
+                        img.setAttribute('data-media-storage-id', imageStorageId);
+                    }
                     
                     limitImageSize(img);
                     

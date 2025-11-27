@@ -400,12 +400,12 @@ function bindMuluEvents(muluElement, mulufileIndex = -1) {
                 // 加载目录内容 - 始终使用 findMulufileData 确保获取最新数据
                 let content = findMulufileData(muluElement);
                 
-                // 如果内容包含 IndexedDB 视频引用，异步恢复视频数据
-                if (content && content.includes('data-video-storage-id')) {
-                    // 异步恢复视频数据
+                // 如果内容包含 IndexedDB 媒体引用（视频/图片），异步恢复媒体数据
+                if (content && content.includes('data-media-storage-id')) {
+                    // 异步恢复媒体数据
                     (async function() {
-                        if (typeof VideoStorage !== 'undefined') {
-                            content = await VideoStorage.processHtmlForLoad(content);
+                        if (typeof MediaStorage !== 'undefined') {
+                            content = await MediaStorage.processHtmlForLoad(content);
                         }
                         jiedianwords.value = content;
                         isUpdating = true;
@@ -445,11 +445,11 @@ function bindMuluEvents(muluElement, mulufileIndex = -1) {
             // 加载目录内容 - 始终使用 findMulufileData 确保获取最新数据
             let rightClickContent = findMulufileData(muluElement);
             
-            // 如果内容包含 IndexedDB 视频引用，异步恢复视频数据
-            if (rightClickContent && rightClickContent.includes('data-video-storage-id')) {
+            // 如果内容包含 IndexedDB 媒体引用（视频/图片），异步恢复媒体数据
+            if (rightClickContent && rightClickContent.includes('data-media-storage-id')) {
                 (async function() {
-                    if (typeof VideoStorage !== 'undefined') {
-                        rightClickContent = await VideoStorage.processHtmlForLoad(rightClickContent);
+                    if (typeof MediaStorage !== 'undefined') {
+                        rightClickContent = await MediaStorage.processHtmlForLoad(rightClickContent);
                     }
                     jiedianwords.value = rightClickContent;
                     isUpdating = true;

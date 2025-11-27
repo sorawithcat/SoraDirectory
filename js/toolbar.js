@@ -140,11 +140,11 @@ if (topLoadBtn) {
                         
                         let loadedContent = findMulufileData(firstRootMulu);
                         
-                        // 如果内容包含 IndexedDB 视频引用，异步恢复视频数据
-                        if (loadedContent && loadedContent.includes('data-video-storage-id')) {
+                        // 如果内容包含 IndexedDB 媒体引用（视频/图片），异步恢复媒体数据
+                        if (loadedContent && loadedContent.includes('data-media-storage-id')) {
                             (async function() {
-                                if (typeof VideoStorage !== 'undefined') {
-                                    loadedContent = await VideoStorage.processHtmlForLoad(loadedContent);
+                                if (typeof MediaStorage !== 'undefined') {
+                                    loadedContent = await MediaStorage.processHtmlForLoad(loadedContent);
                                 }
                                 jiedianwords.value = loadedContent;
                                 isUpdating = true;

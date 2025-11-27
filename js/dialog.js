@@ -57,7 +57,13 @@ const customDialogClose = document.getElementById('customDialogClose');
 function customAlert(message, title = '提示') {
     return new Promise((resolve) => {
         customDialogTitle.textContent = title;
-        customDialogMessage.textContent = message;
+        // 支持换行：将 \n 转换为 <br>，同时转义 HTML 特殊字符
+        const safeMessage = message
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/\n/g, '<br>');
+        customDialogMessage.innerHTML = safeMessage;
         customDialogInput.style.display = 'none';
         customDialogFooter.innerHTML = '<button class="custom-dialog-btn custom-dialog-btn-primary" id="customDialogOk">确定</button>';
         
@@ -83,17 +89,32 @@ function customAlert(message, title = '提示') {
 /**
  * 自定义 confirm 对话框
  * @param {string} message - 显示的确认消息
+ * @param {string} okText - 确定按钮文本，默认为"确定"
+ * @param {string} cancelText - 取消按钮文本，默认为"取消"
  * @param {string} title - 对话框标题，默认为"确认"
+ * @param {boolean} allowHtml - 是否允许 HTML 内容，默认为 false
  * @returns {Promise<boolean>} - 用户点击确定返回 true，取消返回 false
  */
-function customConfirm(message, title = '确认') {
+function customConfirm(message, okText = '确定', cancelText = '取消', title = '确认', allowHtml = false) {
     return new Promise((resolve) => {
         customDialogTitle.textContent = title;
-        customDialogMessage.textContent = message;
+        let displayMessage;
+        if (allowHtml) {
+            // 允许 HTML，仅转换换行
+            displayMessage = message.replace(/\n/g, '<br>');
+        } else {
+            // 转义 HTML 特殊字符
+            displayMessage = message
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/\n/g, '<br>');
+        }
+        customDialogMessage.innerHTML = displayMessage;
         customDialogInput.style.display = 'none';
         customDialogFooter.innerHTML = 
-            '<button class="custom-dialog-btn custom-dialog-btn-secondary" id="customDialogCancel">取消</button>' +
-            '<button class="custom-dialog-btn custom-dialog-btn-primary" id="customDialogOk">确定</button>';
+            `<button class="custom-dialog-btn custom-dialog-btn-secondary" id="customDialogCancel">${cancelText}</button>` +
+            `<button class="custom-dialog-btn custom-dialog-btn-primary" id="customDialogOk">${okText}</button>`;
         
         const okBtn = document.getElementById('customDialogOk');
         const cancelBtn = document.getElementById('customDialogCancel');

@@ -6,8 +6,11 @@
   "scripts": {
     "install-deps": "npm install"
   },
-  "dependencies": {},
-  "devDependencies": {},
+  "devDependencies": {
+    "@ffmpeg/core": "^0.12.6",
+    "@ffmpeg/ffmpeg": "^0.12.10",
+    "@ffmpeg/util": "^0.12.1"
+  },
   "keywords": [
     "markdown",
     "editor",
@@ -16,4 +19,3 @@
   "author": "",
   "license": "MIT"
 }
-
