@@ -165,17 +165,46 @@ async function openFileWithFSAPI() {
         });
         
         const file = await fileHandle.getFile();
-        const content = await file.text();
         
-        // 解析文件内容（可能是 Promise，处理加密文件）
-        let parsedData = parseFileContent(content, file.name);
-        if (parsedData instanceof Promise) {
-            parsedData = await parsedData;
+        // 先检查缓存（仅对非加密文件使用缓存）
+        let parsedData = null;
+        let fromCache = false;
+        
+        // 检查是否是加密文件（需要先读取内容判断）
+        const content = await file.text();
+        const isEncrypted = isEncryptedContent(content);
+        
+        if (!isEncrypted && typeof FileCache !== 'undefined') {
+            // 尝试从缓存获取
+            parsedData = await FileCache.get(file);
+            if (parsedData) {
+                fromCache = true;
+                console.log('FileCache: 从缓存加载文件', file.name);
+            }
         }
         
+        // 如果缓存中没有，则解析文件内容
         if (!parsedData) {
-            // 用户取消解密
-            return false;
+            // 解析文件内容（可能是 Promise，处理加密文件）
+            parsedData = parseFileContent(content, file.name);
+            if (parsedData instanceof Promise) {
+                parsedData = await parsedData;
+            }
+            
+            if (!parsedData) {
+                // 用户取消解密
+                return false;
+            }
+            
+            // 将解析结果保存到缓存（仅对非加密文件）
+            if (!isEncrypted && typeof FileCache !== 'undefined' && Array.isArray(parsedData)) {
+                try {
+                    await FileCache.set(file, parsedData);
+                    console.log('FileCache: 已缓存文件', file.name);
+                } catch (err) {
+                    console.warn('FileCache: 缓存保存失败', err);
+                }
+            }
         }
         
         // 检查是否是差异补丁文件
@@ -260,7 +289,8 @@ async function openFileWithFSAPI() {
             bigbox.style.display = "block";
             wordsbox.style.display = "block";
             
-            showToast(`已合并：新增 ${mergeResult.added} 个，更新 ${mergeResult.updated} 个目录`, 'success', 3000);
+            const cacheMsg = fromCache ? '（从缓存快速加载）' : '';
+            showToast(`已合并：新增 ${mergeResult.added} 个，更新 ${mergeResult.updated} 个目录${cacheMsg}`, 'success', 3000);
             return true;
         }
         
@@ -308,7 +338,8 @@ async function openFileWithFSAPI() {
             fileNameInput.value = nameWithoutExt;
         }
         
-        showToast(`已打开：${file.name}（支持直接保存）`, 'success', 3000);
+        const cacheMsg = fromCache ? '（从缓存快速加载）' : '';
+        showToast(`已打开：${file.name}${cacheMsg}（支持直接保存）`, 'success', 3000);
         return true;
         
     } catch (err) {
@@ -1842,25 +1873,220 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
         return div.innerHTML;
     }
     
-    // 生成内容映射（异步，支持从 IndexedDB 恢复视频数据）
-    async function generateContentMap(muluData) {
-        const contentMap = {};
+    // 生成内容脚本标签（每个目录一个独立的 script 标签，按需加载）
+    // 完全跳过媒体数据处理，只创建占位符，立即返回
+    function generateContentScripts(muluData) {
+        let contentScripts = '';
+        let mediaDataScripts = '';
+        const mediaDataMap = {};
+        
         for (const item of muluData) {
             if (item.length === 4) {
+                const dirId = item[2];
                 let content = item[3];
-                // 如果内容包含 IndexedDB 媒体引用（视频/图片），恢复媒体数据
-                if (content && content.includes('data-media-storage-id') && typeof MediaStorage !== 'undefined') {
-                    content = await MediaStorage.processHtmlForExport(content);
+                
+                if (!content) {
+                    // 空内容直接存储
+                    const escapedContent = JSON.stringify(content).replace(/<\/script>/gi, '<\\/script>');
+                    contentScripts += `<script type="text/plain" id="content_${dirId}">${escapedContent}</script>\n`;
+                    continue;
                 }
-                contentMap[item[2]] = content;
+                
+                // 检查是否包含媒体引用
+                if (content.includes('data-media-storage-id') && typeof MediaStorage !== 'undefined') {
+                    // 提取媒体数据并创建占位符（不等待媒体数据处理）
+                    const processed = processContentForLazyLoad(content, dirId, mediaDataMap);
+                    content = processed.html;
+                }
+                
+                // 每个目录的内容存储在单独的 script 标签中
+                const escapedContent = JSON.stringify(content).replace(/<\/script>/gi, '<\\/script>');
+                contentScripts += `<script type="text/plain" id="content_${dirId}">${escapedContent}</script>\n`;
             }
         }
-        return contentMap;
+        
+        // 立即返回，完全不等待媒体处理
+        // 媒体数据将在导出的 HTML 中按需加载
+        const escapedMediaData = JSON.stringify(mediaDataMap).replace(/<\/script>/gi, '<\\/script>');
+        mediaDataScripts = `<script type="text/plain" id="mediaData">${escapedMediaData}</script>\n`;
+        
+        return { contentScripts, mediaDataScripts };
     }
+    
+    // 处理内容，提取媒体数据并创建占位符（所有媒体数据完全在后台处理）
+    function processContentForLazyLoad(html, dirId, mediaDataMap) {
+        let result = html;
+        let mediaIndex = 0;
+        
+        // 批量收集所有需要处理的媒体 ID，然后一次性处理
+        const mediaIdsToProcess = [];
+        const mediaInfoMap = new Map(); // 存储媒体ID到占位符信息的映射
+        
+        // 处理视频 - 先收集，不立即处理数据
+        if (result.includes('data-media-storage-id')) {
+            const videoRegex = /<video([^>]*)data-media-storage-id=["']([^"']+)["']([^>]*)>/gi;
+            let match;
+            const videoReplacements = [];
+            
+            while ((match = videoRegex.exec(result)) !== null) {
+                const fullMatch = match[0];
+                const mediaId = match[2];
+                const placeholderId = `media_${dirId}_${mediaIndex++}`;
+                
+                // 先创建占位符，数据稍后批量处理
+                const placeholder = `<video class="lazy-media" data-placeholder-id="${placeholderId}" data-loading="true" style="display: block; margin: 1em auto; max-width: 640px; max-height: 360px; background: #f0f0f0; border-radius: 5px; min-width: 320px; min-height: 180px;">
+                    <div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #999; font-size: 14px;">加载中...</div>
+                </video>`;
+                videoReplacements.push({ from: fullMatch, to: placeholder });
+                
+                // 记录需要处理的媒体
+                mediaIdsToProcess.push({ mediaId, placeholderId, type: 'video', originalTag: fullMatch });
+            }
+            
+            for (const { from, to } of videoReplacements) {
+                result = result.replace(from, to);
+            }
+        }
+        
+        // 处理图片 - 先收集，不立即处理数据
+        if (result.includes('data-media-storage-id')) {
+            const imgRegex = /<img([^>]*)data-media-storage-id=["']([^"']+)["']([^>]*)>/gi;
+            let match;
+            const imgReplacements = [];
+            
+            while ((match = imgRegex.exec(result)) !== null) {
+                const fullMatch = match[0];
+                const mediaId = match[2];
+                const placeholderId = `media_${dirId}_${mediaIndex++}`;
+                
+                // 提取 alt 和 title 属性
+                const altMatch = fullMatch.match(/\salt=["']([^"']*)["']/);
+                const titleMatch = fullMatch.match(/\stitle=["']([^"']*)["']/);
+                const alt = altMatch ? altMatch[1] : '';
+                const title = titleMatch ? titleMatch[1] : '';
+                
+                // 先创建占位符
+                const placeholder = `<img class="lazy-media" data-placeholder-id="${placeholderId}" data-loading="true" 
+                    src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='300'%3E%3Crect fill='%23f0f0f0' width='400' height='300'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.3em' fill='%23999' font-size='14'%3E加载中...%3C/text%3E%3C/svg%3E" 
+                    ${alt ? `alt="${escapeHtml(alt)}"` : ''} ${title ? `title="${escapeHtml(title)}"` : ''}
+                    style="max-width: 800px; max-height: 600px; width: auto; height: auto; border-radius: 5px; display: block; margin: 1em auto; cursor: pointer;">`;
+                imgReplacements.push({ from: fullMatch, to: placeholder });
+                
+                // 记录需要处理的媒体
+                mediaIdsToProcess.push({ mediaId, placeholderId, type: 'image', originalTag: fullMatch, alt, title });
+            }
+            
+            for (const { from, to } of imgReplacements) {
+                result = result.replace(from, to);
+            }
+        }
+        
+        // 处理压缩文件附件 - 先收集，不立即处理数据
+        if (result.includes('data-media-storage-id')) {
+            const archiveRegex = /<div([^>]*)class=["']archive-attachment["']([^>]*)data-media-storage-id=["']([^"']+)["']([^>]*)>/gi;
+            const archiveRegex2 = /<div([^>]*)data-media-storage-id=["']([^"']+)["']([^>]*)class=["']archive-attachment["']([^>]*)>/gi;
+            
+            for (const regex of [archiveRegex, archiveRegex2]) {
+                let match;
+                const archiveReplacements = [];
+                
+                while ((match = regex.exec(result)) !== null) {
+                    const fullMatch = match[0];
+                    const mediaId = regex === archiveRegex ? match[3] : match[2];
+                    const placeholderId = `archive_${dirId}_${mediaIndex++}`;
+                    
+                    // 提取压缩包信息
+                    const nameMatch = fullMatch.match(/\sdata-archive-name=["']([^"']*)["']/);
+                    const sizeMatch = fullMatch.match(/\sdata-archive-size=["']([^"']*)["']/);
+                    const archiveName = nameMatch ? nameMatch[1] : 'archive.zip';
+                    const archiveSize = sizeMatch ? sizeMatch[1] : '0';
+                    
+                    // 创建占位符（保持原有样式，但不包含数据URL）
+                    let newTag = fullMatch;
+                    newTag = newTag.replace(/\sdata-media-storage-id=["'][^"']*["']/, '');
+                    newTag = newTag.replace(/\sdata-export-url=["'][^"']*["']/, '');
+                    newTag = newTag.replace(/>$/, ` data-placeholder-id="${placeholderId}">`);
+                    archiveReplacements.push({ from: fullMatch, to: newTag });
+                    
+                    // 记录需要处理的媒体（延迟处理）
+                    mediaIdsToProcess.push({ 
+                        mediaId, 
+                        placeholderId, 
+                        type: 'archive', 
+                        name: archiveName, 
+                        size: archiveSize,
+                        originalTag: fullMatch 
+                    });
+                }
+                
+                for (const { from, to } of archiveReplacements) {
+                    result = result.replace(from, to);
+                }
+            }
+        }
+        
+        // 所有媒体数据完全在后台异步处理，不阻塞导出
+        // 将处理任务添加到队列，立即返回，不等待
+        if (mediaIdsToProcess.length > 0) {
+            // 完全异步处理，不等待任何结果
+            mediaIdsToProcess.forEach(({ mediaId, placeholderId, type, originalTag, alt, title, name, size }) => {
+                // 后台异步处理，完全不阻塞
+                (async () => {
+                    try {
+                        let dataUrl = null;
+                        
+                        if (type === 'video') {
+                            const tempHtml = `<video data-media-storage-id="${mediaId}"></video>`;
+                            const processed = await MediaStorage.processHtmlForExport(tempHtml);
+                            const srcMatch = processed.match(/\ssrc=["']([^"']+)["']/);
+                            if (srcMatch) dataUrl = srcMatch[1];
+                        } else if (type === 'image') {
+                            const tempHtml = `<img data-media-storage-id="${mediaId}">`;
+                            const processed = await MediaStorage.processHtmlForExport(tempHtml);
+                            const srcMatch = processed.match(/\ssrc=["']([^"']+)["']/);
+                            if (srcMatch) dataUrl = srcMatch[1];
+                        } else if (type === 'archive') {
+                            const tempHtml = `<div class="archive-attachment" data-media-storage-id="${mediaId}"></div>`;
+                            const processed = await MediaStorage.processHtmlForExport(tempHtml);
+                            const urlMatch = processed.match(/\sdata-export-url=["']([^"']+)["']/);
+                            if (urlMatch) dataUrl = urlMatch[1];
+                        }
+                        
+                        if (dataUrl) {
+                            if (type === 'archive') {
+                                mediaDataMap[placeholderId] = {
+                                    type: 'archive',
+                                    data: dataUrl,
+                                    name: name,
+                                    size: size,
+                                    originalTag: originalTag
+                                };
+                            } else {
+                                mediaDataMap[placeholderId] = {
+                                    type: type,
+                                    data: dataUrl,
+                                    originalTag: originalTag
+                                };
+                            }
+                        }
+                    } catch (err) {
+                        console.error(`后台处理${type}数据失败:`, err);
+                    }
+                })();
+            });
+        }
+        
+        return { html: result };
+    }
+    
+    // 显示导出进度
+    showToast('正在生成网页...', 'info', 2000);
     
     const directoryTree = buildDirectoryTree(mulufile);
     const directoryHTML = generateDirectoryHTML(directoryTree);
-    const contentMap = await generateContentMap(mulufile);
+    
+    // 立即生成 HTML，完全不等待媒体处理
+    const { contentScripts, mediaDataScripts } = generateContentScripts(mulufile);
     
     // 获取第一个目录的ID作为默认选中
     const firstDirId = mulufile.length > 0 && mulufile[0].length === 4 ? mulufile[0][2] : '';
@@ -2273,6 +2499,77 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
             padding: 50px 20px;
         }
         
+        .archive-attachment {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 16px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            border: 1px solid #ced4da;
+            border-radius: 8px;
+            margin: 8px 0;
+            max-width: 400px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            transition: all 0.2s ease;
+        }
+        
+        .archive-attachment:hover {
+            border-color: #0066cc;
+            box-shadow: 0 4px 8px rgba(0,102,204,0.15);
+        }
+        
+        .archive-icon {
+            font-size: 28px;
+            flex-shrink: 0;
+        }
+        
+        .archive-info {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        
+        .archive-name {
+            font-weight: 600;
+            color: #333;
+            font-size: 14px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .archive-size {
+            font-size: 12px;
+            color: #666;
+        }
+        
+        .archive-download-btn {
+            padding: 6px 12px;
+            background-color: #0066cc;
+            color: #fff;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+            flex-shrink: 0;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        
+        .archive-download-btn:hover {
+            background-color: #0052a3;
+            transform: translateY(-1px);
+        }
+        
+        .archive-delete-btn {
+            display: none;
+        }
+        
         @media (max-width: 768px) {
             body {
                 flex-direction: column;
@@ -2313,8 +2610,223 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
         <img id="imageViewerImg" src="" alt="放大查看">
     </div>
     
+    ${contentScripts}
+    ${mediaDataScripts}
     <script>
-        const contentMap = ${JSON.stringify(contentMap)};
+        const contentCache = {};
+        let mediaDataMap = {};
+        
+        (function() {
+            const mediaDataScript = document.getElementById('mediaData');
+            if (mediaDataScript) {
+                try {
+                    mediaDataMap = JSON.parse(mediaDataScript.textContent);
+                } catch (e) {
+                    console.error('解析媒体数据失败:', e);
+                }
+            }
+        })();
+        
+        function getContent(dirId) {
+            if (contentCache[dirId] !== undefined) {
+                return contentCache[dirId];
+            }
+            const scriptEl = document.getElementById('content_' + dirId);
+            if (scriptEl) {
+                try {
+                    contentCache[dirId] = JSON.parse(scriptEl.textContent);
+                    return contentCache[dirId];
+                } catch (e) {
+                    console.error('解析内容失败:', dirId, e);
+                    return '';
+                }
+            }
+            return '';
+        }
+        
+        async function loadLazyMedia() {
+            const contentBody = document.getElementById('contentBody');
+            if (!contentBody) return;
+            
+            const lazyMedias = contentBody.querySelectorAll('.lazy-media[data-loading="true"]');
+            
+            const loadPromises = Array.from(lazyMedias).map(async (media) => {
+                const placeholderId = media.getAttribute('data-placeholder-id');
+                if (!placeholderId || !mediaDataMap[placeholderId]) return;
+                
+                const mediaInfo = mediaDataMap[placeholderId];
+                
+                let dataUrl = mediaInfo.data;
+                
+                if (!dataUrl && mediaInfo.mediaId) {
+                    try {
+                        const dbName = 'SoraDirectoryMediaDB';
+                        const dbVersion = 1;
+                        const storeName = 'media';
+                        
+                        const db = await new Promise((resolve, reject) => {
+                            const request = indexedDB.open(dbName, dbVersion);
+                            request.onsuccess = () => resolve(request.result);
+                            request.onerror = () => reject(request.error);
+                            request.onupgradeneeded = () => {
+                                const db = request.result;
+                                if (!db.objectStoreNames.contains(storeName)) {
+                                    db.createObjectStore(storeName, { keyPath: 'id' });
+                                }
+                            };
+                        });
+                        
+                        const record = await new Promise((resolve, reject) => {
+                            const transaction = db.transaction([storeName], 'readonly');
+                            const store = transaction.objectStore(storeName);
+                            const request = store.get(mediaInfo.mediaId);
+                            request.onsuccess = () => resolve(request.result);
+                            request.onerror = () => reject(request.error);
+                        });
+                        
+                        if (record) {
+                            if (record.chunked && record.chunks) {
+                                const blobParts = [];
+                                for (const chunkId of record.chunks) {
+                                    const chunkRecord = await new Promise((resolve, reject) => {
+                                        const transaction = db.transaction([storeName], 'readonly');
+                                        const store = transaction.objectStore(storeName);
+                                        const request = store.get(chunkId);
+                                        request.onsuccess = () => resolve(request.result);
+                                        request.onerror = () => reject(request.error);
+                                    });
+                                    if (chunkRecord && chunkRecord.data) {
+                                        blobParts.push(chunkRecord.data);
+                                    }
+                                }
+                                const blob = new Blob(blobParts, { type: record.mimeType || 'application/octet-stream' });
+                                dataUrl = await new Promise((resolve) => {
+                                    const reader = new FileReader();
+                                    reader.onloadend = () => resolve(reader.result);
+                                    reader.readAsDataURL(blob);
+                                });
+                            } else {
+                                dataUrl = record.data;
+                            }
+                        }
+                    } catch (err) {
+                        console.error('从 IndexedDB 加载媒体失败:', err);
+                    }
+                }
+                
+                if (!dataUrl) return;
+                
+                if (mediaInfo.type === 'image') {
+                    return new Promise((resolve) => {
+                        const img = new Image();
+                        img.onload = () => {
+                            media.src = dataUrl;
+                            media.removeAttribute('data-loading');
+                            media.classList.remove('lazy-media');
+                            resolve();
+                        };
+                        img.onerror = () => resolve();
+                        img.src = dataUrl;
+                    });
+                } else if (mediaInfo.type === 'video') {
+                    return new Promise((resolve) => {
+                        const video = document.createElement('video');
+                        video.controls = true;
+                        video.preload = 'metadata';
+                        video.style.cssText = 'display: block; margin: 1em auto; max-width: 640px; max-height: 360px; width: auto; height: auto; border-radius: 5px;';
+                        
+                        const originalTag = mediaInfo.originalTag;
+                        if (originalTag && originalTag.includes('title=')) {
+                            const titleMatch = originalTag.match(/\stitle=["']([^"']*)["']/);
+                            if (titleMatch) video.title = titleMatch[1];
+                        }
+                        
+                        video.onloadedmetadata = () => {
+                            if (media.parentNode) {
+                                media.parentNode.replaceChild(video, media);
+                            }
+                            resolve();
+                        };
+                        video.onerror = () => resolve();
+                        video.src = dataUrl;
+                    });
+                }
+            });
+            
+            Promise.all(loadPromises).catch(err => {
+                console.error('加载媒体时出错:', err);
+            });
+        }
+        
+        async function loadArchiveData(placeholderId) {
+            if (!mediaDataMap[placeholderId] || mediaDataMap[placeholderId].type !== 'archive') {
+                return null;
+            }
+            
+            const archiveInfo = mediaDataMap[placeholderId];
+            
+            if (archiveInfo.data) {
+                return archiveInfo.data;
+            }
+            
+            if (archiveInfo.mediaId) {
+                try {
+                    const dbName = 'SoraDirectoryMediaDB';
+                    const dbVersion = 1;
+                    const storeName = 'media';
+                    
+                    const db = await new Promise((resolve, reject) => {
+                        const request = indexedDB.open(dbName, dbVersion);
+                        request.onsuccess = () => resolve(request.result);
+                        request.onerror = () => reject(request.error);
+                        request.onupgradeneeded = () => {
+                            const db = request.result;
+                            if (!db.objectStoreNames.contains(storeName)) {
+                                db.createObjectStore(storeName, { keyPath: 'id' });
+                            }
+                        };
+                    });
+                    
+                    const record = await new Promise((resolve, reject) => {
+                        const transaction = db.transaction([storeName], 'readonly');
+                        const store = transaction.objectStore(storeName);
+                        const request = store.get(archiveInfo.mediaId);
+                        request.onsuccess = () => resolve(request.result);
+                        request.onerror = () => reject(request.error);
+                    });
+                    
+                    if (record) {
+                        if (record.chunked && record.chunks) {
+                            const blobParts = [];
+                            for (const chunkId of record.chunks) {
+                                const chunkRecord = await new Promise((resolve, reject) => {
+                                    const transaction = db.transaction([storeName], 'readonly');
+                                    const store = transaction.objectStore(storeName);
+                                    const request = store.get(chunkId);
+                                    request.onsuccess = () => resolve(request.result);
+                                    request.onerror = () => reject(request.error);
+                                });
+                                if (chunkRecord && chunkRecord.data) {
+                                    blobParts.push(chunkRecord.data);
+                                }
+                            }
+                            const blob = new Blob(blobParts, { type: record.mimeType || 'application/octet-stream' });
+                            return await new Promise((resolve) => {
+                                const reader = new FileReader();
+                                reader.onloadend = () => resolve(reader.result);
+                                reader.readAsDataURL(blob);
+                            });
+                        } else {
+                            return record.data;
+                        }
+                    }
+                } catch (err) {
+                    console.error('从 IndexedDB 加载压缩包失败:', err);
+                }
+            }
+            
+            return null;
+        }
         
         const nameMap = {};
         document.querySelectorAll('.mulu').forEach(el => {
@@ -2422,6 +2934,54 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
             });
         }
         
+        async function initArchiveDownloads() {
+            const contentBody = document.getElementById('contentBody');
+            if (!contentBody) return;
+            
+            const archives = contentBody.querySelectorAll('.archive-attachment');
+            archives.forEach(archive => {
+                if (archive.dataset.downloadInit) return;
+                archive.dataset.downloadInit = 'true';
+                
+                const downloadBtn = archive.querySelector('.archive-download-btn');
+                if (!downloadBtn) return;
+                
+                downloadBtn.addEventListener('click', async function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    
+                    const placeholderId = archive.getAttribute('data-placeholder-id');
+                    const fileName = archive.dataset.archiveName || 'download';
+                    
+                    const originalText = downloadBtn.textContent;
+                    downloadBtn.textContent = '加载中...';
+                    downloadBtn.disabled = true;
+                    
+                    try {
+                        const dataUrl = await loadArchiveData(placeholderId);
+                        
+                        if (!dataUrl) {
+                            alert('文件数据不可用');
+                            downloadBtn.textContent = originalText;
+                            downloadBtn.disabled = false;
+                            return;
+                        }
+                        
+                        const a = document.createElement('a');
+                        a.href = dataUrl;
+                        a.download = fileName;
+                        a.click();
+                    } catch (err) {
+                        console.error('加载压缩包失败:', err);
+                        alert('加载文件失败，请重试');
+                    } finally {
+                        downloadBtn.textContent = originalText;
+                        downloadBtn.disabled = false;
+                    }
+                });
+            });
+        }
+        
         imageViewerClose.addEventListener('click', () => {
             imageViewer.classList.remove('active');
         });
@@ -2454,7 +3014,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                 }
             }
             
-            const content = contentMap[dirId] || '';
+            const content = getContent(dirId) || '';
             const title = nameMap[dirId] || '未命名';
             
             document.getElementById('contentTitle').textContent = title;
@@ -2462,6 +3022,11 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
             
             initCodeBlocks();
             initImageViewer();
+            initArchiveDownloads();
+            
+            setTimeout(() => {
+                loadLazyMedia();
+            }, 100);
         }
         
         function toggleDirectory(dirId, event) {
@@ -2516,6 +3081,9 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
             }
             return null;
         }
+        
+        window.selectDirectory = selectDirectory;
+        window.toggleDirectory = toggleDirectory;
         
         ${firstDirId ? `selectDirectory('${firstDirId}', false);` : ''}
     </script>
@@ -2590,1020 +3158,4 @@ function generateEncryptedHtmlWrapper(title, encryptedHtml) {
     </script>
 </body>
 </html>`;
-}
-
-/**
- * 导出为 Word 文档
- * 目录放在最前面，然后是内容
- */
-async function handleExportToWord() {
-    // 检查 docx 库是否可用
-    if (typeof docx === 'undefined') {
-        showToast('Word 导出功能加载失败，请检查网络连接', 'error', 3000);
-        return;
-    }
-    
-    // 从输入框获取文件名
-    let baseName = (fileNameInput && fileNameInput.value.trim()) || "soralist";
-    baseName = baseName.replace(/\.(json|txt|xml|csv|html|docx)$/i, '');
-    let filename = `${baseName}.docx`;
-    
-    // 解构 docx 库的组件
-    const { Document, Packer, Paragraph, TextRun, HeadingLevel, TableOfContents, 
-            Table, TableRow, TableCell, WidthType, BorderStyle, 
-            AlignmentType, convertInchesToTwip, PageBreak, ExternalHyperlink,
-            ImageRun, HorizontalRule, Bookmark } = docx;
-    
-    // 构建目录树结构
-    function buildDirectoryTree(muluData) {
-        const tree = [];
-        const idMap = {};
-        
-        // 创建ID到数据的映射
-        muluData.forEach((item, index) => {
-            if (item.length === 4) {
-                idMap[item[2]] = {
-                    parentId: item[0],
-                    name: item[1],
-                    id: item[2],
-                    content: item[3],
-                    children: [],
-                    order: index
-                };
-            }
-        });
-        
-        // 构建树形结构
-        Object.values(idMap).forEach(item => {
-            if (item.parentId === 'mulu') {
-                tree.push(item);
-            } else if (idMap[item.parentId]) {
-                idMap[item.parentId].children.push(item);
-            }
-        });
-        
-        return tree;
-    }
-    
-    // 获取所有目录的扁平列表（按树形顺序）
-    function flattenTree(tree, level = 0) {
-        const result = [];
-        tree.forEach(item => {
-            result.push({ ...item, level });
-            if (item.children && item.children.length > 0) {
-                result.push(...flattenTree(item.children, level + 1));
-            }
-        });
-        return result;
-    }
-    
-    // 将 base64 图片数据转换为 Uint8Array
-    function base64ToUint8Array(base64) {
-        // 移除 data URL 前缀
-        const base64Data = base64.replace(/^data:image\/[a-z]+;base64,/, '');
-        const binaryString = atob(base64Data);
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
-        }
-        return bytes;
-    }
-    
-    // 从 URL 获取图片数据
-    async function fetchImageAsUint8Array(url) {
-        try {
-            const response = await fetch(url);
-            const blob = await response.blob();
-            const arrayBuffer = await blob.arrayBuffer();
-            return new Uint8Array(arrayBuffer);
-        } catch (error) {
-            console.error('获取图片失败:', url, error);
-            return null;
-        }
-    }
-    
-    // 收集所有图片并预加载
-    async function collectAndLoadImages(html) {
-        const imageMap = new Map();
-        const tempDiv = document.createElement('div');
-        tempDiv.innerHTML = html;
-        
-        const images = tempDiv.querySelectorAll('img');
-        const loadPromises = [];
-        
-        for (const img of images) {
-            const src = img.getAttribute('src');
-            if (!src || imageMap.has(src)) continue;
-            
-            if (src.startsWith('data:image/')) {
-                // base64 图片
-                try {
-                    const imageData = base64ToUint8Array(src);
-                    imageMap.set(src, { data: imageData, width: img.naturalWidth || 400, height: img.naturalHeight || 300 });
-                } catch (e) {
-                    console.error('解析 base64 图片失败:', e);
-                }
-            } else {
-                // URL 图片
-                loadPromises.push(
-                    fetchImageAsUint8Array(src).then(data => {
-                        if (data) {
-                            imageMap.set(src, { data: data, width: img.naturalWidth || 400, height: img.naturalHeight || 300 });
-                        }
-                    })
-                );
-            }
-        }
-        
-        await Promise.all(loadPromises);
-        return imageMap;
-    }
-    
-    // 将 HTML 内容转换为 Word 段落
-    async function htmlToWordParagraphs(html, imageMap, baseLevel = 0) {
-        const paragraphs = [];
-        
-        if (!html || html.trim() === '') {
-            paragraphs.push(new Paragraph({ text: '' }));
-            return paragraphs;
-        }
-        
-        // 创建临时 DOM 解析 HTML
-        const tempDiv = document.createElement('div');
-        tempDiv.innerHTML = html;
-        
-        // 解析 CSS 颜色值为十六进制
-        function parseColor(color) {
-            if (!color) return null;
-            // 已经是十六进制
-            if (color.startsWith('#')) {
-                return color.replace('#', '').toUpperCase();
-            }
-            // rgb/rgba 格式
-            const rgbMatch = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-            if (rgbMatch) {
-                const r = parseInt(rgbMatch[1]).toString(16).padStart(2, '0');
-                const g = parseInt(rgbMatch[2]).toString(16).padStart(2, '0');
-                const b = parseInt(rgbMatch[3]).toString(16).padStart(2, '0');
-                return (r + g + b).toUpperCase();
-            }
-            // 命名颜色映射
-            const colorMap = {
-                'red': 'FF0000', 'blue': '0000FF', 'green': '008000', 'yellow': 'FFFF00',
-                'orange': 'FFA500', 'purple': '800080', 'pink': 'FFC0CB', 'black': '000000',
-                'white': 'FFFFFF', 'gray': '808080', 'grey': '808080', 'cyan': '00FFFF',
-                'magenta': 'FF00FF', 'brown': 'A52A2A', 'navy': '000080', 'teal': '008080'
-            };
-            return colorMap[color.toLowerCase()] || null;
-        }
-        
-        // 递归处理 DOM 节点
-        function processNode(node, currentStyles = {}) {
-            const textRuns = [];
-            
-            if (node.nodeType === Node.TEXT_NODE) {
-                const text = node.textContent;
-                if (text.trim() || text.includes(' ')) {
-                    const runOptions = {
-                        text: text,
-                        bold: currentStyles.bold || false,
-                        italics: currentStyles.italic || false,
-                        underline: currentStyles.underline ? {} : undefined,
-                        strike: currentStyles.strikethrough || false,
-                        highlight: currentStyles.highlight ? 'yellow' : undefined,
-                        superScript: currentStyles.superscript || false,
-                        subScript: currentStyles.subscript || false
-                    };
-                    // 添加字体颜色
-                    if (currentStyles.color) {
-                        runOptions.color = currentStyles.color;
-                    }
-                    // 添加字体大小
-                    if (currentStyles.fontSize) {
-                        runOptions.size = currentStyles.fontSize;
-                    }
-                    // 行内代码样式
-                    if (currentStyles.code) {
-                        runOptions.font = { name: 'Consolas' };
-                        runOptions.shading = { fill: 'F0F0F0' };
-                    }
-                    textRuns.push(new TextRun(runOptions));
-                }
-            } else if (node.nodeType === Node.ELEMENT_NODE) {
-                const tagName = node.tagName.toLowerCase();
-                const newStyles = { ...currentStyles };
-                
-                // 从 style 属性解析样式
-                const style = node.style;
-                if (style) {
-                    if (style.color) {
-                        const parsedColor = parseColor(style.color);
-                        if (parsedColor) newStyles.color = parsedColor;
-                    }
-                    if (style.backgroundColor && style.backgroundColor !== 'transparent') {
-                        newStyles.highlight = true;
-                    }
-                    if (style.fontSize) {
-                        // 转换 px 到 half-points (1pt = 2 half-points)
-                        const pxMatch = style.fontSize.match(/(\d+)px/);
-                        if (pxMatch) {
-                            newStyles.fontSize = parseInt(pxMatch[1]) * 1.5; // 近似转换
-                        }
-                    }
-                }
-                
-                // 更新样式
-                switch (tagName) {
-                    case 'strong':
-                    case 'b':
-                        newStyles.bold = true;
-                        break;
-                    case 'em':
-                    case 'i':
-                        newStyles.italic = true;
-                        break;
-                    case 'u':
-                        newStyles.underline = true;
-                        break;
-                    case 's':
-                    case 'del':
-                    case 'strike':
-                        newStyles.strikethrough = true;
-                        break;
-                    case 'mark':
-                        newStyles.highlight = true;
-                        break;
-                    case 'sup':
-                        newStyles.superscript = true;
-                        break;
-                    case 'sub':
-                        newStyles.subscript = true;
-                        break;
-                    case 'code':
-                        // 行内代码（不在 pre 内）
-                        newStyles.code = true;
-                        break;
-                    case 'spoiler':
-                        // spoiler 标签显示为灰色背景
-                        newStyles.highlight = true;
-                        break;
-                    case 'a':
-                        // 链接样式：蓝色下划线
-                        newStyles.color = '0066CC';
-                        newStyles.underline = true;
-                        break;
-                    case 'span':
-                        // span 的样式已在上面通过 style 属性处理
-                        break;
-                    case 'br':
-                        // 换行
-                        textRuns.push(new TextRun({ break: 1 }));
-                        return textRuns;
-                }
-                
-                // 处理子节点
-                for (const child of node.childNodes) {
-                    textRuns.push(...processNode(child, newStyles));
-                }
-            }
-            
-            return textRuns;
-        }
-        
-        // 处理块级元素
-        function processBlockElement(element) {
-            const tagName = element.tagName ? element.tagName.toLowerCase() : '';
-            
-            switch (tagName) {
-                case 'h1':
-                    paragraphs.push(new Paragraph({
-                        children: processNode(element),
-                        heading: HeadingLevel.HEADING_1,
-                        spacing: { before: 400, after: 200 }
-                    }));
-                    break;
-                case 'h2':
-                    paragraphs.push(new Paragraph({
-                        children: processNode(element),
-                        heading: HeadingLevel.HEADING_2,
-                        spacing: { before: 350, after: 150 }
-                    }));
-                    break;
-                case 'h3':
-                    paragraphs.push(new Paragraph({
-                        children: processNode(element),
-                        heading: HeadingLevel.HEADING_3,
-                        spacing: { before: 300, after: 100 }
-                    }));
-                    break;
-                case 'h4':
-                    paragraphs.push(new Paragraph({
-                        children: processNode(element),
-                        heading: HeadingLevel.HEADING_4,
-                        spacing: { before: 250, after: 100 }
-                    }));
-                    break;
-                case 'h5':
-                    paragraphs.push(new Paragraph({
-                        children: processNode(element),
-                        heading: HeadingLevel.HEADING_5,
-                        spacing: { before: 200, after: 100 }
-                    }));
-                    break;
-                case 'h6':
-                    paragraphs.push(new Paragraph({
-                        children: processNode(element),
-                        heading: HeadingLevel.HEADING_6,
-                        spacing: { before: 200, after: 100 }
-                    }));
-                    break;
-                case 'p':
-                    // 检查段落中是否包含图片
-                    const pImages = element.querySelectorAll('img');
-                    if (pImages.length > 0) {
-                        // 如果包含图片，需要分开处理文本和图片
-                        // 先处理图片之前的文本
-                        let currentNode = element.firstChild;
-                        let textRuns = [];
-                        
-                        while (currentNode) {
-                            if (currentNode.nodeType === Node.ELEMENT_NODE && currentNode.tagName.toLowerCase() === 'img') {
-                                // 先添加之前积累的文本
-                                if (textRuns.length > 0) {
-                                    paragraphs.push(new Paragraph({
-                                        children: textRuns,
-                                        spacing: { before: 100, after: 100 }
-                                    }));
-                                    textRuns = [];
-                                }
-                                
-                                // 处理图片
-                                const pImgSrc = currentNode.getAttribute('src');
-                                if (pImgSrc && imageMap.has(pImgSrc)) {
-                                    const pImgInfo = imageMap.get(pImgSrc);
-                                    try {
-                                        let pImgWidth = pImgInfo.width || 400;
-                                        let pImgHeight = pImgInfo.height || 300;
-                                        const pMaxWidth = 500;
-                                        
-                                        if (pImgWidth > pMaxWidth) {
-                                            const ratio = pMaxWidth / pImgWidth;
-                                            pImgWidth = pMaxWidth;
-                                            pImgHeight = Math.round(pImgHeight * ratio);
-                                        }
-                                        
-                                        paragraphs.push(new Paragraph({
-                                            children: [new ImageRun({
-                                                data: pImgInfo.data,
-                                                transformation: {
-                                                    width: pImgWidth,
-                                                    height: pImgHeight
-                                                }
-                                            })],
-                                            alignment: AlignmentType.CENTER,
-                                            spacing: { before: 100, after: 100 }
-                                        }));
-                                    } catch (pImgError) {
-                                        console.error('添加段落内图片到 Word 失败:', pImgError);
-                                    }
-                                }
-                            } else {
-                                // 处理文本或其他元素
-                                textRuns.push(...processNode(currentNode));
-                            }
-                            currentNode = currentNode.nextSibling;
-                        }
-                        
-                        // 添加剩余的文本
-                        if (textRuns.length > 0) {
-                            paragraphs.push(new Paragraph({
-                                children: textRuns,
-                                spacing: { before: 100, after: 100 }
-                            }));
-                        }
-                    } else {
-                        const pChildren = processNode(element);
-                        if (pChildren.length > 0) {
-                            paragraphs.push(new Paragraph({
-                                children: pChildren,
-                                spacing: { before: 100, after: 100 }
-                            }));
-                        }
-                    }
-                    break;
-                case 'ul':
-                case 'ol':
-                    // 处理列表（支持嵌套和任务列表）
-                    function processListItems(listElement, listType, level = 0) {
-                        const items = listElement.querySelectorAll(':scope > li');
-                        items.forEach((li, index) => {
-                            // 检查是否是任务列表项
-                            const checkbox = li.querySelector(':scope > input[type="checkbox"]');
-                            const isTaskItem = checkbox !== null;
-                            const isChecked = checkbox ? checkbox.checked : false;
-                            
-                            let bullet;
-                            if (isTaskItem) {
-                                bullet = isChecked ? '☑ ' : '☐ ';
-                            } else {
-                                bullet = listType === 'ul' ? '• ' : `${index + 1}. `;
-                            }
-                            
-                            // 处理列表项内容（排除嵌套列表）
-                            const liContentRuns = [];
-                            for (const child of li.childNodes) {
-                                if (child.nodeType === Node.ELEMENT_NODE) {
-                                    const childTag = child.tagName.toLowerCase();
-                                    if (childTag === 'ul' || childTag === 'ol') {
-                                        continue; // 嵌套列表单独处理
-                                    }
-                                    if (childTag === 'input' && child.type === 'checkbox') {
-                                        continue; // 跳过 checkbox
-                                    }
-                                }
-                                liContentRuns.push(...processNode(child));
-                            }
-                            
-                            paragraphs.push(new Paragraph({
-                                children: [
-                                    new TextRun({ text: '  '.repeat(level) + bullet }),
-                                    ...liContentRuns
-                                ],
-                                indent: { left: convertInchesToTwip(0.3 * (level + 1)) },
-                                spacing: { before: 50, after: 50 }
-                            }));
-                            
-                            // 处理嵌套列表
-                            const nestedLists = li.querySelectorAll(':scope > ul, :scope > ol');
-                            nestedLists.forEach(nestedList => {
-                                const nestedType = nestedList.tagName.toLowerCase();
-                                processListItems(nestedList, nestedType, level + 1);
-                            });
-                        });
-                    }
-                    processListItems(element, tagName, 0);
-                    break;
-                case 'blockquote':
-                    const quoteChildren = processNode(element);
-                    paragraphs.push(new Paragraph({
-                        children: quoteChildren,
-                        indent: { left: convertInchesToTwip(0.5) },
-                        spacing: { before: 100, after: 100 },
-                        shading: { fill: 'F5F5F5' },
-                        border: {
-                            left: { style: BorderStyle.SINGLE, size: 24, color: 'CCCCCC' }
-                        }
-                    }));
-                    break;
-                case 'pre':
-                    const codeElement = element.querySelector('code') || element;
-                    const codeText = codeElement.textContent || '';
-                    paragraphs.push(new Paragraph({
-                        children: [new TextRun({
-                            text: codeText,
-                            font: { name: 'Consolas' },
-                            size: 20
-                        })],
-                        shading: { fill: 'F6F8FA' },
-                        border: {
-                            top: { style: BorderStyle.SINGLE, size: 1, color: 'D0D7DE' },
-                            bottom: { style: BorderStyle.SINGLE, size: 1, color: 'D0D7DE' },
-                            left: { style: BorderStyle.SINGLE, size: 1, color: 'D0D7DE' },
-                            right: { style: BorderStyle.SINGLE, size: 1, color: 'D0D7DE' }
-                        },
-                        spacing: { before: 100, after: 100 }
-                    }));
-                    break;
-                case 'hr':
-                    paragraphs.push(new Paragraph({
-                        children: [new TextRun({ text: '─'.repeat(50) })],
-                        alignment: AlignmentType.CENTER,
-                        spacing: { before: 200, after: 200 }
-                    }));
-                    break;
-                case 'img':
-                    // 处理图片
-                    const imgSrc = element.getAttribute('src');
-                    if (imgSrc && imageMap.has(imgSrc)) {
-                        const imgInfo = imageMap.get(imgSrc);
-                        try {
-                            // 计算适当的尺寸，最大宽度 500 像素
-                            let imgWidth = imgInfo.width || 400;
-                            let imgHeight = imgInfo.height || 300;
-                            const maxWidth = 500;
-                            
-                            if (imgWidth > maxWidth) {
-                                const ratio = maxWidth / imgWidth;
-                                imgWidth = maxWidth;
-                                imgHeight = Math.round(imgHeight * ratio);
-                            }
-                            
-                            paragraphs.push(new Paragraph({
-                                children: [new ImageRun({
-                                    data: imgInfo.data,
-                                    transformation: {
-                                        width: imgWidth,
-                                        height: imgHeight
-                                    }
-                                })],
-                                alignment: AlignmentType.CENTER,
-                                spacing: { before: 200, after: 200 }
-                            }));
-                        } catch (imgError) {
-                            console.error('添加图片到 Word 失败:', imgError);
-                            paragraphs.push(new Paragraph({
-                                children: [new TextRun({ text: '[图片]', italics: true, color: '999999' })],
-                                alignment: AlignmentType.CENTER,
-                                spacing: { before: 100, after: 100 }
-                            }));
-                        }
-                    } else {
-                        // 图片加载失败，显示占位符
-                        paragraphs.push(new Paragraph({
-                            children: [new TextRun({ text: '[图片]', italics: true, color: '999999' })],
-                            alignment: AlignmentType.CENTER,
-                            spacing: { before: 100, after: 100 }
-                        }));
-                    }
-                    break;
-                case 'figure':
-                    // 处理 figure 元素（包含图片和说明）
-                    const figImg = element.querySelector('img');
-                    const figCaption = element.querySelector('figcaption');
-                    
-                    if (figImg) {
-                        const figImgSrc = figImg.getAttribute('src');
-                        if (figImgSrc && imageMap.has(figImgSrc)) {
-                            const figImgInfo = imageMap.get(figImgSrc);
-                            try {
-                                let figImgWidth = figImgInfo.width || 400;
-                                let figImgHeight = figImgInfo.height || 300;
-                                const figMaxWidth = 500;
-                                
-                                if (figImgWidth > figMaxWidth) {
-                                    const ratio = figMaxWidth / figImgWidth;
-                                    figImgWidth = figMaxWidth;
-                                    figImgHeight = Math.round(figImgHeight * ratio);
-                                }
-                                
-                                paragraphs.push(new Paragraph({
-                                    children: [new ImageRun({
-                                        data: figImgInfo.data,
-                                        transformation: {
-                                            width: figImgWidth,
-                                            height: figImgHeight
-                                        }
-                                    })],
-                                    alignment: AlignmentType.CENTER,
-                                    spacing: { before: 200, after: 100 }
-                                }));
-                            } catch (figImgError) {
-                                console.error('添加 figure 图片到 Word 失败:', figImgError);
-                                paragraphs.push(new Paragraph({
-                                    children: [new TextRun({ text: '[图片]', italics: true, color: '999999' })],
-                                    alignment: AlignmentType.CENTER,
-                                    spacing: { before: 100, after: 100 }
-                                }));
-                            }
-                        }
-                    }
-                    
-                    if (figCaption) {
-                        paragraphs.push(new Paragraph({
-                            children: processNode(figCaption),
-                            alignment: AlignmentType.CENTER,
-                            spacing: { before: 50, after: 200 }
-                        }));
-                    }
-                    break;
-                case 'table':
-                    // 处理表格
-                    const rows = element.querySelectorAll('tr');
-                    if (rows.length > 0) {
-                        const tableRows = [];
-                        let maxCols = 0;
-                        
-                        // 首先确定最大列数
-                        rows.forEach(row => {
-                            const cells = row.querySelectorAll('th, td');
-                            if (cells.length > maxCols) maxCols = cells.length;
-                        });
-                        
-                        rows.forEach((row, rowIndex) => {
-                            const cells = row.querySelectorAll('th, td');
-                            const tableCells = [];
-                            const isHeader = row.parentElement && row.parentElement.tagName.toLowerCase() === 'thead';
-                            
-                            cells.forEach((cell, cellIndex) => {
-                                const isHeaderCell = cell.tagName.toLowerCase() === 'th' || isHeader;
-                                const cellContent = processNode(cell);
-                                
-                                tableCells.push(new TableCell({
-                                    children: [new Paragraph({
-                                        children: cellContent.length > 0 ? cellContent : [new TextRun({ text: '' })],
-                                        alignment: AlignmentType.LEFT
-                                    })],
-                                    width: { size: Math.floor(100 / maxCols), type: WidthType.PERCENTAGE },
-                                    shading: isHeaderCell ? { fill: 'E8E8E8' } : undefined,
-                                    margins: {
-                                        top: convertInchesToTwip(0.05),
-                                        bottom: convertInchesToTwip(0.05),
-                                        left: convertInchesToTwip(0.1),
-                                        right: convertInchesToTwip(0.1)
-                                    }
-                                }));
-                            });
-                            
-                            // 填充空单元格
-                            while (tableCells.length < maxCols) {
-                                tableCells.push(new TableCell({
-                                    children: [new Paragraph({ children: [new TextRun({ text: '' })] })],
-                                    width: { size: Math.floor(100 / maxCols), type: WidthType.PERCENTAGE }
-                                }));
-                            }
-                            
-                            if (tableCells.length > 0) {
-                                tableRows.push(new TableRow({ children: tableCells }));
-                            }
-                        });
-                        
-                        if (tableRows.length > 0) {
-                            // 创建表格对象
-                            const table = new Table({
-                                rows: tableRows,
-                                width: { size: 100, type: WidthType.PERCENTAGE },
-                                borders: {
-                                    top: { style: BorderStyle.SINGLE, size: 1, color: 'CCCCCC' },
-                                    bottom: { style: BorderStyle.SINGLE, size: 1, color: 'CCCCCC' },
-                                    left: { style: BorderStyle.SINGLE, size: 1, color: 'CCCCCC' },
-                                    right: { style: BorderStyle.SINGLE, size: 1, color: 'CCCCCC' },
-                                    insideHorizontal: { style: BorderStyle.SINGLE, size: 1, color: 'CCCCCC' },
-                                    insideVertical: { style: BorderStyle.SINGLE, size: 1, color: 'CCCCCC' }
-                                }
-                            });
-                            // 表格前后添加空段落作为间距
-                            paragraphs.push(new Paragraph({ text: '', spacing: { before: 100 } }));
-                            paragraphs.push(table);
-                            paragraphs.push(new Paragraph({ text: '', spacing: { after: 100 } }));
-                        }
-                    }
-                    break;
-                case 'br':
-                    // 换行
-                    paragraphs.push(new Paragraph({ text: '' }));
-                    break;
-                case 'div':
-                case 'section':
-                case 'article':
-                case 'main':
-                case 'header':
-                case 'footer':
-                case 'aside':
-                case 'nav':
-                    // 容器元素，递归处理子元素
-                    for (const child of element.childNodes) {
-                        if (child.nodeType === Node.TEXT_NODE) {
-                            const text = child.textContent.trim();
-                            if (text) {
-                                paragraphs.push(new Paragraph({
-                                    children: [new TextRun({ text })],
-                                    spacing: { before: 50, after: 50 }
-                                }));
-                            }
-                        } else if (child.nodeType === Node.ELEMENT_NODE) {
-                            processBlockElement(child);
-                        }
-                    }
-                    break;
-                case 'span':
-                case 'a':
-                case 'strong':
-                case 'b':
-                case 'em':
-                case 'i':
-                case 'u':
-                case 's':
-                case 'del':
-                case 'code':
-                case 'mark':
-                case 'sup':
-                case 'sub':
-                    // 内联元素作为块级处理时，包装成段落
-                    const inlineChildren = processNode(element);
-                    if (inlineChildren.length > 0) {
-                        paragraphs.push(new Paragraph({
-                            children: inlineChildren,
-                            spacing: { before: 50, after: 50 }
-                        }));
-                    }
-                    break;
-                case 'video':
-                case 'audio':
-                case 'iframe':
-                case 'embed':
-                case 'object':
-                    // 媒体元素，显示占位符
-                    paragraphs.push(new Paragraph({
-                        children: [new TextRun({ text: '[媒体内容]', italics: true, color: '999999' })],
-                        alignment: AlignmentType.CENTER,
-                        spacing: { before: 100, after: 100 }
-                    }));
-                    break;
-                case 'details':
-                    // 处理 details 元素
-                    const summary = element.querySelector('summary');
-                    if (summary) {
-                        paragraphs.push(new Paragraph({
-                            children: [
-                                new TextRun({ text: '▶ ', bold: true }),
-                                ...processNode(summary)
-                            ],
-                            spacing: { before: 100, after: 50 }
-                        }));
-                    }
-                    // 处理 details 内的其他内容
-                    for (const child of element.childNodes) {
-                        if (child.nodeType === Node.ELEMENT_NODE && child.tagName.toLowerCase() !== 'summary') {
-                            processBlockElement(child);
-                        }
-                    }
-                    break;
-                case 'summary':
-                    // summary 已在 details 中处理
-                    break;
-                case 'dl':
-                    // 定义列表
-                    const dlItems = element.querySelectorAll(':scope > dt, :scope > dd');
-                    dlItems.forEach(item => {
-                        const isDt = item.tagName.toLowerCase() === 'dt';
-                        paragraphs.push(new Paragraph({
-                            children: processNode(item),
-                            indent: isDt ? undefined : { left: convertInchesToTwip(0.5) },
-                            spacing: { before: isDt ? 100 : 50, after: 50 }
-                        }));
-                    });
-                    break;
-                case 'dt':
-                case 'dd':
-                    // 单独出现时的处理
-                    paragraphs.push(new Paragraph({
-                        children: processNode(element),
-                        indent: tagName === 'dd' ? { left: convertInchesToTwip(0.5) } : undefined,
-                        spacing: { before: 50, after: 50 }
-                    }));
-                    break;
-                default:
-                    // 处理其他元素或文本节点
-                    if (element.childNodes && element.childNodes.length > 0) {
-                        for (const child of element.childNodes) {
-                            if (child.nodeType === Node.TEXT_NODE) {
-                                const text = child.textContent.trim();
-                                if (text) {
-                                    paragraphs.push(new Paragraph({
-                                        children: [new TextRun({ text })],
-                                        spacing: { before: 50, after: 50 }
-                                    }));
-                                }
-                            } else if (child.nodeType === Node.ELEMENT_NODE) {
-                                processBlockElement(child);
-                            }
-                        }
-                    } else if (element.textContent && element.textContent.trim()) {
-                        paragraphs.push(new Paragraph({
-                            children: processNode(element),
-                            spacing: { before: 50, after: 50 }
-                        }));
-                    }
-            }
-        }
-        
-        // 处理顶层元素
-        for (const child of tempDiv.childNodes) {
-            if (child.nodeType === Node.TEXT_NODE) {
-                const text = child.textContent.trim();
-                if (text) {
-                    paragraphs.push(new Paragraph({
-                        children: [new TextRun({ text })],
-                        spacing: { before: 50, after: 50 }
-                    }));
-                }
-            } else if (child.nodeType === Node.ELEMENT_NODE) {
-                processBlockElement(child);
-            }
-        }
-        
-        return paragraphs.length > 0 ? paragraphs : [new Paragraph({ text: '' })];
-    }
-    
-    // 构建目录树
-    const directoryTree = buildDirectoryTree(mulufile);
-    const flatList = flattenTree(directoryTree);
-    
-    // 预加载所有图片
-    showToast('正在处理图片...', 'info', 2000);
-    const allHtmlContent = flatList.map(item => item.content || '').join('');
-    const imageMap = await collectAndLoadImages(allHtmlContent);
-    
-    // 创建文档内容
-    const children = [];
-    
-    // 添加文档标题
-    children.push(new Paragraph({
-        children: [new TextRun({
-            text: baseName,
-            bold: true,
-            size: 56  // 28pt
-        })],
-        heading: HeadingLevel.TITLE,
-        alignment: AlignmentType.CENTER,
-        spacing: { after: 400 }
-    }));
-    
-    // 添加目录标题
-    children.push(new Paragraph({
-        children: [new TextRun({
-            text: '目 录',
-            bold: true,
-            size: 36  // 18pt
-        })],
-        heading: HeadingLevel.HEADING_1,
-        alignment: AlignmentType.CENTER,
-        spacing: { before: 400, after: 300 }
-    }));
-    
-    // 生成目录列表（常见目录样式：序号 + 名称 + 点线 + 页码）
-    // 计算各级序号
-    const levelCounters = [0, 0, 0, 0, 0, 0]; // 最多6级
-    let lastLevel = -1;
-    
-    flatList.forEach((item, index) => {
-        const level = item.level;
-        
-        // 更新序号
-        if (level > lastLevel) {
-            // 进入子级，重置当前级别计数
-            levelCounters[level] = 1;
-        } else if (level === lastLevel) {
-            // 同级，递增
-            levelCounters[level]++;
-        } else {
-            // 返回上级，重置下级计数，递增当前级别
-            for (let i = level + 1; i < 6; i++) {
-                levelCounters[i] = 0;
-            }
-            levelCounters[level]++;
-        }
-        lastLevel = level;
-        
-        // 生成序号字符串（如：1、1.1、1.1.1）
-        let numberStr = '';
-        for (let i = 0; i <= level; i++) {
-            if (i === 0) {
-                numberStr = String(levelCounters[i]);
-            } else {
-                numberStr += '.' + levelCounters[i];
-            }
-        }
-        
-        // 根据层级调整样式
-        const indent = level * 0.4;  // 每级缩进 0.4 英寸
-        const fontSize = level === 0 ? 26 : 24;  // 一级目录稍大
-        const isBold = level === 0;  // 一级目录加粗
-        
-        // 创建目录项：序号 + 名称 + 点线填充 + 页码占位
-        children.push(new Paragraph({
-            children: [
-                new TextRun({
-                    text: numberStr + '  ',
-                    bold: isBold,
-                    size: fontSize
-                }),
-                new TextRun({
-                    text: item.name,
-                    bold: isBold,
-                    size: fontSize
-                }),
-                new TextRun({
-                    text: ' ',
-                    size: fontSize
-                }),
-                // 使用制表符和点线
-                new TextRun({
-                    text: '·'.repeat(Math.max(3, 40 - item.name.length - numberStr.length - level * 4)),
-                    size: fontSize,
-                    color: 'AAAAAA'
-                }),
-                new TextRun({
-                    text: ' ' + (index + 1),  // 使用序号作为伪页码
-                    bold: isBold,
-                    size: fontSize
-                })
-            ],
-            indent: { left: convertInchesToTwip(indent) },
-            spacing: { before: level === 0 ? 120 : 60, after: level === 0 ? 80 : 60 },
-            tabStops: [{
-                type: 'right',
-                position: convertInchesToTwip(6),
-                leader: 'dot'
-            }]
-        }));
-    });
-    
-    // 添加分页符
-    children.push(new Paragraph({
-        children: [new PageBreak()]
-    }));
-    
-    // 添加内容标题
-    children.push(new Paragraph({
-        children: [new TextRun({
-            text: '正 文',
-            bold: true,
-            size: 36  // 18pt
-        })],
-        heading: HeadingLevel.HEADING_1,
-        alignment: AlignmentType.CENTER,
-        spacing: { before: 200, after: 400 }
-    }));
-    
-    // 添加各目录的内容
-    for (const item of flatList) {
-        // 根据层级确定标题级别
-        const headingLevel = Math.min(item.level + 1, 6);
-        const headingLevels = [
-            HeadingLevel.HEADING_1,
-            HeadingLevel.HEADING_2,
-            HeadingLevel.HEADING_3,
-            HeadingLevel.HEADING_4,
-            HeadingLevel.HEADING_5,
-            HeadingLevel.HEADING_6
-        ];
-        
-        // 添加章节标题（居中放大显示）
-        children.push(new Paragraph({
-            children: [new TextRun({
-                text: item.name,
-                bold: true,
-                size: 36 - (item.level * 4)  // 根据层级调整字号，一级36pt，二级32pt...
-            })],
-            heading: headingLevels[headingLevel - 1] || HeadingLevel.HEADING_6,
-            alignment: AlignmentType.CENTER,
-            spacing: { before: 400, after: 300 }
-        }));
-        
-        // 添加章节内容
-        if (item.content && item.content.trim()) {
-            const contentParagraphs = await htmlToWordParagraphs(item.content, imageMap);
-            children.push(...contentParagraphs);
-        } else {
-            children.push(new Paragraph({
-                children: [new TextRun({
-                    text: '（暂无内容）',
-                    italics: true,
-                    color: '999999'
-                })],
-                spacing: { before: 100, after: 100 }
-            }));
-        }
-        
-        // 在各章节之间添加一些间距
-        children.push(new Paragraph({
-            text: '',
-            spacing: { before: 200, after: 200 }
-        }));
-    }
-    
-    // 创建 Word 文档
-    const doc = new Document({
-        sections: [{
-            properties: {
-                page: {
-                    margin: {
-                        top: convertInchesToTwip(1),
-                        right: convertInchesToTwip(1),
-                        bottom: convertInchesToTwip(1),
-                        left: convertInchesToTwip(1)
-                    }
-                }
-            },
-            children: children
-        }]
-    });
-    
-    // 生成并下载文件
-    try {
-        const blob = await Packer.toBlob(doc);
-        const objectURL = URL.createObjectURL(blob);
-        
-        const aTag = document.createElement('a');
-        aTag.href = objectURL;
-        aTag.download = filename;
-        aTag.click();
-        
-        URL.revokeObjectURL(objectURL);
-        showToast(`已导出 Word 文档：${filename}`, 'success', 2500);
-    } catch (error) {
-        console.error('Word 导出失败:', error);
-        showToast('Word 导出失败：' + error.message, 'error', 3000);
-    }
 }

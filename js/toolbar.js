@@ -108,16 +108,45 @@ if (topLoadBtn) {
         
         reader.onload = async function() {
             try {
-                // parseFileContent 可能返回 Promise（加密文件）
-                let parsedData = parseFileContent(reader.result, fileName);
-                if (parsedData instanceof Promise) {
-                    parsedData = await parsedData;
+                // 先检查缓存（仅对非加密文件使用缓存）
+                let parsedData = null;
+                let fromCache = false;
+                
+                // 检查是否是加密文件
+                const isEncrypted = isEncryptedContent(reader.result);
+                
+                if (!isEncrypted && typeof FileCache !== 'undefined') {
+                    // 尝试从缓存获取
+                    parsedData = await FileCache.get(file);
+                    if (parsedData) {
+                        fromCache = true;
+                        console.log('FileCache: 从缓存加载文件', fileName);
+                    }
                 }
                 
+                // 如果缓存中没有，则解析文件内容
                 if (!parsedData) {
-                    // 用户取消解密
-                    fileInput.value = '';
-                    return;
+                    // parseFileContent 可能返回 Promise（加密文件）
+                    parsedData = parseFileContent(reader.result, fileName);
+                    if (parsedData instanceof Promise) {
+                        parsedData = await parsedData;
+                    }
+                    
+                    if (!parsedData) {
+                        // 用户取消解密
+                        fileInput.value = '';
+                        return;
+                    }
+                    
+                    // 将解析结果保存到缓存（仅对非加密文件）
+                    if (!isEncrypted && typeof FileCache !== 'undefined' && Array.isArray(parsedData)) {
+                        try {
+                            await FileCache.set(file, parsedData);
+                            console.log('FileCache: 已缓存文件', fileName);
+                        } catch (err) {
+                            console.warn('FileCache: 缓存保存失败', err);
+                        }
+                    }
                 }
                 
                 // 检查是否是差异补丁文件
@@ -202,7 +231,8 @@ if (topLoadBtn) {
                         markUnsavedChanges();
                     }
                     
-                    showToast(`已合并：新增 ${mergeResult.added} 个，更新 ${mergeResult.updated} 个目录`, 'success', 3000);
+                    const cacheMsg = fromCache ? '（从缓存快速加载）' : '';
+                    showToast(`已合并：新增 ${mergeResult.added} 个，更新 ${mergeResult.updated} 个目录${cacheMsg}`, 'success', 3000);
                 } else {
                     // 替换模式 - 验证完整文件格式
                     if (parsedData[0].length < 4 || parsedData[0][0] !== "mulu") {
@@ -235,7 +265,8 @@ if (topLoadBtn) {
                         updateSaveButtonState();
                     }
                     
-                    showToast(`已加载：${fileName}`, 'success', 2500);
+                    const cacheMsg = fromCache ? '（从缓存快速加载）' : '';
+                    showToast(`已加载：${fileName}${cacheMsg}`, 'success', 2500);
                 }
                 
                 setTimeout(() => {
@@ -426,7 +457,6 @@ if (saveAsBtn) {
         // 另存为格式选项
         const saveAsOptions = [
             { value: 'webpage', label: '网页 (.html) - 独立可浏览的网页' },
-            { value: 'word', label: 'Word 文档 (.docx)（不完善，慎用）' },
             { value: 'custom', label: '自定义文件名 - 手动输入文件名和格式' }
         ];
         
@@ -438,10 +468,7 @@ if (saveAsBtn) {
             return;
         }
         
-        if (saveType === 'word') {
-            // 导出为 Word 文档
-            await handleExportToWord();
-        } else if (saveType === 'webpage') {
+        if (saveType === 'webpage') {
             // 另存为网页，询问是否加密
             const encryptOptions = [
                 { value: 'no', label: '不加密' },

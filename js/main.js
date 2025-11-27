@@ -35,6 +35,35 @@ document.addEventListener('keydown', function(e) {
 
 // DOM 加载完成后初始化
 document.addEventListener("DOMContentLoaded", async function () {
+    // 检查授权状态
+    if (typeof LicenseUI !== 'undefined') {
+        if (!LicenseSystem.isAuthorized()) {
+            // 显示授权对话框，等待用户授权
+            LicenseUI.showAuthDialog();
+            
+            // 创建授权成功后的初始化函数
+            const initAfterAuth = async () => {
+                await initializeApp();
+            };
+            
+            // 监听授权状态变化
+            const checkAuthInterval = setInterval(() => {
+                if (LicenseSystem.isAuthorized()) {
+                    clearInterval(checkAuthInterval);
+                    initAfterAuth();
+                }
+            }, 500);
+            
+            return; // 等待授权
+        }
+    }
+    
+    // 已授权，直接初始化
+    await initializeApp();
+});
+
+// 应用初始化函数
+async function initializeApp() {
     // 刷新页面时清理所有媒体数据
     if (typeof MediaStorage !== 'undefined' && MediaStorage.clearAll) {
         await MediaStorage.clearAll();
@@ -102,4 +131,4 @@ document.addEventListener("DOMContentLoaded", async function () {
             isUpdating = false;
         }
     }, 10);
-});
+}

@@ -757,12 +757,150 @@ const MediaStorage = (function() {
     }
     
     /**
-     * 处理 HTML 内容用于导出（将 IndexedDB 中的媒体数据嵌入）
+     * 获取媒体数据作为 base64 Data URL（用于导出）
+     * 与 getMediaAsUrl 不同，这个函数总是返回 base64 data URL，不使用临时 blob URL
+     * @param {string} mediaId - 媒体 ID
+     * @returns {Promise<string|null>} - 返回 data URL 或 null
+     */
+    async function getMediaAsDataUrl(mediaId) {
+        const database = await initDB();
+        
+        // 获取记录信息
+        const record = await new Promise((resolve, reject) => {
+            const transaction = database.transaction([STORE_NAME], 'readonly');
+            const store = transaction.objectStore(STORE_NAME);
+            const request = store.get(mediaId);
+            
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+        
+        if (!record) return null;
+        
+        // 非分块存储：直接返回 base64 数据
+        if (!record.chunked) {
+            return record.data || null;
+        }
+        
+        // 分块存储：获取 Blob 然后转换为 base64 data URL
+        const blob = await getChunkedBlob(mediaId);
+        if (!blob) return null;
+        
+        // 将 Blob 转换为 base64 data URL
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.onerror = () => reject(reader.error);
+            reader.readAsDataURL(blob);
+        });
+    }
+    
+    /**
+     * 处理 HTML 内容用于导出（将 IndexedDB 中的媒体数据嵌入为 base64）
+     * 与 processHtmlForLoad 不同，这个函数保证返回的是永久有效的 base64 data URL
+     * 而不是临时的 blob URL
      * @param {string} html - 包含媒体引用的 HTML
      * @returns {Promise<string>} - 导出用的 HTML
      */
     async function processHtmlForExport(html) {
-        return await processHtmlForLoad(html);
+        if (!html) return html;
+        
+        let result = html;
+        
+        // 处理视频
+        if (result.includes('data-media-storage-id')) {
+            const videoRegex = /<video([^>]*)data-media-storage-id=["']([^"']+)["']([^>]*)>/gi;
+            let match;
+            const videoReplacements = [];
+            
+            while ((match = videoRegex.exec(result)) !== null) {
+                const fullMatch = match[0];
+                const mediaId = match[2];
+                // 使用 getMediaAsDataUrl 确保返回 base64 data URL
+                const dataUrl = await getMediaAsDataUrl(mediaId);
+                
+                if (dataUrl) {
+                    let newTag = fullMatch;
+                    if (/\ssrc=["'][^"']*["']/.test(newTag)) {
+                        newTag = newTag.replace(/\ssrc=["'][^"']*["']/, ` src="${dataUrl}"`);
+                    } else {
+                        newTag = newTag.replace('<video', `<video src="${dataUrl}"`);
+                    }
+                    videoReplacements.push({ from: fullMatch, to: newTag });
+                }
+            }
+            
+            for (const { from, to } of videoReplacements) {
+                result = result.replace(from, to);
+            }
+        }
+        
+        // 处理图片
+        if (result.includes('data-media-storage-id')) {
+            const imgRegex = /<img([^>]*)data-media-storage-id=["']([^"']+)["']([^>]*)>/gi;
+            let match;
+            const imgReplacements = [];
+            
+            while ((match = imgRegex.exec(result)) !== null) {
+                const fullMatch = match[0];
+                const mediaId = match[2];
+                // 使用 getMediaAsDataUrl 确保返回 base64 data URL
+                const dataUrl = await getMediaAsDataUrl(mediaId);
+                
+                if (dataUrl) {
+                    let newTag = fullMatch;
+                    if (/\ssrc=["'][^"']*["']/.test(newTag)) {
+                        newTag = newTag.replace(/\ssrc=["'][^"']*["']/, ` src="${dataUrl}"`);
+                    } else {
+                        newTag = newTag.replace('<img', `<img src="${dataUrl}"`);
+                    }
+                    imgReplacements.push({ from: fullMatch, to: newTag });
+                }
+            }
+            
+            for (const { from, to } of imgReplacements) {
+                result = result.replace(from, to);
+            }
+        }
+        
+        // 处理压缩文件附件（div.archive-attachment）
+        if (result.includes('data-media-storage-id')) {
+            const archiveRegex = /<div([^>]*)class=["']archive-attachment["']([^>]*)data-media-storage-id=["']([^"']+)["']([^>]*)>/gi;
+            const archiveRegex2 = /<div([^>]*)data-media-storage-id=["']([^"']+)["']([^>]*)class=["']archive-attachment["']([^>]*)>/gi;
+            
+            // 尝试两种属性顺序
+            for (const regex of [archiveRegex, archiveRegex2]) {
+                let match;
+                const archiveReplacements = [];
+                
+                while ((match = regex.exec(result)) !== null) {
+                    const fullMatch = match[0];
+                    // 根据正则的不同，mediaId 在不同的捕获组
+                    const mediaId = regex === archiveRegex ? match[3] : match[2];
+                    
+                    // 获取压缩文件数据
+                    const dataUrl = await getMediaAsDataUrl(mediaId);
+                    
+                    if (dataUrl) {
+                        // 将 data URL 添加到 data-export-url 属性中，供导出的网页下载使用
+                        let newTag = fullMatch;
+                        if (/\sdata-export-url=["'][^"']*["']/.test(newTag)) {
+                            newTag = newTag.replace(/\sdata-export-url=["'][^"']*["']/, ` data-export-url="${dataUrl}"`);
+                        } else {
+                            // 在 > 之前添加 data-export-url 属性
+                            newTag = newTag.replace(/>$/, ` data-export-url="${dataUrl}">`);
+                        }
+                        archiveReplacements.push({ from: fullMatch, to: newTag });
+                    }
+                }
+                
+                for (const { from, to } of archiveReplacements) {
+                    result = result.replace(from, to);
+                }
+            }
+        }
+        
+        return result;
     }
     
     // 初始化数据库
