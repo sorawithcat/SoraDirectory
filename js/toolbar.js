@@ -298,23 +298,12 @@ if (topLoadBtn) {
                             
                             let loadedContent = findMulufileData(firstRootMulu);
                             
-                            // 如果内容包含 IndexedDB 媒体引用（视频/图片），异步恢复媒体数据
-                            if (loadedContent && loadedContent.includes('data-media-storage-id')) {
-                                (async function() {
-                                    if (typeof MediaStorage !== 'undefined') {
-                                        loadedContent = await MediaStorage.processHtmlForLoad(loadedContent);
-                                    }
-                                    jiedianwords.value = loadedContent;
-                                    isUpdating = true;
-                                    updateMarkdownPreview();
-                                    isUpdating = false;
-                                })();
-                            } else {
-                                jiedianwords.value = loadedContent;
-                                isUpdating = true;
-                                updateMarkdownPreview();
-                                isUpdating = false;
-                            }
+                            // 直接显示内容，不进行媒体数据的加载处理
+                            // 媒体数据已经存储在IndexedDB中，只在需要时才加载
+                            jiedianwords.value = loadedContent;
+                            isUpdating = true;
+                            updateMarkdownPreview();
+                            isUpdating = false;
                         }
                     }
                 }, 10);

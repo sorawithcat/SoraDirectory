@@ -11,6 +11,29 @@ const MediaStorage = (function() {
     
     let db = null;
     
+    // 缓存已处理过的HTML内容，避免重复处理
+    const processedContentCache = new Map();
+    
+    // 缓存已加载的媒体 Blob URL，避免切换目录时重复加载
+    // key: mediaId, value: blobUrl
+    // 注意：不主动清理 Blob URL，让浏览器自动管理
+    const mediaUrlCache = new Map();
+    
+    /**
+     * 简单哈希函数，用于生成缓存键
+     * @param {string} str - 要哈希的字符串
+     * @returns {string} - 哈希值
+     */
+    function hashString(str) {
+        let hash = 0;
+        for (let i = 0; i < str.length; i++) {
+            const char = str.charCodeAt(i);
+            hash = ((hash << 5) - hash) + char;
+            hash = hash & hash; // 转换为32位整数
+        }
+        return hash.toString(36);
+    }
+    
     /**
      * 初始化 IndexedDB 数据库
      * @returns {Promise<IDBDatabase>}
@@ -777,6 +800,9 @@ const MediaStorage = (function() {
      * @returns {Promise<void>}
      */
     async function clearAll() {
+        // 只清理缓存映射，不主动清理 Blob URL（让浏览器自动管理）
+        mediaUrlCache.clear();
+        
         const database = await initDB();
         
         return new Promise((resolve, reject) => {
@@ -797,10 +823,17 @@ const MediaStorage = (function() {
     /**
      * 获取媒体数据作为可用于 src 的 URL
      * 对于 base64 存储的返回 data URL，对于分块存储的返回 Blob URL
+     * 使用缓存机制，避免重复加载已加载过的视频和图片
      * @param {string} mediaId - 媒体 ID
      * @returns {Promise<string|null>} - 返回 URL 或 null
      */
     async function getMediaAsUrl(mediaId) {
+        // 检查缓存，如果已缓存则直接返回
+        const cachedUrl = mediaUrlCache.get(mediaId);
+        if (cachedUrl) {
+            return cachedUrl;
+        }
+        
         const database = await initDB();
         
         // 获取记录信息
@@ -819,12 +852,15 @@ const MediaStorage = (function() {
         if (record.chunked) {
             const blob = await getChunkedBlob(mediaId);
             if (blob) {
-                return URL.createObjectURL(blob);
+                const blobUrl = URL.createObjectURL(blob);
+                // 缓存 Blob URL（不主动清理，让浏览器自动管理）
+                mediaUrlCache.set(mediaId, blobUrl);
+                return blobUrl;
             }
             return null;
         }
         
-        // base64 存储：直接返回
+        // base64 存储：直接返回（不需要缓存，因为 data URL 是永久的）
         return record.data || null;
     }
     
@@ -835,8 +871,26 @@ const MediaStorage = (function() {
      * @param {string} html - 包含媒体引用的 HTML
      * @returns {Promise<string>} - 恢复后的 HTML
      */
-    async function processHtmlForLoad(html) {
+    async function processHtmlForLoad(html, useCache = true) {
         if (!html) return html;
+        
+        // 如果使用缓存，检查是否已经处理过
+        // 对于小内容直接使用完整内容作为键，对于大内容使用哈希值
+        if (useCache) {
+            const cacheKey = html.length < 10000 ? html : hashString(html);
+            const cached = processedContentCache.get(cacheKey);
+            if (cached) {
+                // 验证内容是否完全匹配（对于使用哈希的情况）
+                if (html.length >= 10000) {
+                    if (cached.fullContent === html) {
+                        return cached.processedContent;
+                    }
+                } else {
+                    // 对于小内容，键就是完整内容，所以直接返回
+                    return cached.processedContent;
+                }
+            }
+        }
         
         let result = html;
         
@@ -1010,8 +1064,80 @@ const MediaStorage = (function() {
         // 压缩文件附件：不需要在 HTML 中嵌入数据
         // 下载时直接从 IndexedDB 获取（通过 data-media-storage-id）
         // 这样可以支持大文件，避免 HTML 属性过大导致数据丢失
+        // 注意：压缩包元素的 data-media-storage-id 属性必须被完整保留
+        // 验证压缩包元素是否包含 data-media-storage-id 属性
+        if (result.includes('archive-attachment')) {
+            const archiveRegex = /<div([^>]*)class=["']archive-attachment["']([^>]*)>/gi;
+            let match;
+            const archiveReplacements = [];
+            
+            while ((match = archiveRegex.exec(result)) !== null) {
+                const fullMatch = match[0];
+                // 检查是否包含 data-media-storage-id 属性
+                if (!fullMatch.includes('data-media-storage-id')) {
+                    // 如果缺少属性，记录警告但保留原样
+                    // 这种情况下，压缩包数据可能在保存时丢失了
+                    console.warn('发现压缩包元素缺少 data-media-storage-id 属性');
+                }
+            }
+        }
+        
+        // 缓存处理后的内容
+        if (useCache) {
+            const cacheKey = html.length < 10000 ? html : hashString(html);
+            processedContentCache.set(cacheKey, {
+                fullContent: html,
+                processedContent: result
+            });
+            // 限制缓存大小，避免内存溢出
+            if (processedContentCache.size > 1000) {
+                const firstKey = processedContentCache.keys().next().value;
+                processedContentCache.delete(firstKey);
+            }
+        }
         
         return result;
+    }
+    
+    /**
+     * 预加载所有目录内容（后台处理，不阻塞UI）
+     * 这样可以避免在切换目录时的卡顿
+     * @param {Array} mulufile - 目录数据数组
+     * @returns {Promise<void>}
+     */
+    async function preloadAllDirectoryContent(mulufile) {
+        if (!mulufile || !Array.isArray(mulufile)) {
+            return;
+        }
+        
+        // 收集所有包含媒体引用的目录内容
+        const contentsToProcess = [];
+        for (const item of mulufile) {
+            if (item && item.length === 4) {
+                const content = item[3] || '';
+                if (content && content.includes('data-media-storage-id')) {
+                    contentsToProcess.push(content);
+                }
+            }
+        }
+        
+        if (contentsToProcess.length === 0) {
+            return;
+        }
+        
+        // 分批处理，避免阻塞UI
+        const batchSize = 10;
+        for (let i = 0; i < contentsToProcess.length; i += batchSize) {
+            const batch = contentsToProcess.slice(i, i + batchSize);
+            await Promise.all(
+                batch.map(content => processHtmlForLoad(content, true))
+            );
+            
+            // 每处理一批后，让出控制权，避免阻塞UI
+            await new Promise(resolve => setTimeout(resolve, 0));
+        }
+        
+        console.log(`已预加载 ${contentsToProcess.length} 个目录的媒体内容`);
     }
     
     /**
@@ -1256,7 +1382,10 @@ const MediaStorage = (function() {
         
         // 通用别名（兼容简化调用）
         save: saveMedia,
-        get: getMedia
+        get: getMedia,
+        
+        // 预加载功能
+        preloadAllDirectoryContent
     };
 })();
 

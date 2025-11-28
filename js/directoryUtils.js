@@ -408,26 +408,16 @@ function bindMuluEvents(muluElement, mulufileIndex = -1) {
                 muluElement.classList.add("select");
                 
                 // 加载目录内容 - 始终使用 findMulufileData 确保获取最新数据
+                // 直接使用存储的HTML内容，不需要重新处理
+                // 媒体数据已经存储在IndexedDB中，只在需要时才加载
                 let content = findMulufileData(muluElement);
                 
-                // 如果内容包含 IndexedDB 媒体引用（视频/图片），异步恢复媒体数据
-                if (content && content.includes('data-media-storage-id')) {
-                    // 异步恢复媒体数据
-                    (async function() {
-                        if (typeof MediaStorage !== 'undefined') {
-                            content = await MediaStorage.processHtmlForLoad(content);
-                        }
-                        jiedianwords.value = content;
-                        isUpdating = true;
-                        updateMarkdownPreview();
-                        isUpdating = false;
-                    })();
-                } else {
-                    jiedianwords.value = content;
-                    isUpdating = true;
-                    updateMarkdownPreview();
-                    isUpdating = false;
-                }
+                // 直接显示内容，不进行媒体数据的加载处理
+                // 视频/图片会保持data-media-storage-id属性，延迟加载
+                jiedianwords.value = content;
+                isUpdating = true;
+                updateMarkdownPreview();
+                isUpdating = false;
                 clickTimer = null;
             }, 300);
 
@@ -453,27 +443,14 @@ function bindMuluEvents(muluElement, mulufileIndex = -1) {
             muluElement.classList.add("select");
             
             // 加载目录内容 - 始终使用 findMulufileData 确保获取最新数据
+            // 直接显示内容，不进行媒体数据的加载处理
+            // 媒体数据已经存储在IndexedDB中，只在需要时才加载
             let rightClickContent = findMulufileData(muluElement);
-            
-            // 如果内容包含 IndexedDB 媒体引用（视频/图片），异步恢复媒体数据
-            if (rightClickContent && rightClickContent.includes('data-media-storage-id')) {
-                (async function() {
-                    if (typeof MediaStorage !== 'undefined') {
-                        rightClickContent = await MediaStorage.processHtmlForLoad(rightClickContent);
-                    }
-                    jiedianwords.value = rightClickContent;
-                    isUpdating = true;
-                    updateMarkdownPreview();
-                    isUpdating = false;
-                    rightMouseMenu(e);
-                })();
-            } else {
-                jiedianwords.value = rightClickContent;
-                isUpdating = true;
-                updateMarkdownPreview();
-                isUpdating = false;
-                rightMouseMenu(e);
-            }
+            jiedianwords.value = rightClickContent;
+            isUpdating = true;
+            updateMarkdownPreview();
+            isUpdating = false;
+            rightMouseMenu(e);
         }
     });
     

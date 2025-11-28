@@ -17,7 +17,6 @@ function creatDivById(creatadds = "", idname = "", classname = "") {
         ids.appendChild(div);
         return idname;
     } else {
-        console.log(`找不到此id："${creatadds}"`);
         return false;
     }
 }
@@ -37,7 +36,6 @@ function creatDivByIdBefore(creatadds = "", idname = "", classname = "") {
         ids.after(div);
         return idname;
     } else {
-        console.log(`找不到此id："${creatadds}"`);
         return false;
     }
 }

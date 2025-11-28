@@ -50,6 +50,7 @@ function setLevelPadding(element, level) {
 /**
  * 加载目录数据到页面
  * 从 mulufile 数组读取数据，创建目录 DOM 结构
+ * 性能优化：减少DOM查询，预计算层级和父子关系
  */
 function LoadMulu() {
     // 验证数据格式
@@ -69,84 +70,128 @@ function LoadMulu() {
     
     let error = 0;
     let warning = 0;
-    let idName;
     
-    // 清除现有目录
-    let muluss = document.querySelectorAll(".mulu");
-    for (let i = 0; i < muluss.length; i++) {
-        muluss[i].remove();
+    // 清除现有目录（使用批量移除优化）
+    const firststep = document.querySelector(".firststep");
+    if (firststep) {
+        // 一次性清除所有子元素，比逐个移除更高效
+        firststep.innerHTML = '';
     }
     
-    // 遍历数据创建目录
+    // 性能优化：预构建数据结构，减少循环中的计算
+    const dirMap = new Map(); // dirId -> dirData
+    const childrenMap = new Map(); // parentId -> [children dirData]
+    const levelCache = new Map(); // dirId -> level
+    
+    // 第一遍：构建映射和预计算层级
     for (let i = 0; i < mulufile.length; i++) {
         if (mulufile[i].length === 4) {
+            const dirData = {
+                index: i,
+                parentId: mulufile[i][0],
+                name: mulufile[i][1],
+                dirId: mulufile[i][2],
+                content: mulufile[i][3]
+            };
+            dirMap.set(mulufile[i][2], dirData);
+            
+            // 构建子目录映射
+            if (!childrenMap.has(mulufile[i][0])) {
+                childrenMap.set(mulufile[i][0], []);
+            }
+            childrenMap.get(mulufile[i][0]).push(dirData);
+            
             // 检查保留字
             if (mulufile[i][2] === "mulufirststep" || mulufile[i][0] === "mulufirststep") {
                 warning++;
             }
             
-            // 查找父目录元素
-            let parentElement = null;
-            if (i > 0 && mulufile[i][0] !== "mulu") {
-                let parentElements = document.querySelectorAll(`[data-dir-id="${mulufile[i][0]}"]`);
-                if (parentElements.length > 0) {
-                    parentElement = parentElements[0];
-                }
-            }
+            // 预计算层级
+            const level = calculateLevel(mulufile[i][0], mulufile);
+            levelCache.set(mulufile[i][2], level);
+        } else {
+            error++;
+        }
+    }
+    
+    // 第二遍：创建DOM元素（保持原有插入逻辑以确保正确顺序）
+    const dirElementMap = new Map(); // dirId -> HTMLElement
+    
+    for (let i = 0; i < mulufile.length; i++) {
+        if (mulufile[i].length === 4) {
+            const dirData = dirMap.get(mulufile[i][2]);
+            if (!dirData) continue;
             
             // 创建目录元素
-            if (i === 0) {
-                // 第一个目录，直接添加到 firststep
-                idName = creatDivByClass("firststep", getOneId(10, 0), "mulu");
-            } else {
-                if (parentElement) {
-                    // 有父目录，插入到父目录的最后一个子目录后面
-                    let siblings = findChildElementsByParentId(mulufile[i][0]);
-                    if (siblings.length > 0) {
-                        idName = creatDivByIdBefore(siblings[siblings.length - 1].id, getOneId(10, 0), "mulu");
-                    } else {
-                        idName = creatDivByIdBefore(parentElement.id, getOneId(10, 0), "mulu");
-                    }
-                } else {
-                    // 没有父目录，添加到 firststep
-                    idName = creatDivByClass("firststep", getOneId(10, 0), "mulu");
-                }
-            }
-            
-            let newMulu = document.querySelector(`#${idName}`);
+            const idName = getOneId(10, 0);
+            const newMulu = document.createElement("div");
+            newMulu.id = idName;
+            newMulu.className = "mulu";
             newMulu.innerHTML = mulufile[i][1];
             
-            // 设置层级和缩进
-            let level = calculateLevel(mulufile[i][0], mulufile);
+            // 设置层级和缩进（使用缓存）
+            const level = levelCache.get(mulufile[i][2]) || 0;
             newMulu.setAttribute("data-level", level);
             setLevelPadding(newMulu, level);
             
             // 设置数据属性
-            newMulu.setAttribute("data-dir-id", mulufile[i][2]);    // 当前目录ID
-            newMulu.setAttribute("data-parent-id", mulufile[i][0]); // 父目录ID
+            newMulu.setAttribute("data-dir-id", mulufile[i][2]);
+            newMulu.setAttribute("data-parent-id", mulufile[i][0]);
             
             // 设置颜色小球
             setParentColorBall(newMulu);
             
-            // 检查是否有子目录
-            let hasChildren = false;
-            for (let j = 0; j < mulufile.length; j++) {
-                if (j !== i && mulufile[j].length === 4 && mulufile[j][0] === mulufile[i][2]) {
-                    hasChildren = true;
-                    break;
-                }
-            }
+            // 检查是否有子目录（使用预构建的映射）
+            const hasChildren = childrenMap.has(mulufile[i][2]) && childrenMap.get(mulufile[i][2]).length > 0;
             
             if (hasChildren) {
                 newMulu.classList.add("has-children");
                 newMulu.classList.add("expanded"); // 默认展开
             }
             
+            // 插入到正确位置（使用原有逻辑，确保功能一致）
+            if (i === 0) {
+                // 第一个目录，直接添加到 firststep
+                if (firststep) {
+                    firststep.appendChild(newMulu);
+                }
+            } else {
+                // 查找父目录元素（使用缓存）
+                const parentElement = dirElementMap.get(mulufile[i][0]);
+                
+                if (parentElement) {
+                    // 有父目录，插入到父目录的最后一个子目录后面
+                    // 使用原有逻辑：查找同父的所有子目录，插入到最后一个后面
+                    const siblings = findChildElementsByParentId(mulufile[i][0]);
+                    if (siblings.length > 0) {
+                        // 有兄弟，插入到最后一个兄弟后面
+                        const lastSibling = siblings[siblings.length - 1];
+                        if (lastSibling && lastSibling.nextSibling) {
+                            firststep.insertBefore(newMulu, lastSibling.nextSibling);
+                        } else {
+                            firststep.appendChild(newMulu);
+                        }
+                    } else {
+                        // 第一个子目录，插入到父目录后面
+                        if (parentElement.nextSibling) {
+                            firststep.insertBefore(newMulu, parentElement.nextSibling);
+                        } else {
+                            firststep.appendChild(newMulu);
+                        }
+                    }
+                } else {
+                    // 没有父目录，添加到 firststep
+                    if (firststep) {
+                        firststep.appendChild(newMulu);
+                    }
+                }
+            }
+            
+            // 存储元素引用（在插入后）
+            dirElementMap.set(mulufile[i][2], newMulu);
+            
             // 绑定事件
             bindMuluEvents(newMulu, i);
-
-        } else {
-            error++;
         }
     }
     

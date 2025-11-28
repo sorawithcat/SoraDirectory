@@ -42,26 +42,59 @@ function syncPreviewToTextarea() {
         // 移除搜索高亮标签，避免被保存到数据中
         let html = removeSearchHighlights(markdownPreview.innerHTML);
         
+        // 确保压缩包元素的 data-media-storage-id 和 data-export-url 属性被正确保存
+        // 从DOM中验证并修复压缩包元素的属性
+        const archiveElements = markdownPreview.querySelectorAll('.archive-attachment');
+        archiveElements.forEach(archiveElement => {
+            const storageId = archiveElement.getAttribute('data-media-storage-id');
+            const exportUrl = archiveElement.getAttribute('data-export-url');
+            const archiveName = archiveElement.getAttribute('data-archive-name');
+            if (archiveName) {
+                // 检查HTML字符串中是否包含该压缩包的属性
+                // 使用archiveName查找对应的压缩包元素
+                const archiveNameEscaped = archiveName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                // 查找包含archiveName的压缩包元素
+                const regex = new RegExp(
+                    `(<div[^>]*class=["']archive-attachment["'][^>]*data-archive-name=["']${archiveNameEscaped}["'][^>]*)>`,
+                    'gi'
+                );
+                html = html.replace(regex, (match) => {
+                    let updated = match;
+                    // 如果这个匹配中不包含data-media-storage-id，添加它
+                    if (storageId && !updated.includes('data-media-storage-id')) {
+                        updated = updated.replace('>', ` data-media-storage-id="${storageId}">`);
+                    }
+                    // 如果这个匹配中不包含data-export-url，添加它（如果存在）
+                    if (exportUrl && !updated.includes('data-export-url')) {
+                        updated = updated.replace('>', ` data-export-url="${exportUrl}">`);
+                    }
+                    return updated;
+                });
+            }
+        });
+        
         // 使用 IndexedDB 方案：对于有 data-media-storage-id 的媒体（视频/图片/压缩文件），
-        // 将 src 替换为占位符（媒体数据已保存在 IndexedDB 中）
+        // 将 Blob URL 替换为占位符（媒体数据已保存在 IndexedDB 中）
+        // 但保留 base64 data URL，以确保如果 IndexedDB 中没有数据，视频仍然可以播放
         if (html.includes('data-media-storage-id')) {
-            // 处理视频
+            // 处理视频：只替换 Blob URL (blob: 开头)，保留 base64 data URL
+            // 这样可以确保如果 IndexedDB 中没有数据，原始的 base64 data URL 会被保留
             html = html.replace(
-                /(<video[^>]*data-media-storage-id=["'][^"']+["'][^>]*)\ssrc=["'][^"']*["']([^>]*>)/gi,
-                '$1 src="about:blank"$2'
+                /(<video[^>]*data-media-storage-id=["'][^"']+["'][^>]*)\ssrc=["'](blob:[^"']+)["']([^>]*>)/gi,
+                '$1 src="about:blank"$3'
             );
             html = html.replace(
-                /(<video[^>]*)\ssrc=["'][^"']*["']([^>]*data-media-storage-id=["'][^"']+["'][^>]*>)/gi,
-                '$1 src="about:blank"$2'
+                /(<video[^>]*)\ssrc=["'](blob:[^"']+)["']([^>]*data-media-storage-id=["'][^"']+["'][^>]*>)/gi,
+                '$1 src="about:blank"$3'
             );
-            // 处理图片
+            // 处理图片：只替换 Blob URL，保留 base64 data URL
             html = html.replace(
-                /(<img[^>]*data-media-storage-id=["'][^"']+["'][^>]*)\ssrc=["'][^"']*["']([^>]*>)/gi,
-                '$1 src="about:blank"$2'
+                /(<img[^>]*data-media-storage-id=["'][^"']+["'][^>]*)\ssrc=["'](blob:[^"']+)["']([^>]*>)/gi,
+                '$1 src="about:blank"$3'
             );
             html = html.replace(
-                /(<img[^>]*)\ssrc=["'][^"']*["']([^>]*data-media-storage-id=["'][^"']+["'][^>]*>)/gi,
-                '$1 src="about:blank"$2'
+                /(<img[^>]*)\ssrc=["'](blob:[^"']+)["']([^>]*data-media-storage-id=["'][^"']+["'][^>]*>)/gi,
+                '$1 src="about:blank"$3'
             );
         }
         
@@ -106,20 +139,29 @@ function attachTaskListEvents() {
 /** 存储视频原始 src 的映射（防止浏览器截断 base64 数据） */
 const videoOriginalSrcMap = new Map();
 
+/** 缓存上次的内容，用于比较是否真的需要更新 */
+let lastPreviewContent = '';
+
 /**
  * 从 textarea 同步内容到预览区域
+ * 性能优化：内容未变化时跳过更新，使用 requestAnimationFrame 优化DOM操作
  */
 async function updateMarkdownPreview() {
     if (markdownPreview && jiedianwords) {
         let content = jiedianwords.value || '';
         
-        // 如果内容包含 IndexedDB 媒体引用，先恢复媒体数据
-        if (content && content.includes('data-media-storage-id') && typeof MediaStorage !== 'undefined') {
-            try {
-                content = await MediaStorage.processHtmlForLoad(content);
-            } catch (err) {
-                console.error('恢复媒体数据失败:', err);
-            }
+        // 性能优化：如果内容没有变化，跳过更新
+        if (content === lastPreviewContent && markdownPreview.innerHTML) {
+            return;
+        }
+        
+        // 不在这里自动加载媒体数据
+        // 视频/图片会保持data-media-storage-id属性，只在用户真正需要时才加载
+        // 这样可以避免切换目录时的卡顿和进度提示
+        
+        // 性能优化：如果处理后的内容仍然相同，跳过更新
+        if (content === lastPreviewContent && markdownPreview.innerHTML === content) {
+            return;
         }
         
         // 在设置 innerHTML 之前，提取并保存视频的原始 src
@@ -136,46 +178,110 @@ async function updateMarkdownPreview() {
             videoIndex++;
         }
         
-        isUpdating = true;
-        markdownPreview.innerHTML = content;
-        isUpdating = false;
+        // 性能优化：移除压缩包的 data-export-url 属性（避免在显示时解析大的 base64 数据）
+        // 但保留在原始 content 中，以便下载时使用
+        // 这样可以避免切换目录时的卡顿
+        // 重要：从原始内容（jiedianwords.value）中提取 data-export-url，而不是从处理后的 content 中
+        // 因为 content 可能已经被处理过，移除了 data-export-url
+        const archiveExportUrlMap = new Map();
+        const originalContent = jiedianwords.value || '';
+        const hasExportUrl = originalContent.includes('data-export-url');
         
-        // 为每个视频设置 data-video-index 属性，用于后续恢复
-        const videos = markdownPreview.querySelectorAll('video');
-        videos.forEach((video, index) => {
-            video.setAttribute('data-video-index', index);
-            if (videoOriginalSrcMap.has(index)) {
-                video.setAttribute('data-original-src', videoOriginalSrcMap.get(index));
-            }
-        });
-        
-        // 恢复图片和视频：如果 src 是 about:blank，从 IndexedDB 恢复
-        // 注意：processHtmlForLoad 已经处理了大部分情况，这里作为后备方案
-        const mediaElements = markdownPreview.querySelectorAll('img[data-media-storage-id], video[data-media-storage-id]');
-        if (mediaElements.length > 0 && typeof MediaStorage !== 'undefined') {
-            mediaElements.forEach(async (element) => {
-                const storageId = element.getAttribute('data-media-storage-id');
-                if (storageId && (!element.src || element.src === 'about:blank' || element.src.includes('about:blank'))) {
-                    try {
-                        const mediaUrl = await MediaStorage.getMediaAsUrl(storageId);
-                        if (mediaUrl) {
-                            element.src = mediaUrl;
-                        }
-                    } catch (err) {
-                        console.error('恢复媒体失败:', err);
-                    }
+        if (hasExportUrl) {
+            // 使用更高效的方法：只匹配压缩包元素，避免匹配整个大字符串
+            // 使用非贪婪匹配和更精确的正则表达式
+            const archivePattern = /<div[^>]*class=["']archive-attachment["'][^>]*>/gi;
+            let archiveMatch;
+            let archiveIndex = 0;
+            
+            // 只处理压缩包元素，避免处理整个大字符串
+            // 从原始内容中提取，确保能获取到 data-export-url
+            while ((archiveMatch = archivePattern.exec(originalContent)) !== null) {
+                const fullMatch = archiveMatch[0];
+                // 只在压缩包元素中查找 data-export-url
+                const exportUrlMatch = fullMatch.match(/data-export-url=["']([^"']+)["']/);
+                if (exportUrlMatch && exportUrlMatch[1] && exportUrlMatch[1].startsWith('data:')) {
+                    const exportUrl = exportUrlMatch[1];
+                    // 提取 storage-id 或 archive-name 作为 key
+                    const storageIdMatch = fullMatch.match(/\sdata-media-storage-id=["']([^"']+)["']/);
+                    const archiveNameMatch = fullMatch.match(/\sdata-archive-name=["']([^"']+)["']/);
+                    const key = storageIdMatch ? storageIdMatch[1] : (archiveNameMatch ? archiveNameMatch[1] : `archive_${archiveIndex}`);
+                    archiveExportUrlMap.set(key, exportUrl);
+                    archiveIndex++;
                 }
-            });
+            }
+            
+            // 从显示内容中移除 data-export-url（避免解析），但保留在原始 content 中
+            if (archiveExportUrlMap.size > 0) {
+                // 使用更高效的替换方法：只替换压缩包元素中的 data-export-url
+                // 避免对整个大字符串进行全局替换
+                content = content.replace(/<div([^>]*)class=["']archive-attachment["']([^>]*)data-export-url=["'][^"']*["']([^>]*)>/gi, 
+                    '<div$1class="archive-attachment"$2$3>');
+                content = content.replace(/<div([^>]*)data-export-url=["'][^"']*["']([^>]*)class=["']archive-attachment["']([^>]*)>/gi, 
+                    '<div$1$2class="archive-attachment"$3>');
+            }
         }
         
-        // 绑定任务列表复选框事件
-        attachTaskListEvents();
+        // 更新DOM（使用 requestAnimationFrame 优化）
+        const processAfterDOMUpdate = () => {
+            // 为每个视频设置 data-video-index 属性，用于后续恢复
+            const videos = markdownPreview.querySelectorAll('video');
+            videos.forEach((video, index) => {
+                video.setAttribute('data-video-index', index);
+                if (videoOriginalSrcMap.has(index)) {
+                    video.setAttribute('data-original-src', videoOriginalSrcMap.get(index));
+                }
+            });
+            
+            // 恢复压缩包的 data-export-url 到 DOM 元素上（但不显示，避免解析）
+            // 这样下载时可以使用，但不会在显示时解析
+            if (archiveExportUrlMap.size > 0) {
+                const archiveElements = markdownPreview.querySelectorAll('.archive-attachment');
+                archiveElements.forEach(element => {
+                    const storageId = element.getAttribute('data-media-storage-id');
+                    const archiveName = element.getAttribute('data-archive-name');
+                    const key = storageId || archiveName;
+                    if (key && archiveExportUrlMap.has(key)) {
+                        // 将 data-export-url 存储到元素上，但不显示在 HTML 中
+                        element.setAttribute('data-export-url', archiveExportUrlMap.get(key));
+                    }
+                });
+            }
+            
+            // 不自动加载媒体数据，保持延迟加载
+            // 图片和视频保持只有data-media-storage-id属性，不设置src
+            // 只在用户真正需要时（滚动到可见区域、点击播放等）才从IndexedDB加载
+            
+            // 绑定任务列表复选框事件
+            attachTaskListEvents();
+            
+            // 初始化视频元素，确保视频正确显示和播放
+            initializeVideos();
+            
+            // 初始化压缩文件下载按钮
+            initializeArchiveDownloadButtons();
+        };
         
-        // 初始化视频元素，确保视频正确显示和播放
-        initializeVideos();
-        
-        // 初始化压缩文件下载按钮
-        initializeArchiveDownloadButtons();
+        if (typeof batchDOMUpdate === 'function') {
+            batchDOMUpdate(() => {
+                isUpdating = true;
+                markdownPreview.innerHTML = content;
+                lastPreviewContent = content; // 更新缓存
+                isUpdating = false;
+                
+                // DOM更新后立即执行的后续操作
+                processAfterDOMUpdate();
+            });
+        } else {
+            // 降级方案：直接更新
+            isUpdating = true;
+            markdownPreview.innerHTML = content;
+            lastPreviewContent = content;
+            isUpdating = false;
+            
+            // 使用 requestAnimationFrame 延迟后续操作
+            requestAnimationFrame(processAfterDOMUpdate);
+        }
     }
 }
 
@@ -191,15 +297,52 @@ function initializeArchiveDownloadButtons() {
         // 确保压缩包元素不可编辑
         element.setAttribute('contenteditable', 'false');
         
+        // 验证压缩包元素是否有 data-media-storage-id 或 data-export-url 属性
+        const storageId = element.getAttribute('data-media-storage-id');
+        const exportUrl = element.getAttribute('data-export-url');
+        
+        if (!storageId && !exportUrl) {
+            // 如果缺少 storage-id 和 export-url，尝试从HTML内容中恢复
+            // 这种情况不应该发生，但如果发生了，记录警告
+            console.warn('压缩包元素缺少 data-media-storage-id 或 data-export-url 属性，可能无法下载');
+            
+            // 尝试从父元素或附近查找（作为后备方案）
+            // 但由于数据已经丢失，无法恢复，只能跳过
+            return;
+        }
+        
         const downloadBtn = element.querySelector('.archive-download-btn');
-        if (downloadBtn && !downloadBtn.hasAttribute('data-initialized')) {
-            downloadBtn.setAttribute('data-initialized', 'true');
-            downloadBtn.addEventListener('click', async function(e) {
+        if (downloadBtn) {
+            // 移除旧的监听器（如果存在）并重新绑定，确保切换目录后也能正常工作
+            const newDownloadBtn = downloadBtn.cloneNode(true);
+            downloadBtn.parentNode.replaceChild(newDownloadBtn, downloadBtn);
+            
+            // 更新 element 引用，指向新的下载按钮的父元素（压缩包元素）
+            const archiveElement = newDownloadBtn.closest('.archive-attachment');
+            
+            newDownloadBtn.addEventListener('click', async function(e) {
                 e.preventDefault();
                 e.stopPropagation();
+                
+                // 验证元素是否有必要的属性
+                const storageId = archiveElement.getAttribute('data-media-storage-id');
+                const exportUrl = archiveElement.getAttribute('data-export-url');
+                const fileName = archiveElement.getAttribute('data-archive-name');
+                
+                console.log('下载按钮点击:', { fileName, storageId: storageId ? '存在' : '不存在', exportUrl: exportUrl ? '存在' : '不存在' });
+                
+                if (!storageId && !exportUrl) {
+                    console.error('压缩包元素缺少 data-media-storage-id 和 data-export-url');
+                    showToast('文件数据不存在，无法下载', 'error', 2000);
+                    return;
+                }
+                
                 // 调用 imageHandler.js 中定义的下载函数
                 if (typeof downloadArchive === 'function') {
-                    await downloadArchive(element);
+                    await downloadArchive(archiveElement);
+                } else {
+                    console.error('downloadArchive 函数未定义');
+                    showToast('下载功能未初始化', 'error', 2000);
                 }
             });
         }
@@ -209,6 +352,7 @@ function initializeArchiveDownloadButtons() {
 /**
  * 初始化预览区域中的所有视频元素
  * 确保视频有正确的属性和样式
+ * 如果视频有 data-media-storage-id 但没有有效的 src，从 IndexedDB 加载
  */
 function initializeVideos() {
     if (!markdownPreview) return;
@@ -229,13 +373,77 @@ function initializeVideos() {
         
         // 如果有原始数据但当前 src 被截断，则恢复
         if (originalSrc && currentSrc && originalSrc.length > currentSrc.length) {
-            video.setAttribute('src', originalSrc);
-            video.setAttribute('data-original-src', originalSrc);
+            // 如果是 base64 data URL，转换为 Blob URL 以提高性能
+            if (originalSrc.startsWith('data:')) {
+                (async () => {
+                    try {
+                        const response = await fetch(originalSrc);
+                        const blob = await response.blob();
+                        const blobUrl = URL.createObjectURL(blob);
+                        video.setAttribute('src', blobUrl);
+                        video.setAttribute('data-original-src', blobUrl);
+                    } catch (err) {
+                        video.setAttribute('src', originalSrc);
+                        video.setAttribute('data-original-src', originalSrc);
+                    }
+                })();
+            } else {
+                video.setAttribute('src', originalSrc);
+                video.setAttribute('data-original-src', originalSrc);
+            }
+        }
+        
+        // 检查是否有 data-media-storage-id 但没有有效的 src
+        // 这种情况发生在切换目录时，视频元素只有 storage-id 但没有加载数据
+        const mediaStorageId = video.getAttribute('data-media-storage-id');
+        if (mediaStorageId && typeof MediaStorage !== 'undefined') {
+            // 检查当前 src 是否有效（不是 about:blank 且不为空）
+            const src = video.getAttribute('src');
+            const hasValidSrc = src && src !== 'about:blank' && !src.trim().match(/^\s*$/);
+            
+            if (!hasValidSrc) {
+                // 延迟加载：从 IndexedDB 加载视频数据
+                // 使用 IntersectionObserver 或点击事件来触发加载，避免一次性加载所有视频
+                (async () => {
+                    try {
+                        // 检查是否已经加载过（避免重复加载）
+                        if (video.hasAttribute('data-loading-media')) {
+                            return;
+                        }
+                        video.setAttribute('data-loading-media', 'true');
+                        
+                        // 从 IndexedDB 获取视频 URL
+                        const mediaUrl = await MediaStorage.getMediaAsUrl(mediaStorageId);
+                        
+                        if (mediaUrl) {
+                            video.setAttribute('src', mediaUrl);
+                            video.setAttribute('data-original-src', mediaUrl);
+                            video.removeAttribute('data-loading-media');
+                            
+                            // 如果视频已经在视口中，尝试加载
+                            if (video.offsetParent !== null) {
+                                video.load();
+                            }
+                        } else {
+                            console.warn('无法从 IndexedDB 加载视频:', mediaStorageId);
+                            video.removeAttribute('data-loading-media');
+                        }
+                    } catch (err) {
+                        console.error('加载视频失败:', mediaStorageId, err);
+                        video.removeAttribute('data-loading-media');
+                    }
+                })();
+            }
         }
         
         // 确保视频有 controls 属性
         if (!video.hasAttribute('controls')) {
             video.setAttribute('controls', 'true');
+        }
+        
+        // 添加 preload="none" 延迟加载，提高性能
+        if (!video.hasAttribute('preload')) {
+            video.setAttribute('preload', 'none');
         }
         
         // 确保视频有合适的尺寸限制

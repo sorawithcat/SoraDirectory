@@ -310,10 +310,30 @@ async function openFileWithFSAPI() {
         // 加载目录
         LoadMulu();
         
-        // 计算初始哈希
-        calculateAllHashes();
+        // 性能优化：将计算哈希改为延迟执行，不阻塞显示
+        // 哈希计算用于变化追踪，不是显示内容所必需的
+        if (typeof calculateAllHashes === 'function') {
+            const calculateHashes = () => {
+                calculateAllHashes();
+            };
+            
+            if (typeof requestIdleCallback !== 'undefined') {
+                requestIdleCallback(calculateHashes, { timeout: 500 });
+            } else {
+                setTimeout(calculateHashes, 50);
+            }
+        }
+        
         hasUnsavedChanges = false;
         updateSaveButtonState();
+        
+        // 预加载所有目录内容（后台处理，不阻塞UI）
+        // 这样在切换目录时就不会再卡顿了，因为所有数据都已经准备好
+        if (typeof MediaStorage !== 'undefined' && typeof MediaStorage.preloadAllDirectoryContent === 'function') {
+            MediaStorage.preloadAllDirectoryContent(mulufile).catch(err => {
+                console.warn('预加载目录内容失败:', err);
+            });
+        }
         
         setTimeout(() => {
             // 展开所有目录
@@ -855,23 +875,12 @@ function selectFirstRootDirectory() {
         
         let loadedContent = findMulufileData(firstRootMulu);
         
-        // 如果内容包含 IndexedDB 媒体引用，异步恢复媒体数据
-        if (loadedContent && loadedContent.includes('data-media-storage-id')) {
-            (async function() {
-                if (typeof MediaStorage !== 'undefined') {
-                    loadedContent = await MediaStorage.processHtmlForLoad(loadedContent);
-                }
-                jiedianwords.value = loadedContent;
-                isUpdating = true;
-                updateMarkdownPreview();
-                isUpdating = false;
-            })();
-        } else {
-            jiedianwords.value = loadedContent;
-            isUpdating = true;
-            updateMarkdownPreview();
-            isUpdating = false;
-        }
+        // 直接显示内容，不进行媒体数据的加载处理
+        // 媒体数据已经存储在IndexedDB中，只在需要时才加载
+        jiedianwords.value = loadedContent;
+        isUpdating = true;
+        updateMarkdownPreview();
+        isUpdating = false;
     }
 }
 

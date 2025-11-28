@@ -1539,24 +1539,62 @@
         </div>
     </div>
     
-    <script src="SoraDirectoryJS.js"></script>
-    <!-- 模块化脚本 -->
-    <script src="js/licenseSystem.js"></script>
-    <script src="js/dialog.js"></script>
-    <script src="js/videoStorage.js"></script>
-    <script src="js/fileCache.js"></script>
-    <script src="js/globals.js"></script>
-    <script src="js/directoryUtils.js"></script>
-    <script src="js/preview.js"></script>
-    <script src="js/formatToolbar.js"></script>
-    <script src="js/imageHandler.js"></script>
-    <script src="js/directoryCore.js"></script>
-    <script src="js/directoryDrag.js"></script>
-    <script src="js/directoryOperations.js"></script>
-    <script src="js/contextMenu.js"></script>
-    <script src="js/fileOperations.js"></script>
-    <script src="js/toolbar.js"></script>
-    <script src="js/searchReplace.js"></script>
-    <script src="js/main.js"></script>
+    <!-- 脚本加载器（用于分块加载） -->
+    <script src="js/scriptLoader.js"></script>
+    <script>
+        // 分块加载脚本
+        (async function() {
+            // 核心脚本（必须立即加载，按顺序）
+            const coreScripts = [
+                'SoraDirectoryJS.js',
+                'js/licenseSystem.js',
+                'js/videoStorage.js',
+                'js/fileCache.js',
+                'js/globals.js'
+            ];
+            
+            // 功能脚本（可以并行加载）
+            const featureScripts = [
+                'js/dialog.js',
+                'js/directoryUtils.js',
+                'js/preview.js',
+                'js/formatToolbar.js',
+                'js/imageHandler.js',
+                'js/directoryCore.js',
+                'js/directoryDrag.js',
+                'js/directoryOperations.js',
+                'js/contextMenu.js',
+                'js/fileOperations.js',
+                'js/toolbar.js',
+                'js/searchReplace.js'
+            ];
+            
+            // 主初始化脚本（必须最后加载）
+            const mainScript = 'js/main.js';
+            
+            try {
+                // 第一步：加载核心脚本
+                await ScriptLoader.loadScripts(coreScripts);
+                
+                // 第二步：并行加载功能脚本（不阻塞）
+                const featureLoadPromise = ScriptLoader.loadScriptsParallel(featureScripts);
+                
+                // 第三步：根据DOM状态决定加载时机
+                if (document.readyState === 'loading') {
+                    // DOM还在加载，等待DOMContentLoaded
+                    document.addEventListener('DOMContentLoaded', async () => {
+                        await featureLoadPromise;
+                        await ScriptLoader.loadScript(mainScript);
+                    });
+                } else {
+                    // DOM已经就绪，立即加载
+                    await featureLoadPromise;
+                    await ScriptLoader.loadScript(mainScript);
+                }
+            } catch (error) {
+                console.error('脚本加载失败:', error);
+            }
+        })();
+    </script>
 </body>
 </html>

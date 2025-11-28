@@ -240,357 +240,6 @@ if (imageFileInput) {
     });
 }
 
-// -------------------- 视频压缩配置 --------------------
-
-/** 视频压缩配置 */
-const VIDEO_COMPRESS_CONFIG = {
-    enabled: true,                    // 是否启用压缩
-    minSizeToCompress: 2 * 1024 * 1024,  // 小于 2MB 不压缩
-    targetBitrate: '1M',              // 目标比特率
-    crf: 28,                          // 恒定质量因子 (18-28 推荐，越大压缩率越高)
-    preset: 'ultrafast',              // 编码速度预设 (ultrafast 最快，质量稍低)
-    maxWidth: 1280,                   // 最大宽度
-    maxHeight: 720,                   // 最大高度
-    threads: 0,                       // 线程数 (0=自动检测最佳线程数)
-};
-
-/** FFmpeg 是否可用（首次加载失败后禁用） */
-let ffmpegAvailable = true;
-
-/** FFmpeg 实例 */
-let ffmpegInstance = null;
-let ffmpegLoading = false;
-let ffmpegLoaded = false;
-
-/**
- * 检查本地 FFmpeg 文件是否存在
- * @returns {Promise<boolean>}
- */
-async function checkLocalFFmpeg() {
-    try {
-        const response = await fetch('lib/ffmpeg/ffmpeg/index.js', { method: 'HEAD' });
-        return response.ok;
-    } catch {
-        return false;
-    }
-}
-
-/**
- * 获取页面基础 URL
- * @returns {string}
- */
-function getBaseURL() {
-    const url = new URL(window.location.href);
-    return url.origin + url.pathname.substring(0, url.pathname.lastIndexOf('/') + 1);
-}
-
-/**
- * 加载 FFmpeg
- * @returns {Promise<Object>} FFmpeg 实例
- */
-async function loadFFmpeg() {
-    if (ffmpegLoaded && ffmpegInstance) {
-        return ffmpegInstance;
-    }
-    
-    if (ffmpegLoading) {
-        // 等待加载完成
-        while (ffmpegLoading) {
-            await new Promise(resolve => setTimeout(resolve, 100));
-        }
-        return ffmpegInstance;
-    }
-    
-    ffmpegLoading = true;
-    
-    try {
-        // 检查是否有本地 FFmpeg 文件
-        const hasLocal = await checkLocalFFmpeg();
-        const baseURL = getBaseURL();
-        
-        let FFmpeg, toBlobURL, fetchFile;
-        let coreBaseURL;
-        let workerURL;
-        
-        if (hasLocal) {
-            // 使用本地文件
-            console.log('使用本地 FFmpeg 文件...');
-            const ffmpegModule = await import(`${baseURL}lib/ffmpeg/ffmpeg/index.js`);
-            const utilModule = await import(`${baseURL}lib/ffmpeg/util/index.js`);
-            FFmpeg = ffmpegModule.FFmpeg;
-            toBlobURL = utilModule.toBlobURL;
-            fetchFile = utilModule.fetchFile;
-            coreBaseURL = `${baseURL}lib/ffmpeg/core`;
-            workerURL = `${baseURL}lib/ffmpeg/ffmpeg/worker.js`;
-        } else {
-            // 使用 CDN
-            console.log('使用 CDN 加载 FFmpeg...');
-            const ffmpegModule = await import('https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js');
-            const utilModule = await import('https://unpkg.com/@ffmpeg/util@0.12.1/dist/esm/index.js');
-            FFmpeg = ffmpegModule.FFmpeg;
-            toBlobURL = utilModule.toBlobURL;
-            fetchFile = utilModule.fetchFile;
-            coreBaseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
-            workerURL = null;
-        }
-        
-        ffmpegInstance = new FFmpeg();
-        
-        // 构建加载配置
-        const loadConfig = {
-            coreURL: await toBlobURL(`${coreBaseURL}/ffmpeg-core.js`, 'text/javascript'),
-            wasmURL: await toBlobURL(`${coreBaseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-        };
-        
-        // 本地模式需要指定 Worker URL（直接使用文件 URL，同源不需要转 Blob）
-        if (workerURL) {
-            loadConfig.classWorkerURL = workerURL;
-        }
-        
-        // 加载 FFmpeg 核心
-        await ffmpegInstance.load(loadConfig);
-        
-        // 保存 fetchFile 供后续使用
-        ffmpegInstance._fetchFile = fetchFile;
-        
-        ffmpegLoaded = true;
-        console.log('FFmpeg 加载完成' + (hasLocal ? ' (本地)' : ' (CDN)'));
-        return ffmpegInstance;
-    } catch (error) {
-        console.error('FFmpeg 加载失败:', error);
-        ffmpegAvailable = false;  // 标记 FFmpeg 不可用
-        throw error;
-    } finally {
-        ffmpegLoading = false;
-    }
-}
-
-/** 压缩预设选项（用于用户选择） */
-const COMPRESS_PRESET_OPTIONS = [
-    { value: 'ultrafast', label: '极速 - 最快速度，文件较大' },
-    { value: 'superfast', label: '超快 - 速度很快，文件稍大' },
-    { value: 'veryfast', label: '很快 - 速度较快，均衡选择' },
-    { value: 'faster', label: '较快 - 速度适中，压缩较好' },
-    { value: 'fast', label: '快速 - 速度稍慢，压缩更好' },
-    { value: 'medium', label: '标准 - 默认速度，压缩效果好' },
-];
-/**
- * 压缩视频
- * @param {File} file - 视频文件
- * @param {Function} onProgress - 进度回调
- * @param {string} preset - 压缩预设 (ultrafast/superfast/veryfast/faster/fast/medium)
- * @returns {Promise<{data: string, compressed: boolean}>} 压缩后的 base64 数据
- */
-async function compressVideo(file, onProgress = null, preset = null) {
-    const config = { ...VIDEO_COMPRESS_CONFIG };
-    // 如果传入了preset参数，覆盖默认配置
-    if (preset) {
-        config.preset = preset;
-    }
-    
-    // 如果禁用压缩或文件较小，直接返回原始数据
-    if (!config.enabled || file.size < config.minSizeToCompress) {
-        return new Promise((resolve) => {
-            const reader = new FileReader();
-            reader.onload = (e) => resolve({ data: e.target.result, compressed: false });
-            reader.readAsDataURL(file);
-        });
-    }
-    
-    try {
-        // 显示加载提示
-        if (onProgress) onProgress('正在加载视频压缩工具...');
-        
-        const ffmpeg = await loadFFmpeg();
-        const fetchFile = ffmpeg._fetchFile;
-        
-        // 设置进度回调
-        if (onProgress) {
-            ffmpeg.on('progress', ({ progress }) => {
-                const percent = Math.round(progress * 100);
-                onProgress(`正在压缩视频... ${percent}%`);
-            });
-        }
-        
-        // 确定输入输出文件名
-        const inputName = 'input' + getFileExtension(file.name);
-        const outputName = 'output.mp4';
-        
-        // 写入输入文件
-        if (onProgress) onProgress('正在读取视频文件...');
-        await ffmpeg.writeFile(inputName, await fetchFile(file));
-        
-        // 构建 FFmpeg 命令
-        // 使用 libx264 编码，恒定质量因子，极速预设
-        const args = [
-            '-i', inputName,
-            '-threads', String(config.threads || 0),  // 多线程加速
-            '-c:v', 'libx264',
-            '-crf', String(config.crf),
-            '-preset', config.preset,
-            '-tune', 'fastdecode',       // 优化解码速度
-            '-c:a', 'aac',
-            '-b:a', '128k',
-            // 限制分辨率
-            '-vf', `scale='min(${config.maxWidth},iw)':'min(${config.maxHeight},ih)':force_original_aspect_ratio=decrease`,
-            '-movflags', '+faststart',  // 优化网络播放
-            outputName
-        ];
-        
-        if (onProgress) onProgress('正在压缩视频...');
-        await ffmpeg.exec(args);
-        
-        // 读取输出文件
-        const data = await ffmpeg.readFile(outputName);
-        
-        // 转换为 base64
-        const blob = new Blob([data.buffer], { type: 'video/mp4' });
-        const base64 = await blobToBase64(blob);
-        
-        // 清理临时文件
-        try {
-            await ffmpeg.deleteFile(inputName);
-            await ffmpeg.deleteFile(outputName);
-        } catch (e) {
-            // 忽略清理错误
-        }
-        
-        // 计算压缩率
-        const originalSize = file.size;
-        const compressedSize = blob.size;
-        const ratio = ((originalSize - compressedSize) / originalSize * 100).toFixed(1);
-        
-        console.log(`视频压缩: ${(originalSize/1024/1024).toFixed(1)}MB → ${(compressedSize/1024/1024).toFixed(1)}MB (节省 ${ratio}%)`);
-        
-        // 如果压缩后更大，返回原始数据
-        if (compressedSize >= originalSize) {
-            console.log('压缩后更大，使用原始视频');
-            return new Promise((resolve) => {
-                const reader = new FileReader();
-                reader.onload = (e) => resolve({ data: e.target.result, compressed: false });
-                reader.readAsDataURL(file);
-            });
-        }
-        
-        return { data: base64, compressed: true };
-        
-    } catch (error) {
-        console.error('视频压缩失败:', error);
-        // 压缩失败，返回原始数据
-        return new Promise((resolve) => {
-            const reader = new FileReader();
-            reader.onload = (e) => resolve({ data: e.target.result, compressed: false });
-            reader.readAsDataURL(file);
-        });
-    }
-}
-
-/**
- * 获取文件扩展名
- * @param {string} filename - 文件名
- * @returns {string} 扩展名（包含点号）
- */
-function getFileExtension(filename) {
-    const ext = filename.split('.').pop().toLowerCase();
-    return '.' + (ext || 'mp4');
-}
-
-/**
- * Blob 转 base64
- * @param {Blob} blob - Blob 对象
- * @returns {Promise<string>} base64 字符串
- */
-function blobToBase64(blob) {
-    return new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.readAsDataURL(blob);
-    });
-}
-
-/** 压缩进度对话框元素 */
-let compressProgressDialog = null;
-let compressProgressText = null;
-
-/**
- * 显示压缩进度对话框
- * @param {string} message - 进度消息
- */
-function showCompressProgress(message) {
-    if (!compressProgressDialog) {
-        // 创建进度对话框
-        compressProgressDialog = document.createElement('div');
-        compressProgressDialog.className = 'compress-progress-overlay';
-        compressProgressDialog.innerHTML = `
-            <div class="compress-progress-dialog">
-                <div class="compress-progress-spinner"></div>
-                <div class="compress-progress-text"></div>
-                <div class="compress-progress-hint">首次加载压缩工具可能需要较长时间</div>
-            </div>
-        `;
-        
-        // 添加样式
-        const style = document.createElement('style');
-        style.textContent = `
-            .compress-progress-overlay {
-                position: fixed;
-                top: 0;
-                left: 0;
-                right: 0;
-                bottom: 0;
-                background: rgba(0, 0, 0, 0.6);
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                z-index: 10000;
-            }
-            .compress-progress-dialog {
-                background: var(--bg-color, #fff);
-                border-radius: 12px;
-                padding: 30px 40px;
-                text-align: center;
-                box-shadow: 0 10px 40px rgba(0,0,0,0.3);
-                min-width: 300px;
-            }
-            .compress-progress-spinner {
-                width: 50px;
-                height: 50px;
-                border: 4px solid #e0e0e0;
-                border-top-color: var(--primary-color, #4a90d9);
-                border-radius: 50%;
-                animation: compress-spin 1s linear infinite;
-                margin: 0 auto 20px;
-            }
-            @keyframes compress-spin {
-                to { transform: rotate(360deg); }
-            }
-            .compress-progress-text {
-                font-size: 16px;
-                color: var(--text-color, #333);
-                margin-bottom: 10px;
-            }
-            .compress-progress-hint {
-                font-size: 12px;
-                color: var(--text-color-secondary, #888);
-            }
-        `;
-        document.head.appendChild(style);
-        document.body.appendChild(compressProgressDialog);
-        compressProgressText = compressProgressDialog.querySelector('.compress-progress-text');
-    }
-    
-    compressProgressText.textContent = message;
-    compressProgressDialog.style.display = 'flex';
-}
-
-/**
- * 隐藏压缩进度对话框
- */
-function hideCompressProgress() {
-    if (compressProgressDialog) {
-        compressProgressDialog.style.display = 'none';
-    }
-}
 
 // -------------------- 视频文件选择处理 --------------------
 
@@ -612,35 +261,6 @@ if (videoFileInput) {
         }
         
         const videoName = file.name || 'video';
-        const sizeMB = (file.size / 1024 / 1024).toFixed(1);
-        
-        // 询问是否压缩视频（仅当 FFmpeg 可用时）
-        let shouldCompress = false;
-        let selectedPreset = null;
-        if (VIDEO_COMPRESS_CONFIG.enabled && ffmpegAvailable) {
-            shouldCompress = await customConfirm(
-                `视频大小: ${sizeMB}MB\n\n是否压缩视频？\n\n• 压缩可减小文件体积（通常节省 50-80%）\n• 首次压缩需要下载压缩工具（约 25MB）\n• 压缩过程可能需要几秒到几十秒\n\n<span style="color: #e74c3c; font-weight: bold;">⚠️ 不建议压缩：浏览器压缩速度较慢</span>`,
-                '压缩',
-                '不压缩',
-                '确认',
-                true  // 允许 HTML
-            );
-            
-            // 如果选择压缩，让用户选择压缩速度
-            if (shouldCompress) {
-                selectedPreset = await customSelect(
-                    '选择压缩速度（速度越快，文件越大）：',
-                    COMPRESS_PRESET_OPTIONS,
-                    'veryfast',  // 默认选择"很快"作为均衡选项
-                    '压缩设置'
-                );
-                
-                // 如果用户取消选择，不压缩
-                if (selectedPreset === null) {
-                    shouldCompress = false;
-                }
-            }
-        }
         
         const caption = await customPrompt('输入视频标题（可选，直接按确定跳过，取消则不上传）:', '');
         
@@ -658,47 +278,18 @@ if (videoFileInput) {
         // 大文件阈值：超过 30MB 使用 Blob 存储
         const LARGE_VIDEO_THRESHOLD = 30 * 1024 * 1024;
         
-        if (shouldCompress) {
-            try {
-                showCompressProgress('正在准备压缩...');
-                const result = await compressVideo(file, showCompressProgress, selectedPreset);
-                videoData = result.data;
-                hideCompressProgress();
-                
-                if (result.compressed) {
-                    const newSizeMB = (videoData.length * 0.75 / 1024 / 1024).toFixed(1);
-                    showToast(`视频压缩完成！${sizeMB}MB → ${newSizeMB}MB`, 'success', 3000);
-                }
-            } catch (err) {
-                hideCompressProgress();
-                console.error('视频压缩失败:', err);
-                showToast('压缩失败，使用原始视频', 'warning', 2000);
-                // 压缩失败，大文件使用 Blob 存储
-                if (file.size > LARGE_VIDEO_THRESHOLD) {
-                    useBlobStorage = true;
-                    videoBlob = file;
-                } else {
-                    videoData = await new Promise((resolve) => {
-                        const reader = new FileReader();
-                        reader.onload = (e) => resolve(e.target.result);
-                        reader.readAsDataURL(file);
-                    });
-                }
-            }
+        // 不压缩，直接使用原始视频
+        if (file.size > LARGE_VIDEO_THRESHOLD) {
+            // 大文件使用 Blob 存储
+            useBlobStorage = true;
+            videoBlob = file;
         } else {
-            // 不压缩
-            if (file.size > LARGE_VIDEO_THRESHOLD) {
-                // 大文件使用 Blob 存储
-                useBlobStorage = true;
-                videoBlob = file;
-            } else {
-                // 小文件使用 base64
-                videoData = await new Promise((resolve) => {
-                    const reader = new FileReader();
-                    reader.onload = (e) => resolve(e.target.result);
-                    reader.readAsDataURL(file);
-                });
-            }
+            // 小文件使用 base64
+            videoData = await new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onload = (e) => resolve(e.target.result);
+                reader.readAsDataURL(file);
+            });
         }
         
         // 将视频保存到 IndexedDB
@@ -1449,6 +1040,17 @@ if (markdownPreview) {
         
         const files = e.dataTransfer.files;
         if (files.length > 0) {
+            // 先统计图片文件的数量
+            let imageCount = 0;
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                const isImage = file.type.startsWith('image/') || 
+                    /\.(jpg|jpeg|png|gif|bmp|webp|svg|ico)$/i.test(file.name);
+                if (isImage) {
+                    imageCount++;
+                }
+            }
+            
             for (let i = 0; i < files.length; i++) {
                 const file = files[i];
                 
@@ -1470,12 +1072,18 @@ if (markdownPreview) {
                         
                         const imageName = file.name || '图片';
                         
-                        const caption = await customPrompt('输入图片图注（可选，直接按确定跳过，取消则不上传）:', '');
-                        
-                        // 用户点击取消，中止上传
-                        if (caption === null) {
-                            continue;
+                        // 如果是多张图片，不弹窗，直接使用空图注
+                        let caption = '';
+                        if (imageCount === 1) {
+                            // 只有一张图片时，弹出图注输入弹窗
+                            caption = await customPrompt('输入图片图注（可选，直接按确定跳过，取消则不上传）:', '');
+                            
+                            // 用户点击取消，中止上传
+                            if (caption === null) {
+                                continue;
+                            }
                         }
+                        // 多张图片时，caption 保持为空字符串，不弹窗
                         
                         // 压缩图片（不影响质量）
                         const imageData = await compressImage(rawImageData);
@@ -1551,35 +1159,6 @@ if (markdownPreview) {
                     }
                 } else if (isVideo) {
                     const videoName = file.name || '视频';
-                    const sizeMB = (file.size / 1024 / 1024).toFixed(1);
-                    
-                    // 询问是否压缩视频（仅当 FFmpeg 可用时）
-                    let shouldCompress = false;
-                    let selectedPreset = null;
-                    if (VIDEO_COMPRESS_CONFIG.enabled && ffmpegAvailable) {
-                        shouldCompress = await customConfirm(
-                            `视频大小: ${sizeMB}MB\n\n是否压缩视频？\n\n• 压缩可减小文件体积（通常节省 50-80%）\n• 首次压缩需要下载压缩工具（约 25MB）\n• 压缩过程可能需要几秒到几十秒\n\n<span style="color: #e74c3c; font-weight: bold;">⚠️ 不建议压缩：浏览器压缩速度较慢</span>`,
-                            '压缩',
-                            '不压缩',
-                            '确认',
-                            true  // 允许 HTML
-                        );
-                        
-                        // 如果选择压缩，让用户选择压缩速度
-                        if (shouldCompress) {
-                            selectedPreset = await customSelect(
-                                '选择压缩速度（速度越快，文件越大）：',
-                                COMPRESS_PRESET_OPTIONS,
-                                'veryfast',  // 默认选择"很快"作为均衡选项
-                                '压缩设置'
-                            );
-                            
-                            // 如果用户取消选择，不压缩
-                            if (selectedPreset === null) {
-                                shouldCompress = false;
-                            }
-                        }
-                    }
                     
                     const caption = await customPrompt('输入视频标题（可选，直接按确定跳过，取消则不上传）:', '');
                     
@@ -1596,60 +1175,24 @@ if (markdownPreview) {
                     // 大文件阈值：超过 30MB 使用 Blob 存储
                     const LARGE_VIDEO_THRESHOLD = 30 * 1024 * 1024;
                     
-                    if (shouldCompress) {
-                        try {
-                            showCompressProgress('正在准备压缩...');
-                            const result = await compressVideo(file, showCompressProgress, selectedPreset);
-                            videoData = result.data;
-                            hideCompressProgress();
-                            
-                            if (result.compressed) {
-                                const newSizeMB = (videoData.length * 0.75 / 1024 / 1024).toFixed(1);
-                                showToast(`视频压缩完成！${sizeMB}MB → ${newSizeMB}MB`, 'success', 3000);
-                            }
-                        } catch (err) {
-                            hideCompressProgress();
-                            console.error('视频压缩失败:', err);
-                            showToast('压缩失败，使用原始视频', 'warning', 2000);
-                            // 压缩失败，大文件使用 Blob 存储
-                            if (file.size > LARGE_VIDEO_THRESHOLD) {
-                                useBlobStorage = true;
-                                videoBlob = file;
-                            } else {
-                                try {
-                                    videoData = await new Promise((resolve, reject) => {
-                                        const reader = new FileReader();
-                                        reader.onload = (ev) => resolve(ev.target.result);
-                                        reader.onerror = (e) => reject(new Error('读取视频文件失败'));
-                                        reader.readAsDataURL(file);
-                                    });
-                                } catch (err) {
-                                    console.error('读取视频文件失败:', err);
-                                    showToast('读取视频文件失败：' + (err.message || err), 'error', 3000);
-                                    continue;
-                                }
-                            }
-                        }
+                    // 不压缩，直接使用原始视频
+                    if (file.size > LARGE_VIDEO_THRESHOLD) {
+                        // 大文件使用 Blob 存储
+                        useBlobStorage = true;
+                        videoBlob = file;
                     } else {
-                        // 不压缩
-                        if (file.size > LARGE_VIDEO_THRESHOLD) {
-                            // 大文件使用 Blob 存储
-                            useBlobStorage = true;
-                            videoBlob = file;
-                        } else {
-                            // 小文件使用 base64
-                            try {
-                                videoData = await new Promise((resolve, reject) => {
-                                    const reader = new FileReader();
-                                    reader.onload = (ev) => resolve(ev.target.result);
-                                    reader.onerror = (e) => reject(new Error('读取视频文件失败'));
-                                    reader.readAsDataURL(file);
-                                });
-                            } catch (err) {
-                                console.error('读取视频文件失败:', err);
-                                showToast('读取视频文件失败：' + (err.message || err), 'error', 3000);
-                                continue;
-                            }
+                        // 小文件使用 base64
+                        try {
+                            videoData = await new Promise((resolve, reject) => {
+                                const reader = new FileReader();
+                                reader.onload = (ev) => resolve(ev.target.result);
+                                reader.onerror = (e) => reject(new Error('读取视频文件失败'));
+                                reader.readAsDataURL(file);
+                            });
+                        } catch (err) {
+                            console.error('读取视频文件失败:', err);
+                            showToast('读取视频文件失败：' + (err.message || err), 'error', 3000);
+                            continue;
                         }
                     }
                     
@@ -2039,74 +1582,140 @@ function createArchiveElement(fileName, fileSize, fileData, storageId = null) {
     return container;
 }
 
+// 压缩包下载缓存（避免重复解析）
+const archiveBlobCache = new Map();
+
 /**
  * 下载压缩文件
  * @param {HTMLElement} archiveElement - 压缩文件元素
  */
 async function downloadArchive(archiveElement) {
+    if (!archiveElement) {
+        showToast('下载失败：元素不存在', 'error', 2000);
+        return;
+    }
+    
     const fileName = archiveElement.getAttribute('data-archive-name') || 'archive.zip';
     const storageId = archiveElement.getAttribute('data-media-storage-id');
+    const exportUrl = archiveElement.getAttribute('data-export-url');
     
-    if (!storageId) {
+    if (!storageId && !exportUrl) {
         showToast('文件数据不存在', 'error', 2000);
         return;
     }
     
     try {
-        // 检查是否支持 File System Access API（用于大文件流式下载）
-        if (window.showSaveFilePicker && typeof MediaStorage.getChunkedBlobStream === 'function') {
-            // 使用 File System Access API 进行真正的流式下载，避免内存溢出
-            try {
-                const fileHandle = await window.showSaveFilePicker({
-                    suggestedName: fileName,
-                    types: [{
-                        description: '压缩文件',
-                        accept: {
-                            'application/zip': ['.zip'],
-                            'application/x-rar-compressed': ['.rar'],
-                            'application/x-7z-compressed': ['.7z'],
-                            'application/x-tar': ['.tar']
-                        }
-                    }]
-                });
+        let blob = null;
+        
+        // 检查缓存（使用 storageId 或 exportUrl 的前100个字符作为 key）
+        const cacheKey = storageId || (exportUrl ? exportUrl.substring(0, 100) : null);
+        if (cacheKey && archiveBlobCache.has(cacheKey)) {
+            blob = archiveBlobCache.get(cacheKey);
+            const sizeMB = (blob.size / 1024 / 1024).toFixed(1);
+            showToast(`使用缓存文件 (${sizeMB}MB)`, 'success', 2000);
+        } else {
+            // 优先使用 data-export-url（JSON 中已嵌入的 base64 data URL）
+            if (exportUrl && exportUrl.startsWith('data:')) {
+                // 显示解析提示
+                showToast('正在解析文件数据...', 'info', 3000);
                 
-                // 获取可写流
-                const writableStream = await fileHandle.createWritable();
-                
-                // 获取分块文件的流式读取器
-                const readableStream = await MediaStorage.getChunkedBlobStream(storageId);
-                
-                if (!readableStream) {
-                    await writableStream.close();
-                    MediaStorage.hideProgressToast();
-                    showToast('无法获取文件数据', 'error', 2000);
-                    return;
+                try {
+                    // 从 base64 data URL 转换为 Blob
+                    const response = await fetch(exportUrl);
+                    if (!response.ok) {
+                        throw new Error('Failed to fetch data URL');
+                    }
+                    blob = await response.blob();
+                    
+                    // 缓存解析结果
+                    if (cacheKey) {
+                        archiveBlobCache.set(cacheKey, blob);
+                    }
+                    
+                    const sizeMB = (blob.size / 1024 / 1024).toFixed(1);
+                    showToast(`文件已准备就绪 (${sizeMB}MB)`, 'success', 2000);
+                } catch (fetchErr) {
+                    throw new Error('解析文件数据失败: ' + fetchErr.message);
+                }
+            } else if (storageId) {
+                // 如果没有 data-export-url，从 IndexedDB 获取
+                if (typeof MediaStorage === 'undefined') {
+                    throw new Error('MediaStorage 未初始化');
                 }
                 
-                // 将读取流直接管道到写入流，实现真正的流式传输
-                // 这样不会将所有数据加载到内存中
-                await readableStream.pipeTo(writableStream);
+                // 检查是否支持 File System Access API（用于大文件流式下载）
+                if (window.showSaveFilePicker && typeof MediaStorage.getChunkedBlobStream === 'function') {
+                    // 使用 File System Access API 进行真正的流式下载，避免内存溢出
+                    try {
+                        const fileHandle = await window.showSaveFilePicker({
+                            suggestedName: fileName,
+                            types: [{
+                                description: '压缩文件',
+                                accept: {
+                                    'application/zip': ['.zip'],
+                                    'application/x-rar-compressed': ['.rar'],
+                                    'application/x-7z-compressed': ['.7z'],
+                                    'application/x-tar': ['.tar']
+                                }
+                            }]
+                        });
+                        
+                        // 获取可写流
+                        const writableStream = await fileHandle.createWritable();
+                        
+                        // 获取分块文件的流式读取器
+                        const readableStream = await MediaStorage.getChunkedBlobStream(storageId);
+                        
+                        if (!readableStream) {
+                            await writableStream.close();
+                            MediaStorage.hideProgressToast();
+                            throw new Error('无法获取文件数据');
+                        }
+                        
+                        // 将读取流直接管道到写入流，实现真正的流式传输
+                        // 这样不会将所有数据加载到内存中
+                        await readableStream.pipeTo(writableStream);
+                        
+                        MediaStorage.hideProgressToast();
+                        showToast(`已保存：${fileName}`, 'success', 2000);
+                        return;
+                    } catch (fsError) {
+                        // 用户取消或 API 不支持，回退到传统下载方式
+                        if (fsError.name !== 'AbortError') {
+                            console.log('File System Access API 不可用，使用传统下载方式:', fsError);
+                        } else {
+                            // 用户取消
+                            MediaStorage.hideProgressToast();
+                            return;
+                        }
+                    }
+                }
                 
-                MediaStorage.hideProgressToast();
-                showToast(`已保存：${fileName}`, 'success', 2000);
-                return;
-            } catch (fsError) {
-                // 用户取消或 API 不支持，回退到传统下载方式
-                if (fsError.name !== 'AbortError') {
-                    console.log('File System Access API 不可用，使用传统下载方式:', fsError);
-                } else {
-                    // 用户取消
+                // 传统下载方式（使用 Blob URL）
+                // 注意：对于超大文件，这仍可能占用较多内存
+                // 但通过流式读取分块，已经优化了内存使用
+                showToast('正在从存储中加载文件...', 'info', 3000);
+                try {
+                    blob = await MediaStorage.getChunkedBlob(storageId);
                     MediaStorage.hideProgressToast();
-                    return;
+                    
+                    if (blob) {
+                        // 缓存解析结果
+                        if (cacheKey) {
+                            archiveBlobCache.set(cacheKey, blob);
+                        }
+                        
+                        const sizeMB = (blob.size / 1024 / 1024).toFixed(1);
+                        showToast(`文件已准备就绪 (${sizeMB}MB)`, 'success', 2000);
+                    } else {
+                        throw new Error('无法从存储中获取文件');
+                    }
+                } catch (storageErr) {
+                    MediaStorage.hideProgressToast();
+                    throw new Error('加载文件失败: ' + storageErr.message);
                 }
             }
         }
-        
-        // 传统下载方式（使用 Blob URL）
-        // 注意：对于超大文件，这仍可能占用较多内存
-        // 但通过流式读取分块，已经优化了内存使用
-        const blob = await MediaStorage.getChunkedBlob(storageId);
-        MediaStorage.hideProgressToast();
         
         if (!blob) {
             showToast('无法获取文件数据', 'error', 2000);
@@ -2118,16 +1727,19 @@ async function downloadArchive(archiveElement) {
         const a = document.createElement('a');
         a.href = url;
         a.download = fileName;
+        document.body.appendChild(a); // 临时添加到DOM
         a.click();
+        document.body.removeChild(a); // 立即移除
         
         // 清理
         setTimeout(() => URL.revokeObjectURL(url), 1000);
         showToast(`正在下载：${fileName}`, 'success', 2000);
         
     } catch (err) {
-        MediaStorage.hideProgressToast();
-        console.error('下载压缩文件失败:', err);
-        showToast(`下载失败: ${err.message}`, 'error', 3000);
+        if (typeof MediaStorage !== 'undefined') {
+            MediaStorage.hideProgressToast();
+        }
+        showToast(`下载失败: ${err.message || err}`, 'error', 3000);
     }
 }
 
