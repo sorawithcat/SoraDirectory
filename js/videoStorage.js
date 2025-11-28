@@ -712,14 +712,23 @@ const MediaStorage = (function() {
         // 如果是分块存储，先删除所有分块
         if (record && record.chunked && record.chunks) {
             for (const chunkId of record.chunks) {
-                await new Promise((resolve, reject) => {
-                    const transaction = database.transaction([STORE_NAME], 'readwrite');
-                    const store = transaction.objectStore(STORE_NAME);
-                    const request = store.delete(chunkId);
-                    
-                    request.onsuccess = () => resolve();
-                    request.onerror = () => reject(request.error);
-                });
+                try {
+                    await new Promise((resolve, reject) => {
+                        const transaction = database.transaction([STORE_NAME], 'readwrite');
+                        const store = transaction.objectStore(STORE_NAME);
+                        const request = store.delete(chunkId);
+                        
+                        request.onsuccess = () => resolve();
+                        request.onerror = () => {
+                            // 分块删除失败，记录错误但继续执行
+                            console.warn(`删除分块 ${chunkId} 失败:`, request.error);
+                            resolve(); // 继续执行，不阻止删除主记录
+                        };
+                    });
+                } catch (err) {
+                    // 分块删除失败，记录错误但继续执行
+                    console.warn(`删除分块 ${chunkId} 时出错:`, err);
+                }
             }
         }
         
@@ -735,6 +744,29 @@ const MediaStorage = (function() {
             
             request.onerror = () => {
                 console.error('MediaStorage: 删除媒体失败', request.error);
+                reject(request.error);
+            };
+        });
+    }
+    
+    /**
+     * 检查媒体是否存在（只检查主记录，不读取数据）
+     * @param {string} mediaId - 媒体 ID
+     * @returns {Promise<boolean>} - 是否存在
+     */
+    async function mediaExists(mediaId) {
+        const database = await initDB();
+        
+        return new Promise((resolve, reject) => {
+            const transaction = database.transaction([STORE_NAME], 'readonly');
+            const store = transaction.objectStore(STORE_NAME);
+            const request = store.get(mediaId);
+            
+            request.onsuccess = () => {
+                resolve(!!request.result);
+            };
+            
+            request.onerror = () => {
                 reject(request.error);
             };
         });
@@ -764,6 +796,7 @@ const MediaStorage = (function() {
     
     /**
      * 清理孤立数据（删除没有对应 DOM 元素的媒体数据）
+     * 同时也会清理所有分块数据（包括孤立的分块）
      * @returns {Promise<number>} - 返回删除的数量
      */
     async function cleanupOrphanedData() {
@@ -778,6 +811,23 @@ const MediaStorage = (function() {
             usedIds.add(el.getAttribute('data-media-storage-id'));
         });
         
+        // 同时检查 mulufile 数据中的媒体 ID（从文件内容中提取）
+        if (typeof mulufile !== 'undefined' && Array.isArray(mulufile)) {
+            for (const item of mulufile) {
+                if (item && item.length === 4) {
+                    const content = item[3] || '';
+                    // 提取所有 data-media-storage-id 属性值
+                    const mediaIdMatches = content.match(/data-media-storage-id=["']([^"']+)["']/gi);
+                    if (mediaIdMatches) {
+                        mediaIdMatches.forEach(match => {
+                            const mediaId = match.match(/["']([^"']+)["']/)[1];
+                            if (mediaId) usedIds.add(mediaId);
+                        });
+                    }
+                }
+            }
+        }
+        
         // 找出孤立的 ID
         const orphanedIds = mainIds.filter(id => !usedIds.has(id));
         
@@ -788,7 +838,41 @@ const MediaStorage = (function() {
                 await deleteMedia(id);
                 deletedCount++;
             } catch (err) {
-                console.error('清理孤立数据失败:', id, err);
+                // 清理孤立数据失败，记录错误但继续
+                console.warn(`清理孤立数据 ${id} 失败:`, err);
+            }
+        }
+        
+        // 清理所有孤立的分块（没有对应主记录的分块）
+        const orphanedChunks = allIds.filter(id => {
+            if (!id.includes('_chunk_')) return false;
+            // 提取主记录 ID（分块 ID 格式：主ID_chunk_索引）
+            const mainId = id.replace(/_chunk_\d+$/, '');
+            return !mainIds.includes(mainId) || orphanedIds.includes(mainId);
+        });
+        
+        // 删除孤立的分块
+        if (orphanedChunks.length > 0) {
+            const database = await initDB();
+            for (const chunkId of orphanedChunks) {
+                try {
+                    await new Promise((resolve, reject) => {
+                        const transaction = database.transaction([STORE_NAME], 'readwrite');
+                        const store = transaction.objectStore(STORE_NAME);
+                        const request = store.delete(chunkId);
+                        
+                        request.onsuccess = () => {
+                            deletedCount++;
+                            resolve();
+                        };
+                        request.onerror = () => {
+                            console.warn(`删除孤立分块 ${chunkId} 失败:`, request.error);
+                            resolve(); // 继续执行
+                        };
+                    });
+                } catch (err) {
+                    console.warn(`删除孤立分块 ${chunkId} 时出错:`, err);
+                }
             }
         }
         
@@ -797,27 +881,75 @@ const MediaStorage = (function() {
     
     /**
      * 清空所有媒体数据
+     * 使用更可靠的方法：先获取所有键，然后逐个删除，确保包括分块在内的所有数据都被删除
      * @returns {Promise<void>}
      */
     async function clearAll() {
         // 只清理缓存映射，不主动清理 Blob URL（让浏览器自动管理）
         mediaUrlCache.clear();
+        processedContentCache.clear();
         
         const database = await initDB();
         
-        return new Promise((resolve, reject) => {
-            const transaction = database.transaction([STORE_NAME], 'readwrite');
-            const store = transaction.objectStore(STORE_NAME);
-            const request = store.clear();
-            
-            request.onsuccess = () => {
-                resolve();
-            };
-            
-            request.onerror = () => {
-                reject(request.error);
-            };
-        });
+        // 先获取所有键
+        const allKeys = await getAllMediaIds();
+        
+        // 如果使用 clear() 方法失败，则逐个删除
+        try {
+            return new Promise((resolve, reject) => {
+                const transaction = database.transaction([STORE_NAME], 'readwrite');
+                const store = transaction.objectStore(STORE_NAME);
+                const request = store.clear();
+                
+                request.onsuccess = () => {
+                    resolve();
+                };
+                
+                request.onerror = () => {
+                    // 如果 clear() 失败，尝试逐个删除
+                    console.warn('clear() 失败，尝试逐个删除:', request.error);
+                    deleteAllKeys(database, allKeys).then(resolve).catch(reject);
+                };
+            });
+        } catch (err) {
+            // 如果出错，尝试逐个删除
+            console.warn('清空数据库时出错，尝试逐个删除:', err);
+            return deleteAllKeys(database, allKeys);
+        }
+    }
+    
+    /**
+     * 逐个删除所有键（备用方法）
+     * @param {IDBDatabase} database - 数据库实例
+     * @param {string[]} keys - 要删除的键列表
+     * @returns {Promise<void>}
+     */
+    async function deleteAllKeys(database, keys) {
+        if (!keys || keys.length === 0) {
+            return;
+        }
+        
+        // 分批删除，避免事务过大
+        const batchSize = 100;
+        for (let i = 0; i < keys.length; i += batchSize) {
+            const batch = keys.slice(i, i + batchSize);
+            await Promise.all(
+                batch.map(key => {
+                    return new Promise((resolve, reject) => {
+                        const transaction = database.transaction([STORE_NAME], 'readwrite');
+                        const store = transaction.objectStore(STORE_NAME);
+                        const request = store.delete(key);
+                        
+                        request.onsuccess = () => resolve();
+                        request.onerror = () => {
+                            // 单个删除失败，记录但继续
+                            console.warn(`删除键 ${key} 失败:`, request.error);
+                            resolve(); // 继续执行
+                        };
+                    });
+                })
+            );
+        }
     }
     
     /**
@@ -911,9 +1043,9 @@ const MediaStorage = (function() {
                 // 如果已经有有效的 base64 data URL，先保存到 IndexedDB（如果还没有）
                 if (existingSrc && existingSrc.startsWith('data:') && !existingSrc.includes('about:blank')) {
                     try {
-                        // 检查 IndexedDB 中是否已有该媒体
-                        const existingMedia = await getMedia(mediaId);
-                        if (!existingMedia) {
+                        // 检查 IndexedDB 中是否已有该媒体（只检查主记录，不读取数据）
+                        const exists = await mediaExists(mediaId);
+                        if (!exists) {
                             // 如果 IndexedDB 中没有，保存 base64 data URL 到 IndexedDB
                             await saveMedia(existingSrc, 'video', mediaId);
                         }
@@ -959,9 +1091,9 @@ const MediaStorage = (function() {
                 // 如果已经有有效的 base64 data URL，先保存到 IndexedDB（如果还没有）
                 if (existingSrc && existingSrc.startsWith('data:') && !existingSrc.includes('about:blank')) {
                     try {
-                        // 检查 IndexedDB 中是否已有该媒体
-                        const existingMedia = await getMedia(mediaId);
-                        if (!existingMedia) {
+                        // 检查 IndexedDB 中是否已有该媒体（只检查主记录，不读取数据）
+                        const exists = await mediaExists(mediaId);
+                        if (!exists) {
                             // 如果 IndexedDB 中没有，保存 base64 data URL 到 IndexedDB
                             await saveMedia(existingSrc, 'image', mediaId);
                         }
