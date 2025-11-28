@@ -183,42 +183,78 @@ async function updateMarkdownPreview() {
         // 这样可以避免切换目录时的卡顿
         // 重要：从原始内容（jiedianwords.value）中提取 data-export-url，而不是从处理后的 content 中
         // 因为 content 可能已经被处理过，移除了 data-export-url
+        // 优化：不在字符串层面处理，而是在 DOM 更新后直接操作 DOM 元素，避免处理大字符串
         const archiveExportUrlMap = new Map();
         const originalContent = jiedianwords.value || '';
         const hasExportUrl = originalContent.includes('data-export-url');
         
+        // 只在确实有 data-export-url 时才处理，且使用更高效的方法
+        // 使用字符串索引查找，避免正则表达式遍历整个大字符串
         if (hasExportUrl) {
-            // 使用更高效的方法：只匹配压缩包元素，避免匹配整个大字符串
-            // 使用非贪婪匹配和更精确的正则表达式
-            const archivePattern = /<div[^>]*class=["']archive-attachment["'][^>]*>/gi;
-            let archiveMatch;
+            // 使用字符串查找和切片，避免正则表达式处理大字符串
+            let searchIndex = 0;
             let archiveIndex = 0;
             
-            // 只处理压缩包元素，避免处理整个大字符串
-            // 从原始内容中提取，确保能获取到 data-export-url
-            while ((archiveMatch = archivePattern.exec(originalContent)) !== null) {
-                const fullMatch = archiveMatch[0];
-                // 只在压缩包元素中查找 data-export-url
-                const exportUrlMatch = fullMatch.match(/data-export-url=["']([^"']+)["']/);
+            // 查找所有压缩包元素的开始位置
+            while (true) {
+                const archiveStart = originalContent.indexOf('<div', searchIndex);
+                if (archiveStart === -1) break;
+                
+                // 检查是否是 archive-attachment 元素
+                const classIndex = originalContent.indexOf('class=', archiveStart);
+                if (classIndex === -1 || classIndex > archiveStart + 100) {
+                    searchIndex = archiveStart + 4;
+                    continue;
+                }
+                
+                // 检查是否包含 archive-attachment
+                const classEnd = originalContent.indexOf('>', classIndex);
+                if (classEnd === -1) {
+                    searchIndex = archiveStart + 4;
+                    continue;
+                }
+                
+                const classAttr = originalContent.substring(classIndex, classEnd);
+                if (!classAttr.includes('archive-attachment')) {
+                    searchIndex = archiveStart + 4;
+                    continue;
+                }
+                
+                // 找到压缩包元素，提取 data-export-url
+                const elementEnd = originalContent.indexOf('>', archiveStart);
+                if (elementEnd === -1) {
+                    searchIndex = archiveStart + 4;
+                    continue;
+                }
+                
+                const elementStr = originalContent.substring(archiveStart, elementEnd + 1);
+                const exportUrlMatch = elementStr.match(/data-export-url=["']([^"']+)["']/);
                 if (exportUrlMatch && exportUrlMatch[1] && exportUrlMatch[1].startsWith('data:')) {
                     const exportUrl = exportUrlMatch[1];
                     // 提取 storage-id 或 archive-name 作为 key
-                    const storageIdMatch = fullMatch.match(/\sdata-media-storage-id=["']([^"']+)["']/);
-                    const archiveNameMatch = fullMatch.match(/\sdata-archive-name=["']([^"']+)["']/);
+                    const storageIdMatch = elementStr.match(/\sdata-media-storage-id=["']([^"']+)["']/);
+                    const archiveNameMatch = elementStr.match(/\sdata-archive-name=["']([^"']+)["']/);
                     const key = storageIdMatch ? storageIdMatch[1] : (archiveNameMatch ? archiveNameMatch[1] : `archive_${archiveIndex}`);
                     archiveExportUrlMap.set(key, exportUrl);
                     archiveIndex++;
                 }
+                
+                searchIndex = elementEnd + 1;
             }
             
-            // 从显示内容中移除 data-export-url（避免解析），但保留在原始 content 中
+            // 快速移除 content 中的 data-export-url 属性（避免浏览器解析大的 base64 数据）
+            // 对于小内容使用正则表达式（更快），对于大内容在 DOM 更新后立即移除
             if (archiveExportUrlMap.size > 0) {
-                // 使用更高效的替换方法：只替换压缩包元素中的 data-export-url
-                // 避免对整个大字符串进行全局替换
-                content = content.replace(/<div([^>]*)class=["']archive-attachment["']([^>]*)data-export-url=["'][^"']*["']([^>]*)>/gi, 
-                    '<div$1class="archive-attachment"$2$3>');
-                content = content.replace(/<div([^>]*)data-export-url=["'][^"']*["']([^>]*)class=["']archive-attachment["']([^>]*)>/gi, 
-                    '<div$1$2class="archive-attachment"$3>');
+                // 如果内容不是太大，直接使用正则表达式替换（更快）
+                // 对于大内容，在 DOM 更新后立即移除属性，避免阻塞
+                if (content.length < 500000) {
+                    // 内容较小，直接使用正则表达式替换
+                    content = content.replace(/<div([^>]*)class=["']archive-attachment["']([^>]*)data-export-url=["'][^"']*["']([^>]*)>/gi, 
+                        '<div$1class="archive-attachment"$2$3>');
+                    content = content.replace(/<div([^>]*)data-export-url=["'][^"']*["']([^>]*)class=["']archive-attachment["']([^>]*)>/gi, 
+                        '<div$1$2class="archive-attachment"$3>');
+                }
+                // 对于大内容，不在字符串层面处理，而是在 DOM 更新后立即移除
             }
         }
         
@@ -233,10 +269,29 @@ async function updateMarkdownPreview() {
                 }
             });
             
-            // 恢复压缩包的 data-export-url 到 DOM 元素上（但不显示，避免解析）
-            // 这样下载时可以使用，但不会在显示时解析
+            // 处理压缩包元素：移除 DOM 中的 data-export-url 属性（避免解析），但保留在 Map 中供下载使用
+            // 这样下载时可以使用，但不会在显示时解析大的 base64 数据
+            // 对于大内容，这是关键的性能优化：立即移除属性，避免浏览器解析大的 base64 数据
             if (archiveExportUrlMap.size > 0) {
                 const archiveElements = markdownPreview.querySelectorAll('.archive-attachment');
+                // 立即移除所有 data-export-url 属性（如果存在），避免浏览器解析大的 base64 数据
+                archiveElements.forEach(element => {
+                    if (element.hasAttribute('data-export-url')) {
+                        const exportUrl = element.getAttribute('data-export-url');
+                        element.removeAttribute('data-export-url');
+                        
+                        // 保存到 Map 中，供下载时使用
+                        const storageId = element.getAttribute('data-media-storage-id');
+                        const archiveName = element.getAttribute('data-archive-name');
+                        const key = storageId || archiveName;
+                        if (key && exportUrl && exportUrl.startsWith('data:')) {
+                            archiveExportUrlMap.set(key, exportUrl);
+                        }
+                    }
+                });
+                
+                // 从 Map 中恢复 data-export-url 到 DOM 元素上（但不显示在 HTML 中）
+                // 这样下载时可以使用，但不会在显示时解析
                 archiveElements.forEach(element => {
                     const storageId = element.getAttribute('data-media-storage-id');
                     const archiveName = element.getAttribute('data-archive-name');
@@ -252,14 +307,24 @@ async function updateMarkdownPreview() {
             // 图片和视频保持只有data-media-storage-id属性，不设置src
             // 只在用户真正需要时（滚动到可见区域、点击播放等）才从IndexedDB加载
             
-            // 绑定任务列表复选框事件
-            attachTaskListEvents();
+            // 使用 requestIdleCallback 或 setTimeout 分批处理后续操作，避免阻塞主线程
+            const processDeferred = () => {
+                // 绑定任务列表复选框事件
+                attachTaskListEvents();
+                
+                // 初始化视频元素，确保视频正确显示和播放
+                initializeVideos();
+                
+                // 初始化压缩文件下载按钮
+                initializeArchiveDownloadButtons();
+            };
             
-            // 初始化视频元素，确保视频正确显示和播放
-            initializeVideos();
-            
-            // 初始化压缩文件下载按钮
-            initializeArchiveDownloadButtons();
+            // 优先使用 requestIdleCallback，降级到 setTimeout
+            if (typeof requestIdleCallback !== 'undefined') {
+                requestIdleCallback(processDeferred, { timeout: 100 });
+            } else {
+                setTimeout(processDeferred, 0);
+            }
         };
         
         if (typeof batchDOMUpdate === 'function') {
