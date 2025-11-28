@@ -7,6 +7,7 @@
     <style>
         :root {
             --toolbar-height: 80px;
+            --sidebar-width: 20%;
         }
         
         * {
@@ -245,14 +246,35 @@
             position: fixed;
             left: 0;
             top: var(--toolbar-height, 60px); /* 顶部工具栏高度 */
-            width: 20%;
+            width: var(--sidebar-width, 20%);
             height: calc(100vh - var(--toolbar-height, 60px)); /* 视口高度减去工具栏高度 */
             overflow-y: auto;
             overflow-x: auto;
             background-color: #fff;
-            border-right: 1px solid #ddd;
             z-index: 999;
             transition: top 0.2s ease, height 0.2s ease;
+        }
+        
+        /* 可拖拽的分隔线 */
+        .sidebar-resizer {
+            position: fixed;
+            left: var(--sidebar-width, 20%);
+            top: var(--toolbar-height, 60px);
+            width: 4px;
+            height: calc(100vh - var(--toolbar-height, 60px));
+            background-color: #ddd;
+            cursor: col-resize;
+            z-index: 1000;
+            transition: background-color 0.2s ease;
+            user-select: none;
+        }
+        
+        .sidebar-resizer:hover {
+            background-color: #0066cc;
+        }
+        
+        .sidebar-resizer.dragging {
+            background-color: #0066cc;
         }
             
         .mulubox {
@@ -268,9 +290,9 @@
 
         .wordsbox {
             position: fixed;
-            left: 20%; /* 为左侧目录留出空间 */
+            left: calc(var(--sidebar-width, 20%) + 4px); /* 为左侧目录和分隔线留出空间 */
             top: var(--toolbar-height, 80px); /* 为顶部工具栏留出空间 */
-            width: calc(100% - 20%); /* 占据除目录区域外的全部空间 */
+            width: calc(100% - var(--sidebar-width, 20%) - 4px); /* 占据除目录区域和分隔线外的全部空间 */
             height: calc(100vh - var(--toolbar-height, 80px)); /* 视口高度减去工具栏高度 */
             transition: top 0.2s ease, height 0.2s ease;
             border: 1px solid black;
@@ -1464,6 +1486,7 @@
             </div>
         </div>
     </div>
+    <div class="sidebar-resizer" id="sidebarResizer" title="拖拽调整目录宽度"></div>
     <div class="wordsbox">
         <div class="markdown-editor-container">
             <textarea class="jiedianwords" placeholder="在此输入 Markdown 内容..."></textarea>

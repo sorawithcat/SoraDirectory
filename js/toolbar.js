@@ -33,6 +33,13 @@ function updateToolbarHeight() {
             bigbox.style.top = `${toolbarHeight}px`;
             bigbox.style.height = `${window.innerHeight - toolbarHeight}px`;
         }
+        
+        // 更新分隔线位置和高度
+        const sidebarResizer = document.getElementById('sidebarResizer');
+        if (sidebarResizer) {
+            sidebarResizer.style.top = `${toolbarHeight}px`;
+            sidebarResizer.style.height = `${window.innerHeight - toolbarHeight}px`;
+        }
     }
 }
 
@@ -730,6 +737,102 @@ if (document.readyState === 'loading') {
 // 如果格式工具栏是动态加载的，也在窗口加载完成后再次尝试初始化
 window.addEventListener('load', function() {
     setTimeout(initFormatToolbarWheelScroll, 100);
+});
+
+// -------------------- 侧边栏宽度拖拽调整 --------------------
+
+/**
+ * 初始化侧边栏宽度拖拽调整功能
+ */
+function initSidebarResizer() {
+    const resizer = document.getElementById('sidebarResizer');
+    const bigbox = document.querySelector('.bigbox');
+    const wordsbox = document.querySelector('.wordsbox');
+    
+    if (!resizer || !bigbox || !wordsbox) return;
+    
+    // 从 localStorage 读取保存的宽度
+    const savedWidth = localStorage.getItem('sidebarWidth');
+    if (savedWidth) {
+        document.documentElement.style.setProperty('--sidebar-width', savedWidth);
+    }
+    
+    let isDragging = false;
+    let startX = 0;
+    let startWidth = 0;
+    
+    // 限制最小和最大宽度（像素）
+    const minWidth = 150;
+    const maxWidth = window.innerWidth * 0.8;
+    
+    function getSidebarWidth() {
+        const widthValue = getComputedStyle(document.documentElement).getPropertyValue('--sidebar-width').trim();
+        if (widthValue.includes('%')) {
+            return (window.innerWidth * parseFloat(widthValue)) / 100;
+        } else if (widthValue.includes('px')) {
+            return parseFloat(widthValue);
+        }
+        return window.innerWidth * 0.2; // 默认 20%
+    }
+    
+    function setSidebarWidth(width) {
+        const clampedWidth = Math.max(minWidth, Math.min(maxWidth, width));
+        const percentage = (clampedWidth / window.innerWidth) * 100;
+        document.documentElement.style.setProperty('--sidebar-width', `${percentage}%`);
+        
+        // 保存到 localStorage
+        localStorage.setItem('sidebarWidth', `${percentage}%`);
+    }
+    
+    // 鼠标按下
+    resizer.addEventListener('mousedown', function(e) {
+        isDragging = true;
+        startX = e.clientX;
+        startWidth = getSidebarWidth();
+        resizer.classList.add('dragging');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+        e.preventDefault();
+    });
+    
+    // 鼠标移动
+    document.addEventListener('mousemove', function(e) {
+        if (!isDragging) return;
+        
+        const deltaX = e.clientX - startX;
+        const newWidth = startWidth + deltaX;
+        setSidebarWidth(newWidth);
+        
+        e.preventDefault();
+    });
+    
+    // 鼠标释放
+    document.addEventListener('mouseup', function(e) {
+        if (isDragging) {
+            isDragging = false;
+            resizer.classList.remove('dragging');
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+        }
+    });
+    
+    // 窗口大小改变时更新最大宽度限制
+    window.addEventListener('resize', function() {
+        const currentWidth = getSidebarWidth();
+        setSidebarWidth(currentWidth);
+    });
+}
+
+// 初始化侧边栏拖拽调整功能
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initSidebarResizer);
+} else {
+    initSidebarResizer();
+}
+
+// 如果元素是动态加载的，也在窗口加载完成后再次尝试初始化
+window.addEventListener('load', function() {
+    setTimeout(initSidebarResizer, 100);
 });
 
 // 导出函数供其他模块使用
