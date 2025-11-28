@@ -1882,12 +1882,11 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
         return div.innerHTML;
     }
     
-    // 生成内容脚本标签（每个目录一个独立的 script 标签，按需加载）
-    // 完全跳过媒体数据处理，只创建占位符，立即返回
-    function generateContentScripts(muluData) {
+    async function generateContentScripts(muluData) {
         let contentScripts = '';
         let mediaDataScripts = '';
         const mediaDataMap = {};
+        const allMediaPromises = [];
         
         for (const item of muluData) {
             if (item.length === 4) {
@@ -1895,41 +1894,40 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                 let content = item[3];
                 
                 if (!content) {
-                    // 空内容直接存储
                     const escapedContent = JSON.stringify(content).replace(/<\/script>/gi, '<\\/script>');
                     contentScripts += `<script type="text/plain" id="content_${dirId}">${escapedContent}</script>\n`;
                     continue;
                 }
                 
-                // 检查是否包含媒体引用
                 if (content.includes('data-media-storage-id') && typeof MediaStorage !== 'undefined') {
-                    // 提取媒体数据并创建占位符（不等待媒体数据处理）
-                    const processed = processContentForLazyLoad(content, dirId, mediaDataMap);
+                    const processed = await processContentForLazyLoad(content, dirId, mediaDataMap);
                     content = processed.html;
+                    if (processed.promises && processed.promises.length > 0) {
+                        allMediaPromises.push(...processed.promises);
+                    }
                 }
                 
-                // 每个目录的内容存储在单独的 script 标签中
                 const escapedContent = JSON.stringify(content).replace(/<\/script>/gi, '<\\/script>');
                 contentScripts += `<script type="text/plain" id="content_${dirId}">${escapedContent}</script>\n`;
             }
         }
         
-        // 立即返回，完全不等待媒体处理
-        // 媒体数据将在导出的 HTML 中按需加载
+        if (allMediaPromises.length > 0) {
+            await Promise.all(allMediaPromises);
+        }
+        
         const escapedMediaData = JSON.stringify(mediaDataMap).replace(/<\/script>/gi, '<\\/script>');
         mediaDataScripts = `<script type="text/plain" id="mediaData">${escapedMediaData}</script>\n`;
         
         return { contentScripts, mediaDataScripts };
     }
     
-    // 处理内容，提取媒体数据并创建占位符（所有媒体数据完全在后台处理）
-    function processContentForLazyLoad(html, dirId, mediaDataMap) {
+    async function processContentForLazyLoad(html, dirId, mediaDataMap) {
         let result = html;
         let mediaIndex = 0;
         
-        // 批量收集所有需要处理的媒体 ID，然后一次性处理
         const mediaIdsToProcess = [];
-        const mediaInfoMap = new Map(); // 存储媒体ID到占位符信息的映射
+        const mediaPromises = [];
         
         // 处理视频 - 先收集，不立即处理数据
         if (result.includes('data-media-storage-id')) {
@@ -2034,13 +2032,9 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
             }
         }
         
-        // 所有媒体数据完全在后台异步处理，不阻塞导出
-        // 将处理任务添加到队列，立即返回，不等待
         if (mediaIdsToProcess.length > 0) {
-            // 完全异步处理，不等待任何结果
             mediaIdsToProcess.forEach(({ mediaId, placeholderId, type, originalTag, alt, title, name, size }) => {
-                // 后台异步处理，完全不阻塞
-                (async () => {
+                const promise = (async () => {
                     try {
                         let dataUrl = null;
                         
@@ -2055,8 +2049,6 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                             const srcMatch = processed.match(/\ssrc=["']([^"']+)["']/);
                             if (srcMatch) dataUrl = srcMatch[1];
                         } else if (type === 'archive') {
-                            // 导出网页时需要加载压缩包数据，否则别人打开文件时无法下载
-                            // 显示进度提示，避免卡崩
                             try {
                                 const dataUrl = await MediaStorage.getMediaAsDataUrl(mediaId);
                                 if (dataUrl) {
@@ -2068,7 +2060,6 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                                         originalTag: originalTag
                                     };
                                 } else {
-                                    // 如果加载失败，至少保存 mediaId，尝试从 IndexedDB 读取
                                     mediaDataMap[placeholderId] = {
                                         type: 'archive',
                                         mediaId: mediaId,
@@ -2079,7 +2070,6 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                                 }
                             } catch (err) {
                                 console.error('加载压缩包数据失败:', err);
-                                // 加载失败时，至少保存 mediaId
                                 mediaDataMap[placeholderId] = {
                                     type: 'archive',
                                     mediaId: mediaId,
@@ -2088,44 +2078,33 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                                     originalTag: originalTag
                                 };
                             }
-                            return; // 压缩包已处理，不需要后续的 dataUrl 检查
+                            return;
                         }
                         
                         if (dataUrl) {
-                            if (type === 'archive') {
-                                mediaDataMap[placeholderId] = {
-                                    type: 'archive',
-                                    data: dataUrl,
-                                    name: name,
-                                    size: size,
-                                    originalTag: originalTag
-                                };
-                            } else {
-                                mediaDataMap[placeholderId] = {
-                                    type: type,
-                                    data: dataUrl,
-                                    originalTag: originalTag
-                                };
-                            }
+                            mediaDataMap[placeholderId] = {
+                                type: type,
+                                data: dataUrl,
+                                originalTag: originalTag
+                            };
                         }
                     } catch (err) {
-                        console.error(`后台处理${type}数据失败:`, err);
+                        console.error(`处理${type}数据失败:`, err);
                     }
                 })();
+                mediaPromises.push(promise);
             });
         }
         
-        return { html: result };
+        return { html: result, promises: mediaPromises };
     }
     
-    // 显示导出进度
     showToast('正在生成网页...', 'info', 2000);
     
     const directoryTree = buildDirectoryTree(mulufile);
     const directoryHTML = generateDirectoryHTML(directoryTree);
     
-    // 立即生成 HTML，完全不等待媒体处理
-    const { contentScripts, mediaDataScripts } = generateContentScripts(mulufile);
+    const { contentScripts, mediaDataScripts } = await generateContentScripts(mulufile);
     
     // 获取第一个目录的ID作为默认选中
     const firstDirId = mulufile.length > 0 && mulufile[0].length === 4 ? mulufile[0][2] : '';
@@ -2297,13 +2276,9 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
         .content-body li { margin: 0.5em 0; }
         
         .content-body blockquote {
-            display: block;
-            width: 100%;
-            box-sizing: border-box;
             border-left: 4px solid #ddd;
-            padding: 0.5em 1em;
+            padding-left: 1em;
             margin: 1em 0;
-            background-color: #f5f5f5;
             color: #666;
         }
         
@@ -2320,10 +2295,11 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
             position: relative;
             background-color: #f6f8fa;
             padding: 1em;
-            padding-top: 2.5em;
+            padding-top: 2.2em;
             border-radius: 8px;
             overflow-x: auto;
             margin: 1em 0;
+            min-height: 3em;
             border: 1px solid #d0d7de;
         }
         
@@ -2331,16 +2307,33 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
             background-color: transparent;
             padding: 0;
             color: #24292f;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.6;
             display: block;
             white-space: pre-wrap;
             word-wrap: break-word;
         }
         
+        /* 语法高亮 - GitHub 风格 */
+        .content-body pre code .keyword { color: #cf222e; font-weight: 500; }
+        .content-body pre code .string { color: #0a3069; }
+        .content-body pre code .number { color: #0550ae; }
+        .content-body pre code .comment { color: #6e7781; font-style: italic; }
+        .content-body pre code .function { color: #8250df; }
+        .content-body pre code .class-name { color: #953800; }
+        .content-body pre code .property { color: #0550ae; }
+        .content-body pre code .tag { color: #116329; }
+        .content-body pre code .attr-name { color: #0550ae; }
+        .content-body pre code .attr-value { color: #0a3069; }
+        .content-body pre code .operator { color: #cf222e; }
+        .content-body pre code .punctuation { color: #24292f; }
+        
         .content-body pre .code-lang-label {
             position: absolute;
-            top: 6px;
+            top: 4px;
             right: 8px;
-            padding: 3px 10px;
+            padding: 2px 8px;
             background-color: #e1e4e8;
             border: none;
             border-radius: 4px;
@@ -2365,20 +2358,19 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
         }
         
         .content-body img {
-            max-width: 800px;
-            max-height: 600px;
             width: auto;
             height: auto;
+            max-width: none;
+            max-height: none;
             border-radius: 5px;
             display: block;
             margin: 1em auto;
             cursor: pointer;
-            transition: transform 0.2s;
-            object-fit: contain;
+            transition: opacity 0.2s;
         }
         
         .content-body img:hover {
-            transform: scale(1.02);
+            opacity: 0.8;
         }
         
         .content-body video {
@@ -2413,8 +2405,11 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
         .image-viewer-overlay img {
             max-width: 90%;
             max-height: 90%;
+            width: auto;
+            height: auto;
             object-fit: contain;
             border-radius: 4px;
+            box-shadow: 0 0 20px rgba(255, 255, 255, 0.3);
             cursor: default;
         }
         
@@ -2467,6 +2462,16 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
             border-radius: 2px;
         }
         
+        .content-body sup {
+            font-size: 0.8em;
+            vertical-align: super;
+        }
+        
+        .content-body sub {
+            font-size: 0.8em;
+            vertical-align: sub;
+        }
+        
         .content-body hr {
             margin: 2em 0;
             border: none;
@@ -2493,6 +2498,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
             font-size: 0.9em;
             color: #666;
             font-style: italic;
+            text-align: center;
         }
         
         .content-body spoiler {
@@ -2654,6 +2660,92 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
     <script>
         const contentCache = {};
         let mediaDataMap = {};
+        let currentSelected = null;
+        const nameMap = {};
+        
+        function selectDirectory(dirId, toggleExpand = false) {
+            if (currentSelected) {
+                currentSelected.classList.remove('selected');
+            }
+            
+            const element = document.querySelector('[data-dir-id="' + dirId + '"]');
+            if (element) {
+                element.classList.add('selected');
+                currentSelected = element;
+                
+                if (toggleExpand && element.classList.contains('has-children')) {
+                    element.classList.toggle('expanded');
+                    updateChildrenVisibility(dirId, element.classList.contains('expanded'));
+                }
+            }
+            
+            const content = getContent(dirId) || '';
+            const title = nameMap[dirId] || '未命名';
+            
+            document.getElementById('contentTitle').textContent = title;
+            document.getElementById('contentBody').innerHTML = content || '<div class="empty-state">此目录暂无内容</div>';
+            
+            initCodeBlocks();
+            initImageViewer();
+            initArchiveDownloads();
+            
+            setTimeout(() => {
+                loadLazyMedia();
+            }, 100);
+        }
+        
+        function toggleDirectory(dirId, event) {
+            if (event) {
+                event.stopPropagation();
+            }
+            const element = document.querySelector('[data-dir-id="' + dirId + '"]');
+            if (element && element.classList.contains('has-children')) {
+                element.classList.toggle('expanded');
+                updateChildrenVisibility(dirId, element.classList.contains('expanded'));
+            }
+        }
+        
+        function updateChildrenVisibility(parentId, show) {
+            const allMulu = Array.from(document.querySelectorAll('.mulu'));
+            const parentEl = document.querySelector('[data-dir-id="' + parentId + '"]');
+            if (!parentEl) return;
+            
+            const parentIndex = allMulu.indexOf(parentEl);
+            const parentLevel = parseInt(parentEl.dataset.level) || 0;
+            
+            for (let i = parentIndex + 1; i < allMulu.length; i++) {
+                const child = allMulu[i];
+                const childLevel = parseInt(child.dataset.level) || 0;
+                
+                if (childLevel <= parentLevel) {
+                    break;
+                }
+                
+                if (show) {
+                    if (childLevel === parentLevel + 1) {
+                        child.style.display = '';
+                    } else {
+                        const directParent = findDirectParent(child, allMulu, i);
+                        if (directParent && directParent.classList.contains('expanded')) {
+                            child.style.display = '';
+                        }
+                    }
+                } else {
+                    child.style.display = 'none';
+                }
+            }
+        }
+        
+        function findDirectParent(element, allMulu, currentIndex) {
+            const currentLevel = parseInt(element.dataset.level) || 0;
+            for (let i = currentIndex - 1; i >= 0; i--) {
+                const prevLevel = parseInt(allMulu[i].dataset.level) || 0;
+                if (prevLevel === currentLevel - 1) {
+                    return allMulu[i];
+                }
+            }
+            return null;
+        }
         
         (function() {
             const mediaDataScript = document.getElementById('mediaData');
@@ -2683,145 +2775,204 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
             return '';
         }
         
+        let mediaObserver = null;
+        
+        function initMediaObserver() {
+            if (typeof IntersectionObserver === 'undefined') {
+                return;
+            }
+            
+            if (mediaObserver) {
+                mediaObserver.disconnect();
+            }
+            
+            mediaObserver = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        const media = entry.target;
+                        if (media.hasAttribute('data-loading') && media.getAttribute('data-loading') === 'true') {
+                            loadSingleMedia(media);
+                        }
+                        mediaObserver.unobserve(media);
+                    }
+                });
+            }, {
+                rootMargin: '50px'
+            });
+            
+            const contentBody = document.getElementById('contentBody');
+            if (contentBody) {
+                const lazyMedias = contentBody.querySelectorAll('.lazy-media[data-loading="true"]');
+                lazyMedias.forEach(media => {
+                    mediaObserver.observe(media);
+                });
+            }
+        }
+        
+        async function loadSingleMedia(media) {
+            if (media.hasAttribute('data-loading-media')) {
+                return;
+            }
+            media.setAttribute('data-loading-media', 'true');
+            
+            const placeholderId = media.getAttribute('data-placeholder-id');
+            if (!placeholderId || !mediaDataMap[placeholderId]) {
+                media.removeAttribute('data-loading-media');
+                return;
+            }
+            
+            const mediaInfo = mediaDataMap[placeholderId];
+            
+            let dataUrl = mediaInfo.data;
+            
+            if (!dataUrl && mediaInfo.mediaId) {
+                try {
+                    const dbName = 'SoraDirectoryMediaDB';
+                    const dbVersion = 1;
+                    const storeName = 'media';
+                    
+                    const db = await new Promise((resolve, reject) => {
+                        const request = indexedDB.open(dbName, dbVersion);
+                        request.onsuccess = () => resolve(request.result);
+                        request.onerror = () => reject(request.error);
+                        request.onupgradeneeded = () => {
+                            const db = request.result;
+                            if (!db.objectStoreNames.contains(storeName)) {
+                                db.createObjectStore(storeName, { keyPath: 'id' });
+                            }
+                        };
+                    });
+                    
+                    const record = await new Promise((resolve, reject) => {
+                        const transaction = db.transaction([storeName], 'readonly');
+                        const store = transaction.objectStore(storeName);
+                        const request = store.get(mediaInfo.mediaId);
+                        request.onsuccess = () => resolve(request.result);
+                        request.onerror = () => reject(request.error);
+                    });
+                    
+                    if (record) {
+                        if (record.chunked && record.chunks) {
+                            const blobParts = [];
+                            const mimeType = record.mimeType || 'application/octet-stream';
+                            
+                            if (record.blobChunked) {
+                                for (const chunkId of record.chunks) {
+                                    const chunkRecord = await new Promise((resolve, reject) => {
+                                        const transaction = db.transaction([storeName], 'readonly');
+                                        const store = transaction.objectStore(storeName);
+                                        const request = store.get(chunkId);
+                                        request.onsuccess = () => resolve(request.result);
+                                        request.onerror = () => reject(request.error);
+                                    });
+                                    if (chunkRecord && chunkRecord.data) {
+                                        blobParts.push(chunkRecord.data);
+                                    }
+                                }
+                            } else {
+                                for (const chunkId of record.chunks) {
+                                    const chunkRecord = await new Promise((resolve, reject) => {
+                                        const transaction = db.transaction([storeName], 'readonly');
+                                        const store = transaction.objectStore(storeName);
+                                        const request = store.get(chunkId);
+                                        request.onsuccess = () => resolve(request.result);
+                                        request.onerror = () => reject(request.error);
+                                    });
+                                    if (chunkRecord && chunkRecord.data) {
+                                        try {
+                                            const binaryString = atob(chunkRecord.data);
+                                            const bytes = new Uint8Array(binaryString.length);
+                                            for (let j = 0; j < binaryString.length; j++) {
+                                                bytes[j] = binaryString.charCodeAt(j);
+                                            }
+                                            blobParts.push(bytes);
+                                        } catch (e) {
+                                            console.error('解码分块失败:', e);
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            const blob = new Blob(blobParts, { type: mimeType });
+                            dataUrl = await new Promise((resolve) => {
+                                const reader = new FileReader();
+                                reader.onloadend = () => resolve(reader.result);
+                                reader.readAsDataURL(blob);
+                            });
+                        } else {
+                            dataUrl = record.data;
+                        }
+                    }
+                } catch (err) {
+                    console.error('从 IndexedDB 加载媒体失败:', err);
+                    media.removeAttribute('data-loading-media');
+                    return;
+                }
+            }
+            
+            if (!dataUrl) {
+                media.removeAttribute('data-loading-media');
+                return;
+            }
+            
+            if (mediaInfo.type === 'image') {
+                return new Promise((resolve) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        media.src = dataUrl;
+                        media.removeAttribute('data-loading');
+                        media.removeAttribute('data-loading-media');
+                        media.classList.remove('lazy-media');
+                        resolve();
+                    };
+                    img.onerror = () => {
+                        media.removeAttribute('data-loading-media');
+                        resolve();
+                    };
+                    img.src = dataUrl;
+                });
+            } else if (mediaInfo.type === 'video') {
+                return new Promise((resolve) => {
+                    const video = document.createElement('video');
+                    video.controls = true;
+                    video.preload = 'none';
+                    video.style.cssText = 'display: block; margin: 1em auto; max-width: 640px; max-height: 360px; width: auto; height: auto; border-radius: 5px;';
+                    
+                    const originalTag = mediaInfo.originalTag;
+                    if (originalTag && originalTag.includes('title=')) {
+                        const titleMatch = originalTag.match(/\stitle=["']([^"']*)["']/);
+                        if (titleMatch) video.title = titleMatch[1];
+                    }
+                    
+                    video.onloadedmetadata = () => {
+                        if (media.parentNode) {
+                            media.parentNode.replaceChild(video, media);
+                        }
+                        if (video.offsetParent !== null) {
+                            video.load();
+                        }
+                        resolve();
+                    };
+                    video.onerror = () => {
+                        media.removeAttribute('data-loading-media');
+                        resolve();
+                    };
+                    video.src = dataUrl;
+                });
+            }
+        }
+        
         async function loadLazyMedia() {
             const contentBody = document.getElementById('contentBody');
             if (!contentBody) return;
             
-            const lazyMedias = contentBody.querySelectorAll('.lazy-media[data-loading="true"]');
+            if (typeof IntersectionObserver !== 'undefined') {
+                initMediaObserver();
+                return;
+            }
             
-            const loadPromises = Array.from(lazyMedias).map(async (media) => {
-                const placeholderId = media.getAttribute('data-placeholder-id');
-                if (!placeholderId || !mediaDataMap[placeholderId]) return;
-                
-                const mediaInfo = mediaDataMap[placeholderId];
-                
-                let dataUrl = mediaInfo.data;
-                
-                if (!dataUrl && mediaInfo.mediaId) {
-                    try {
-                        const dbName = 'SoraDirectoryMediaDB';
-                        const dbVersion = 1;
-                        const storeName = 'media';
-                        
-                        const db = await new Promise((resolve, reject) => {
-                            const request = indexedDB.open(dbName, dbVersion);
-                            request.onsuccess = () => resolve(request.result);
-                            request.onerror = () => reject(request.error);
-                            request.onupgradeneeded = () => {
-                                const db = request.result;
-                                if (!db.objectStoreNames.contains(storeName)) {
-                                    db.createObjectStore(storeName, { keyPath: 'id' });
-                                }
-                            };
-                        });
-                        
-                        const record = await new Promise((resolve, reject) => {
-                            const transaction = db.transaction([storeName], 'readonly');
-                            const store = transaction.objectStore(storeName);
-                            const request = store.get(mediaInfo.mediaId);
-                            request.onsuccess = () => resolve(request.result);
-                            request.onerror = () => reject(request.error);
-                        });
-                        
-                        if (record) {
-                            if (record.chunked && record.chunks) {
-                                const blobParts = [];
-                                const mimeType = record.mimeType || 'application/octet-stream';
-                                
-                                // 二进制分块（新格式）
-                                if (record.blobChunked) {
-                                    for (const chunkId of record.chunks) {
-                                        const chunkRecord = await new Promise((resolve, reject) => {
-                                            const transaction = db.transaction([storeName], 'readonly');
-                                            const store = transaction.objectStore(storeName);
-                                            const request = store.get(chunkId);
-                                            request.onsuccess = () => resolve(request.result);
-                                            request.onerror = () => reject(request.error);
-                                        });
-                                        if (chunkRecord && chunkRecord.data) {
-                                            // ArrayBuffer 直接添加
-                                            blobParts.push(chunkRecord.data);
-                                        }
-                                    }
-                                } else {
-                                    // base64 分块（旧格式兼容）
-                                    for (const chunkId of record.chunks) {
-                                        const chunkRecord = await new Promise((resolve, reject) => {
-                                            const transaction = db.transaction([storeName], 'readonly');
-                                            const store = transaction.objectStore(storeName);
-                                            const request = store.get(chunkId);
-                                            request.onsuccess = () => resolve(request.result);
-                                            request.onerror = () => reject(request.error);
-                                        });
-                                        if (chunkRecord && chunkRecord.data) {
-                                            // 解码 base64 为二进制
-                                            try {
-                                                const binaryString = atob(chunkRecord.data);
-                                                const bytes = new Uint8Array(binaryString.length);
-                                                for (let j = 0; j < binaryString.length; j++) {
-                                                    bytes[j] = binaryString.charCodeAt(j);
-                                                }
-                                                blobParts.push(bytes);
-                                            } catch (e) {
-                                                console.error('解码分块失败:', e);
-                                            }
-                                        }
-                                    }
-                                }
-                                
-                                const blob = new Blob(blobParts, { type: mimeType });
-                                dataUrl = await new Promise((resolve) => {
-                                    const reader = new FileReader();
-                                    reader.onloadend = () => resolve(reader.result);
-                                    reader.readAsDataURL(blob);
-                                });
-                            } else {
-                                dataUrl = record.data;
-                            }
-                        }
-                    } catch (err) {
-                        console.error('从 IndexedDB 加载媒体失败:', err);
-                    }
-                }
-                
-                if (!dataUrl) return;
-                
-                if (mediaInfo.type === 'image') {
-                    return new Promise((resolve) => {
-                        const img = new Image();
-                        img.onload = () => {
-                            media.src = dataUrl;
-                            media.removeAttribute('data-loading');
-                            media.classList.remove('lazy-media');
-                            resolve();
-                        };
-                        img.onerror = () => resolve();
-                        img.src = dataUrl;
-                    });
-                } else if (mediaInfo.type === 'video') {
-                    return new Promise((resolve) => {
-                        const video = document.createElement('video');
-                        video.controls = true;
-                        video.preload = 'metadata';
-                        video.style.cssText = 'display: block; margin: 1em auto; max-width: 640px; max-height: 360px; width: auto; height: auto; border-radius: 5px;';
-                        
-                        const originalTag = mediaInfo.originalTag;
-                        if (originalTag && originalTag.includes('title=')) {
-                            const titleMatch = originalTag.match(/\stitle=["']([^"']*)["']/);
-                            if (titleMatch) video.title = titleMatch[1];
-                        }
-                        
-                        video.onloadedmetadata = () => {
-                            if (media.parentNode) {
-                                media.parentNode.replaceChild(video, media);
-                            }
-                            resolve();
-                        };
-                        video.onerror = () => resolve();
-                        video.src = dataUrl;
-                    });
-                }
-            });
+            const lazyMedias = contentBody.querySelectorAll('.lazy-media[data-loading="true"]');
+            const loadPromises = Array.from(lazyMedias).map(media => loadSingleMedia(media));
             
             Promise.all(loadPromises).catch(err => {
                 console.error('加载媒体时出错:', err);
@@ -2867,13 +3018,11 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                     
                     if (record) {
                         if (record.chunked && record.chunks) {
-                            // 使用流式读取，避免一次性加载所有分块到内存
                             const stream = new ReadableStream({
                                 async start(controller) {
                                     try {
                                         const mimeType = record.mimeType || 'application/octet-stream';
                                         
-                                        // 二进制分块（新格式）
                                         if (record.blobChunked) {
                                             for (let i = 0; i < record.chunks.length; i++) {
                                                 const chunkId = record.chunks[i];
@@ -2887,7 +3036,6 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                                                 });
                                                 
                                                 if (chunkRecord && chunkRecord.data) {
-                                                    // ArrayBuffer 转换为 Uint8Array 并推送到流
                                                     if (chunkRecord.data instanceof ArrayBuffer) {
                                                         controller.enqueue(new Uint8Array(chunkRecord.data));
                                                     } else if (chunkRecord.data instanceof Uint8Array) {
@@ -2896,7 +3044,6 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                                                 }
                                             }
                                         } else {
-                                            // base64 分块（旧格式兼容）
                                             for (let i = 0; i < record.chunks.length; i++) {
                                                 const chunkId = record.chunks[i];
                                                 
@@ -2909,7 +3056,6 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                                                 });
                                                 
                                                 if (chunkRecord && chunkRecord.data) {
-                                                    // 解码 base64 为二进制
                                                     try {
                                                         const binaryString = atob(chunkRecord.data);
                                                         const bytes = new Uint8Array(binaryString.length);
@@ -2933,7 +3079,6 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                                 }
                             });
                             
-                            // 将流转换为 Blob，然后转换为 data URL
                             const response = new Response(stream);
                             const blob = await response.blob();
                             
@@ -2955,12 +3100,9 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
             return null;
         }
         
-        const nameMap = {};
         document.querySelectorAll('.mulu').forEach(el => {
             nameMap[el.dataset.dirId] = el.textContent.trim();
         });
-        
-        let currentSelected = null;
         
         function initCodeBlocks() {
             const contentBody = document.getElementById('contentBody');
@@ -3124,90 +3266,6 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                 imageViewer.classList.remove('active');
             }
         });
-        
-        function selectDirectory(dirId, toggleExpand = false) {
-            if (currentSelected) {
-                currentSelected.classList.remove('selected');
-            }
-            
-            const element = document.querySelector('[data-dir-id="' + dirId + '"]');
-            if (element) {
-                element.classList.add('selected');
-                currentSelected = element;
-                
-                if (toggleExpand && element.classList.contains('has-children')) {
-                    element.classList.toggle('expanded');
-                    updateChildrenVisibility(dirId, element.classList.contains('expanded'));
-                }
-            }
-            
-            const content = getContent(dirId) || '';
-            const title = nameMap[dirId] || '未命名';
-            
-            document.getElementById('contentTitle').textContent = title;
-            document.getElementById('contentBody').innerHTML = content || '<div class="empty-state">此目录暂无内容</div>';
-            
-            initCodeBlocks();
-            initImageViewer();
-            initArchiveDownloads();
-            
-            setTimeout(() => {
-                loadLazyMedia();
-            }, 100);
-        }
-        
-        function toggleDirectory(dirId, event) {
-            if (event) {
-                event.stopPropagation();
-            }
-            const element = document.querySelector('[data-dir-id="' + dirId + '"]');
-            if (element && element.classList.contains('has-children')) {
-                element.classList.toggle('expanded');
-                updateChildrenVisibility(dirId, element.classList.contains('expanded'));
-            }
-        }
-        
-        function updateChildrenVisibility(parentId, show) {
-            const allMulu = Array.from(document.querySelectorAll('.mulu'));
-            const parentEl = document.querySelector('[data-dir-id="' + parentId + '"]');
-            if (!parentEl) return;
-            
-            const parentIndex = allMulu.indexOf(parentEl);
-            const parentLevel = parseInt(parentEl.dataset.level) || 0;
-            
-            for (let i = parentIndex + 1; i < allMulu.length; i++) {
-                const child = allMulu[i];
-                const childLevel = parseInt(child.dataset.level) || 0;
-                
-                if (childLevel <= parentLevel) {
-                    break;
-                }
-                
-                if (show) {
-                    if (childLevel === parentLevel + 1) {
-                        child.style.display = '';
-                    } else {
-                        const directParent = findDirectParent(child, allMulu, i);
-                        if (directParent && directParent.classList.contains('expanded')) {
-                            child.style.display = '';
-                        }
-                    }
-                } else {
-                    child.style.display = 'none';
-                }
-            }
-        }
-        
-        function findDirectParent(element, allMulu, currentIndex) {
-            const currentLevel = parseInt(element.dataset.level) || 0;
-            for (let i = currentIndex - 1; i >= 0; i--) {
-                const prevLevel = parseInt(allMulu[i].dataset.level) || 0;
-                if (prevLevel === currentLevel - 1) {
-                    return allMulu[i];
-                }
-            }
-            return null;
-        }
         
         window.selectDirectory = selectDirectory;
         window.toggleDirectory = toggleDirectory;
