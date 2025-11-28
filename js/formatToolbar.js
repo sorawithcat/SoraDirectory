@@ -428,6 +428,53 @@ async function applyFormat(command) {
         selection.addRange(newRange);
     }
     
+    // 辅助函数：查找包含指定样式的元素
+    function findElementWithStyle(range, styleProperty) {
+        const ancestor = range.commonAncestorContainer;
+        const container = ancestor.nodeType === Node.TEXT_NODE ? ancestor.parentNode : ancestor;
+        
+        // 向上查找包含该样式的元素
+        let parent = container;
+        while (parent && parent !== markdownPreview) {
+            if (parent.nodeType === Node.ELEMENT_NODE && parent.tagName === 'SPAN') {
+                const style = parent.getAttribute('style') || '';
+                if (style.includes(styleProperty)) {
+                    return parent;
+                }
+            }
+            parent = parent.parentNode;
+        }
+        
+        // 也在选中范围内查找
+        const contents = range.cloneContents();
+        const tempDiv = document.createElement('div');
+        tempDiv.appendChild(contents);
+        const spans = tempDiv.querySelectorAll('span[style]');
+        for (let span of spans) {
+            const style = span.getAttribute('style') || '';
+            if (style.includes(styleProperty)) {
+                // 在原始DOM中查找对应的元素
+                const containerSpans = container.getElementsByTagName ? container.getElementsByTagName('SPAN') : [];
+                for (let s of containerSpans) {
+                    if (s.getAttribute('style') === span.getAttribute('style') && range.intersectsNode(s)) {
+                        return s;
+                    }
+                }
+            }
+        }
+        
+        return null;
+    }
+    
+    // 辅助函数：获取元素中指定样式属性的值
+    function getStyleValue(element, styleProperty) {
+        if (!element || !element.getAttribute) return null;
+        const style = element.getAttribute('style') || '';
+        const regex = new RegExp(styleProperty + ':\\s*([^;]+)', 'i');
+        const match = style.match(regex);
+        return match ? match[1].trim() : null;
+    }
+    
     let formattedHtml = '';
     let shouldUnwrap = false;
     let unwrapTag = null;
@@ -634,6 +681,102 @@ async function applyFormat(command) {
             } else {
                 formattedHtml = '<a href="' + escapeHtml(url) + '" target="_blank">' + escapeHtml(url) + '</a>';
             }
+            break;
+        // 文本颜色
+        case 'color':
+            if (!selectedText) return;
+            
+            // 查找是否已经有颜色样式
+            const colorElement = findElementWithStyle(range, 'color');
+            let currentColor = '#000000';
+            if (colorElement) {
+                const colorValue = getStyleValue(colorElement, 'color');
+                if (colorValue) {
+                    // 转换颜色值为十六进制
+                    if (colorValue.startsWith('#')) {
+                        currentColor = colorValue.toUpperCase();
+                    } else if (colorValue.startsWith('rgb')) {
+                        // 简单处理，提取rgb值并转换为十六进制（简化版）
+                        const rgbMatch = colorValue.match(/\d+/g);
+                        if (rgbMatch && rgbMatch.length >= 3) {
+                            const r = parseInt(rgbMatch[0]).toString(16).padStart(2, '0');
+                            const g = parseInt(rgbMatch[1]).toString(16).padStart(2, '0');
+                            const b = parseInt(rgbMatch[2]).toString(16).padStart(2, '0');
+                            currentColor = '#' + r + g + b;
+                        }
+                    }
+                }
+            }
+            
+            const selectedColor = await colorPickerDialog(currentColor, '选择文字颜色');
+            if (!selectedColor) return;
+            
+            // 如果已经有颜色样式，需要移除后重新应用
+            if (colorElement) {
+                // 检查是否完全选中，如果是则移除样式
+                const tagRange = document.createRange();
+                tagRange.selectNodeContents(colorElement);
+                const tagText = colorElement.textContent;
+                const selectedTextClean = selectedText.replace(/\u200B/g, '');
+                if (tagText.trim() === selectedTextClean.trim() || tagText === selectedTextClean) {
+                    // 完全选中，直接替换颜色
+                    colorElement.style.color = selectedColor;
+                    syncPreviewToTextarea();
+                    textFormatToolbar.style.display = 'none';
+                    textFormatToolbar.style.visibility = 'hidden';
+                    selectionRange = null;
+                    return;
+                }
+            }
+            
+            formattedHtml = '<span style="color: ' + escapeHtml(selectedColor) + '">' + selectedHtml + '</span>';
+            break;
+        // 背景颜色
+        case 'background-color':
+            if (!selectedText) return;
+            
+            // 查找是否已经有背景颜色样式
+            const bgColorElement = findElementWithStyle(range, 'background-color');
+            let currentBgColor = '#FFFF00';
+            if (bgColorElement) {
+                const bgColorValue = getStyleValue(bgColorElement, 'background-color');
+                if (bgColorValue) {
+                    // 转换颜色值为十六进制
+                    if (bgColorValue.startsWith('#')) {
+                        currentBgColor = bgColorValue.toUpperCase();
+                    } else if (bgColorValue.startsWith('rgb')) {
+                        const rgbMatch = bgColorValue.match(/\d+/g);
+                        if (rgbMatch && rgbMatch.length >= 3) {
+                            const r = parseInt(rgbMatch[0]).toString(16).padStart(2, '0');
+                            const g = parseInt(rgbMatch[1]).toString(16).padStart(2, '0');
+                            const b = parseInt(rgbMatch[2]).toString(16).padStart(2, '0');
+                            currentBgColor = '#' + r + g + b;
+                        }
+                    }
+                }
+            }
+            
+            const selectedBgColor = await colorPickerDialog(currentBgColor, '选择背景颜色');
+            if (!selectedBgColor) return;
+            
+            // 如果已经有背景颜色样式，需要移除后重新应用
+            if (bgColorElement) {
+                const tagRange = document.createRange();
+                tagRange.selectNodeContents(bgColorElement);
+                const tagText = bgColorElement.textContent;
+                const selectedTextClean = selectedText.replace(/\u200B/g, '');
+                if (tagText.trim() === selectedTextClean.trim() || tagText === selectedTextClean) {
+                    // 完全选中，直接替换背景颜色
+                    bgColorElement.style.backgroundColor = selectedBgColor;
+                    syncPreviewToTextarea();
+                    textFormatToolbar.style.display = 'none';
+                    textFormatToolbar.style.visibility = 'hidden';
+                    selectionRange = null;
+                    return;
+                }
+            }
+            
+            formattedHtml = '<span style="background-color: ' + escapeHtml(selectedBgColor) + '">' + selectedHtml + '</span>';
             break;
         // 列表
         case 'unordered-list':

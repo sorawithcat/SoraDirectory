@@ -687,5 +687,50 @@ updateStorageInfo();
 // 定期更新存储信息（每30秒）
 setInterval(updateStorageInfo, 30000);
 
+// -------------------- 格式工具栏鼠标滚轮横向滚动 --------------------
+
+/**
+ * 初始化格式工具栏的鼠标滚轮横向滚动功能
+ */
+function initFormatToolbarWheelScroll() {
+    const formatToolbarScroll = document.querySelector('.format-toolbar-scroll');
+    
+    if (!formatToolbarScroll) return;
+    
+    // 添加鼠标滚轮事件监听器
+    formatToolbarScroll.addEventListener('wheel', function(e) {
+        // 检查是否有横向滚动条（内容是否超出容器宽度）
+        const hasHorizontalScroll = formatToolbarScroll.scrollWidth > formatToolbarScroll.clientWidth;
+        
+        if (hasHorizontalScroll) {
+            // 如果鼠标悬停在格式工具栏上且有横向滚动条，则将垂直滚轮转换为横向滚动
+            e.preventDefault();
+            
+            // 使用 deltaY（垂直滚动量）来控制横向滚动
+            // 正数向下滚动 = 向右滚动，负数向上滚动 = 向左滚动
+            formatToolbarScroll.scrollLeft += e.deltaY;
+            
+            // 也支持横向滚轮（deltaX）
+            if (e.deltaX !== 0) {
+                formatToolbarScroll.scrollLeft += e.deltaX;
+            }
+        }
+        // 如果没有横向滚动条，不阻止默认行为，让页面正常滚动
+    }, { passive: false });
+}
+
+// 初始化格式工具栏滚轮滚动功能
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initFormatToolbarWheelScroll);
+} else {
+    // DOM 已经加载完成，立即初始化
+    initFormatToolbarWheelScroll();
+}
+
+// 如果格式工具栏是动态加载的，也在窗口加载完成后再次尝试初始化
+window.addEventListener('load', function() {
+    setTimeout(initFormatToolbarWheelScroll, 100);
+});
+
 // 导出函数供其他模块使用
 window.updateStorageInfo = updateStorageInfo;

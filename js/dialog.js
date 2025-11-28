@@ -352,3 +352,106 @@ function codeEditDialog(code = '', language = 'javascript', langOptions = [], ti
         setTimeout(() => textarea.focus(), 100);
     });
 }
+
+/**
+ * 颜色选择对话框
+ * @param {string} defaultValue - 默认颜色值（十六进制，如 #000000）
+ * @param {string} title - 对话框标题，默认为"选择颜色"
+ * @returns {Promise<string|null>} - 用户点击确定返回颜色值（十六进制），取消返回 null
+ */
+function colorPickerDialog(defaultValue = '#000000', title = '选择颜色') {
+    return new Promise((resolve) => {
+        customDialogTitle.textContent = title;
+        customDialogInput.style.display = 'none';
+        
+        // 创建颜色选择界面
+        customDialogMessage.innerHTML = 
+            '<div style="text-align: center; padding: 20px 0;">' +
+            '<input type="color" id="colorPickerInput" value="' + escapeHtml(defaultValue) + '" style="width: 200px; height: 200px; border: 2px solid #ddd; border-radius: 4px; cursor: pointer;">' +
+            '<br><br>' +
+            '<label style="font-size: 12px; color: #666; display: block; margin-bottom: 4px;">颜色值（十六进制）</label>' +
+            '<input type="text" id="colorTextInput" value="' + escapeHtml(defaultValue) + '" style="width: 150px; padding: 6px; border: 1px solid #ddd; border-radius: 4px; text-align: center; font-family: monospace; font-size: 14px;" placeholder="#000000" maxlength="7">' +
+            '</div>';
+        
+        customDialogFooter.innerHTML = 
+            '<button class="custom-dialog-btn custom-dialog-btn-secondary" id="customDialogCancel">取消</button>' +
+            '<button class="custom-dialog-btn custom-dialog-btn-primary" id="customDialogOk">确定</button>';
+        
+        const colorPicker = document.getElementById('colorPickerInput');
+        const colorText = document.getElementById('colorTextInput');
+        const okBtn = document.getElementById('customDialogOk');
+        const cancelBtn = document.getElementById('customDialogCancel');
+        const closeBtn = customDialogClose;
+        
+        // 同步颜色选择器和文本输入框
+        colorPicker.addEventListener('input', () => {
+            colorText.value = colorPicker.value.toUpperCase();
+        });
+        
+        colorText.addEventListener('input', () => {
+            let value = colorText.value.trim();
+            // 如果输入的值不是以#开头，自动添加
+            if (value && !value.startsWith('#')) {
+                value = '#' + value;
+            }
+            // 验证颜色格式
+            if (/^#[0-9A-Fa-f]{6}$/.test(value)) {
+                colorPicker.value = value;
+            }
+        });
+        
+        // 验证颜色值格式
+        function validateColor(value) {
+            if (!value) return false;
+            if (!value.startsWith('#')) {
+                value = '#' + value;
+            }
+            return /^#[0-9A-Fa-f]{6}$/.test(value);
+        }
+        
+        const closeDialog = (result) => {
+            customDialogOverlay.classList.remove('active');
+            customDialogMessage.innerHTML = '';
+            // 恢复对话框宽度
+            customDialog.style.maxWidth = '';
+            customDialog.style.width = '';
+            resolve(result);
+        };
+        
+        const handleOk = () => {
+            let color = colorPicker.value.toUpperCase();
+            if (validateColor(color)) {
+                closeDialog(color);
+            } else {
+                showToast('请输入有效的颜色值（如 #FF0000）', 'error', 2000);
+            }
+        };
+        
+        okBtn.onclick = handleOk;
+        cancelBtn.onclick = () => closeDialog(null);
+        closeBtn.onclick = () => closeDialog(null);
+        
+        // 键盘事件：回车确认，ESC取消
+        colorText.onkeydown = (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                handleOk();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                closeDialog(null);
+            }
+        };
+        
+        // 点击遮罩层关闭
+        customDialogOverlay.onclick = (e) => {
+            if (e.target === customDialogOverlay) closeDialog(null);
+        };
+        
+        // 调整对话框宽度
+        customDialog.style.maxWidth = '400px';
+        customDialog.style.width = '90%';
+        
+        customDialogOverlay.classList.add('active');
+        setTimeout(() => colorText.focus(), 100);
+    });
+}
