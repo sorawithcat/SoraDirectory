@@ -554,8 +554,15 @@ async function encryptData(data, password) {
     combined.set(iv, salt.length);
     combined.set(new Uint8Array(encrypted), salt.length + iv.length);
     
-    // 转换为 base64
-    return btoa(String.fromCharCode(...combined));
+    // 转换为 base64 - 分块处理避免堆栈溢出
+    // 对于大数组，使用分块方式转换为字符串
+    const chunkSize = 8192; // 每次处理 8KB
+    let binaryString = '';
+    for (let i = 0; i < combined.length; i += chunkSize) {
+        const chunk = combined.slice(i, i + chunkSize);
+        binaryString += String.fromCharCode(...chunk);
+    }
+    return btoa(binaryString);
 }
 
 /**
