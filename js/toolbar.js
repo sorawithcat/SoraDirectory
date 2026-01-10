@@ -252,6 +252,9 @@ if (toggleSidebarBtn) {
     toggleSidebarBtn.addEventListener("click", function() {
         sidebarVisible = !sidebarVisible;
         const sidebarResizer = document.getElementById('sidebarResizer');
+        if (sidebarResizer) {
+            sidebarResizer.classList.toggle('sidebar-hidden', !sidebarVisible);
+        }
         if (sidebarVisible) {
             bigbox.style.display = "block";
             if (sidebarResizer) sidebarResizer.style.display = "block";
