@@ -952,145 +952,17 @@ if (markdownPreview) {
                         continue;
                     }
                 } else if (isVideo) {
-                    const videoName = file.name || '视频';
-                    const caption = await customPrompt('输入视频标题（可选，直接按确定跳过，取消则不上传）:', '');
-                    if (caption === null) {
-                        continue;
-                    }
-                    let videoData = null;
-                    let videoBlob = null;
-                    let useBlobStorage = false;
-                    const LARGE_VIDEO_THRESHOLD = 30 * 1024 * 1024;
-                    if (file.size > LARGE_VIDEO_THRESHOLD) {
-                        useBlobStorage = true;
-                        videoBlob = file;
-                    } else {
-                        try {
-                            videoData = await new Promise((resolve, reject) => {
-                                const reader = new FileReader();
-                                reader.onload = (ev) => resolve(ev.target.result);
-                                reader.onerror = (e) => reject(new Error('读取视频文件失败'));
-                                reader.readAsDataURL(file);
-                            });
-                        } catch (err) {
-                            console.error('读取视频文件失败:', err);
-                            showToast('读取视频文件失败：' + (err.message || err), 'error', 3000);
-                            continue;
-                        }
-                    }
-                    let videoStorageId = null;
-                    if (typeof MediaStorage !== 'undefined') {
-                        try {
-                            if (useBlobStorage) {
-                                videoStorageId = await MediaStorage.save(videoBlob, 'video');
-                                MediaStorage.hideProgressToast();
-                            } else {
-                                videoStorageId = await MediaStorage.saveVideo(videoData);
-                            }
-                        } catch (err) {
-                            if (useBlobStorage) MediaStorage.hideProgressToast();
-                            console.error('保存视频到 IndexedDB 失败:', err);
-                            showToast('保存视频失败：' + err.message, 'error', 3000);
-                            continue;
-                        }
-                    }
-                    const video = document.createElement('video');
-                    if (useBlobStorage) {
-                        video.src = URL.createObjectURL(videoBlob);
-                    } else {
-                        video.src = videoData;
-                    }
-                    video.controls = true;
-                    video.style.maxWidth = '640px';
-                    video.style.maxHeight = '360px';
-                    video.title = videoName;
-                    if (videoStorageId) {
-                        video.setAttribute('data-media-storage-id', videoStorageId);
-                    }
-                    let videoContainer;
-                    if (caption) {
-                        videoContainer = document.createElement('figure');
-                        videoContainer.appendChild(video);
-                        const figcaption = document.createElement('figcaption');
-                        figcaption.textContent = caption;
-                        videoContainer.appendChild(figcaption);
-                    } else {
-                        videoContainer = video;
-                    }
-                    if (savedRange && markdownPreview.contains(savedRange.startContainer)) {
-                        savedRange.insertNode(videoContainer);
-                        const br = document.createElement('br');
-                        savedRange.setStartAfter(videoContainer);
-                        savedRange.insertNode(br);
-                    } else {
-                        markdownPreview.appendChild(videoContainer);
-                        markdownPreview.appendChild(document.createElement('br'));
-                    }
-                    syncPreviewToTextarea();
-                    if (!currentMuluName) {
-                        showToast('提示：请先选择一个目录，否则视频无法保存', 'warning', 3000);
-                    }
-                    if (typeof updateStorageInfo === 'function') {
-                        updateStorageInfo();
-                    }
+                    showToast('已禁止拖拽插入视频文件', 'warning', 2500);
+                    continue;
                 } else {
                     const allowedArchiveExtensions = ['.zip', '.rar', '.7z', '.tar', '.gz', '.tar.gz', '.tgz', '.bz2', '.tar.bz2', '.xz', '.tar.xz'];
                     const fileNameLower = file.name.toLowerCase();
                     const isArchive = allowedArchiveExtensions.some(ext => fileNameLower.endsWith(ext));
                     if (isArchive) {
-                        const archiveName = file.name;
-                        const fileSize = file.size;
-                        const sizeMB = (fileSize / 1024 / 1024).toFixed(2);
-                        if (fileSize > 50 * 1024 * 1024) {
-                            const confirmLarge = await customConfirm(
-                                `文件较大（${sizeMB}MB），将自动分块存储。\n\n• 大文件会分成多个 10MB 的块存储\n• 下载时自动合并还原\n• 加载可能需要一些时间\n\n确定要插入此文件吗？`,
-                                '确定',
-                                '取消',
-                                '大文件提示'
-                            );
-                            if (!confirmLarge) {
-                                continue;
-                            }
-                        }
-                        let archiveStorageId = null;
-                        if (typeof MediaStorage !== 'undefined') {
-                            try {
-                                archiveStorageId = await MediaStorage.save(file, 'archive');
-                                MediaStorage.hideProgressToast();
-                            } catch (err) {
-                                MediaStorage.hideProgressToast();
-                                console.error('保存压缩文件到 IndexedDB 失败:', err);
-                                showToast('保存压缩文件失败：' + err.message, 'error', 3000);
-                                continue;
-                            }
-                        } else {
-                            showToast('浏览器不支持大文件存储', 'error', 3000);
-                            continue;
-                        }
-                        if (!archiveStorageId) {
-                            showToast('保存压缩文件失败，请重试', 'error', 3000);
-                            continue;
-                        }
-                        const archiveContainer = createArchiveElement(archiveName, fileSize, null, archiveStorageId);
-                        if (savedRange && markdownPreview.contains(savedRange.startContainer)) {
-                            savedRange.insertNode(archiveContainer);
-                            const br = document.createElement('br');
-                            savedRange.setStartAfter(archiveContainer);
-                            savedRange.insertNode(br);
-                        } else {
-                            markdownPreview.appendChild(archiveContainer);
-                            markdownPreview.appendChild(document.createElement('br'));
-                        }
-                        syncPreviewToTextarea();
-                        if (!currentMuluName) {
-                            showToast('提示：请先选择一个目录，否则压缩文件无法保存', 'warning', 3000);
-                        } else {
-                            showToast(`已插入压缩文件：${archiveName}`, 'success', 2000);
-                        }
-                        if (typeof updateStorageInfo === 'function') {
-                            updateStorageInfo();
-                        }
+                        showToast('已禁止拖拽插入压缩文件', 'warning', 2500);
+                        continue;
                     }
+                    continue;
                 }
             }
         }

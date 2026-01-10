@@ -251,16 +251,22 @@ if (toggleSidebarBtn) {
     let sidebarVisible = true;
     toggleSidebarBtn.addEventListener("click", function() {
         sidebarVisible = !sidebarVisible;
+        const sidebarResizer = document.getElementById('sidebarResizer');
         if (sidebarVisible) {
             bigbox.style.display = "block";
-            wordsbox.style.left = "20%";
-            wordsbox.style.width = "calc(100% - 20%)";
+            if (sidebarResizer) sidebarResizer.style.display = "block";
+            wordsbox.style.left = "";
+            wordsbox.style.width = "";
             toggleSidebarBtn.textContent = "隐藏侧边栏";
         } else {
             bigbox.style.display = "none";
+            if (sidebarResizer) sidebarResizer.style.display = "none";
             wordsbox.style.left = "0";
             wordsbox.style.width = "100%";
             toggleSidebarBtn.textContent = "显示侧边栏";
+        }
+        if (typeof updateToolbarHeight === 'function') {
+            updateToolbarHeight();
         }
     });
 }
