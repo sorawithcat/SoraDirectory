@@ -1,12 +1,4 @@
-// ============================================
-// 对话框模块 (dialog.js)
-// 功能：自定义对话框系统，替代原生 alert/confirm/prompt
-// 依赖：无
-// ============================================
-
-// Toast 容器引用
 const toastContainer = document.getElementById('toastContainer');
-
 /**
  * 显示 Toast 悬浮提示（自动消失）
  * @param {string} message - 提示消息
@@ -17,20 +9,13 @@ function showToast(message, type = 'info', duration = 3000) {
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
     toast.textContent = message;
-    
     toastContainer.appendChild(toast);
-    
-    // 触发动画
     requestAnimationFrame(() => {
         toast.classList.add('show');
     });
-    
-    // 自动消失
     setTimeout(() => {
         toast.classList.remove('show');
         toast.classList.add('hide');
-        
-        // 动画结束后移除元素
         setTimeout(() => {
             if (toast.parentNode) {
                 toast.parentNode.removeChild(toast);
@@ -38,8 +23,6 @@ function showToast(message, type = 'info', duration = 3000) {
         }, 300);
     }, duration);
 }
-
-// DOM 元素引用
 const customDialogOverlay = document.getElementById('customDialogOverlay');
 const customDialog = document.getElementById('customDialog');
 const customDialogTitle = document.getElementById('customDialogTitle');
@@ -47,7 +30,6 @@ const customDialogMessage = document.getElementById('customDialogMessage');
 const customDialogInput = document.getElementById('customDialogInput');
 const customDialogFooter = document.getElementById('customDialogFooter');
 const customDialogClose = document.getElementById('customDialogClose');
-
 /**
  * 自定义 alert 对话框
  * @param {string} message - 显示的消息内容
@@ -57,7 +39,6 @@ const customDialogClose = document.getElementById('customDialogClose');
 function customAlert(message, title = '提示') {
     return new Promise((resolve) => {
         customDialogTitle.textContent = title;
-        // 支持换行：将 \n 转换为 <br>，同时转义 HTML 特殊字符
         const safeMessage = message
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
@@ -66,26 +47,21 @@ function customAlert(message, title = '提示') {
         customDialogMessage.innerHTML = safeMessage;
         customDialogInput.style.display = 'none';
         customDialogFooter.innerHTML = '<button class="custom-dialog-btn custom-dialog-btn-primary" id="customDialogOk">确定</button>';
-        
         const okBtn = document.getElementById('customDialogOk');
         const closeBtn = customDialogClose;
-        
         const closeDialog = () => {
             customDialogOverlay.classList.remove('active');
             resolve();
         };
-        
         okBtn.onclick = closeDialog;
         closeBtn.onclick = closeDialog;
         customDialogOverlay.onclick = (e) => {
             if (e.target === customDialogOverlay) closeDialog();
         };
-        
         customDialogOverlay.classList.add('active');
         okBtn.focus();
     });
 }
-
 /**
  * 自定义 confirm 对话框
  * @param {string} message - 显示的确认消息
@@ -100,10 +76,8 @@ function customConfirm(message, okText = '确定', cancelText = '取消', title 
         customDialogTitle.textContent = title;
         let displayMessage;
         if (allowHtml) {
-            // 允许 HTML，仅转换换行
             displayMessage = message.replace(/\n/g, '<br>');
         } else {
-            // 转义 HTML 特殊字符
             displayMessage = message
                 .replace(/&/g, '&amp;')
                 .replace(/</g, '&lt;')
@@ -115,28 +89,23 @@ function customConfirm(message, okText = '确定', cancelText = '取消', title 
         customDialogFooter.innerHTML = 
             `<button class="custom-dialog-btn custom-dialog-btn-secondary" id="customDialogCancel">${cancelText}</button>` +
             `<button class="custom-dialog-btn custom-dialog-btn-primary" id="customDialogOk">${okText}</button>`;
-        
         const okBtn = document.getElementById('customDialogOk');
         const cancelBtn = document.getElementById('customDialogCancel');
         const closeBtn = customDialogClose;
-        
         const closeDialog = (result) => {
             customDialogOverlay.classList.remove('active');
             resolve(result);
         };
-        
         okBtn.onclick = () => closeDialog(true);
         cancelBtn.onclick = () => closeDialog(false);
         closeBtn.onclick = () => closeDialog(false);
         customDialogOverlay.onclick = (e) => {
             if (e.target === customDialogOverlay) closeDialog(false);
         };
-        
         customDialogOverlay.classList.add('active');
         okBtn.focus();
     });
 }
-
 /**
  * 自定义 prompt 输入对话框
  * @param {string} message - 显示的提示消息
@@ -154,25 +123,19 @@ function customPrompt(message, defaultValue = '', title = '输入') {
         customDialogFooter.innerHTML = 
             '<button class="custom-dialog-btn custom-dialog-btn-secondary" id="customDialogCancel">取消</button>' +
             '<button class="custom-dialog-btn custom-dialog-btn-primary" id="customDialogOk">确定</button>';
-        
         const okBtn = document.getElementById('customDialogOk');
         const cancelBtn = document.getElementById('customDialogCancel');
         const closeBtn = customDialogClose;
-        
         const closeDialog = (result) => {
             customDialogOverlay.classList.remove('active');
             resolve(result);
         };
-        
         const handleOk = () => {
             closeDialog(customDialogInput.value);
         };
-        
         okBtn.onclick = handleOk;
         cancelBtn.onclick = () => closeDialog(null);
         closeBtn.onclick = () => closeDialog(null);
-        
-        // 键盘事件：回车确认，ESC取消
         customDialogInput.onkeydown = (e) => {
             if (e.key === 'Enter') {
                 e.preventDefault();
@@ -182,17 +145,13 @@ function customPrompt(message, defaultValue = '', title = '输入') {
                 closeDialog(null);
             }
         };
-        
-        // 点击遮罩层关闭
         customDialogOverlay.onclick = (e) => {
             if (e.target === customDialogOverlay) closeDialog(null);
         };
-        
         customDialogOverlay.classList.add('active');
         setTimeout(() => customDialogInput.focus(), 100);
     });
 }
-
 /**
  * 自定义下拉选择对话框
  * @param {string} message - 显示的提示消息
@@ -206,41 +165,31 @@ function customSelect(message, options, defaultValue = '', title = '选择') {
         customDialogTitle.textContent = title;
         customDialogMessage.textContent = message;
         customDialogInput.style.display = 'none';
-        
-        // 创建下拉选择框
         let selectHtml = '<select class="custom-dialog-select" id="customDialogSelect">';
         options.forEach(opt => {
             const selected = opt.value === defaultValue ? ' selected' : '';
             selectHtml += `<option value="${opt.value}"${selected}>${opt.label}</option>`;
         });
         selectHtml += '</select>';
-        
         customDialogMessage.innerHTML = message + '<br><br>' + selectHtml;
-        
         customDialogFooter.innerHTML = 
             '<button class="custom-dialog-btn custom-dialog-btn-secondary" id="customDialogCancel">取消</button>' +
             '<button class="custom-dialog-btn custom-dialog-btn-primary" id="customDialogOk">确定</button>';
-        
         const selectEl = document.getElementById('customDialogSelect');
         const okBtn = document.getElementById('customDialogOk');
         const cancelBtn = document.getElementById('customDialogCancel');
         const closeBtn = customDialogClose;
-        
         const closeDialog = (result) => {
             customDialogOverlay.classList.remove('active');
             customDialogMessage.innerHTML = '';
             resolve(result);
         };
-        
         const handleOk = () => {
             closeDialog(selectEl.value);
         };
-        
         okBtn.onclick = handleOk;
         cancelBtn.onclick = () => closeDialog(null);
         closeBtn.onclick = () => closeDialog(null);
-        
-        // 键盘事件
         selectEl.onkeydown = (e) => {
             if (e.key === 'Enter') {
                 e.preventDefault();
@@ -250,17 +199,13 @@ function customSelect(message, options, defaultValue = '', title = '选择') {
                 closeDialog(null);
             }
         };
-        
-        // 点击遮罩层关闭
         customDialogOverlay.onclick = (e) => {
             if (e.target === customDialogOverlay) closeDialog(null);
         };
-        
         customDialogOverlay.classList.add('active');
         setTimeout(() => selectEl.focus(), 100);
     });
 }
-
 /**
  * 代码编辑对话框
  * @param {string} code - 初始代码内容
@@ -273,15 +218,12 @@ function codeEditDialog(code = '', language = 'javascript', langOptions = [], ti
     return new Promise((resolve) => {
         customDialogTitle.textContent = title;
         customDialogInput.style.display = 'none';
-        
-        // 创建代码编辑界面
         let selectHtml = '<select class="custom-dialog-select" id="codeDialogLang" style="margin-bottom: 10px;">';
         langOptions.forEach(opt => {
             const selected = opt.value === language ? ' selected' : '';
             selectHtml += `<option value="${opt.value}"${selected}>${opt.label}</option>`;
         });
         selectHtml += '</select>';
-        
         customDialogMessage.innerHTML = 
             '<label style="font-size: 12px; color: #666; display: block; margin-bottom: 4px;">编程语言</label>' +
             selectHtml +
@@ -289,43 +231,34 @@ function codeEditDialog(code = '', language = 'javascript', langOptions = [], ti
             '<textarea id="codeDialogTextarea" class="code-dialog-textarea" spellcheck="false">' + 
             code.replace(/</g, '&lt;').replace(/>/g, '&gt;') + 
             '</textarea>';
-        
         customDialogFooter.innerHTML = 
             '<button class="custom-dialog-btn custom-dialog-btn-secondary" id="customDialogCancel">取消</button>' +
             '<button class="custom-dialog-btn custom-dialog-btn-danger" id="customDialogDelete" style="margin-right: auto;">删除代码块</button>' +
             '<button class="custom-dialog-btn custom-dialog-btn-primary" id="customDialogOk">确定</button>';
-        
         const textarea = document.getElementById('codeDialogTextarea');
         const langSelect = document.getElementById('codeDialogLang');
         const okBtn = document.getElementById('customDialogOk');
         const cancelBtn = document.getElementById('customDialogCancel');
         const deleteBtn = document.getElementById('customDialogDelete');
         const closeBtn = customDialogClose;
-        
-        // 如果是新建，隐藏删除按钮
         if (!code) {
             deleteBtn.style.display = 'none';
         }
-        
         const closeDialog = (result) => {
             customDialogOverlay.classList.remove('active');
             customDialogMessage.innerHTML = '';
             resolve(result);
         };
-        
         const handleOk = () => {
             closeDialog({
                 code: textarea.value,
                 language: langSelect.value
             });
         };
-        
         okBtn.onclick = handleOk;
         cancelBtn.onclick = () => closeDialog(null);
         closeBtn.onclick = () => closeDialog(null);
         deleteBtn.onclick = () => closeDialog({ delete: true });
-        
-        // Tab 键在 textarea 中插入制表符
         textarea.onkeydown = (e) => {
             if (e.key === 'Tab') {
                 e.preventDefault();
@@ -338,21 +271,15 @@ function codeEditDialog(code = '', language = 'javascript', langOptions = [], ti
                 closeDialog(null);
             }
         };
-        
-        // 点击遮罩层关闭
         customDialogOverlay.onclick = (e) => {
             if (e.target === customDialogOverlay) closeDialog(null);
         };
-        
-        // 调整对话框宽度
         customDialog.style.maxWidth = '700px';
         customDialog.style.width = '90%';
-        
         customDialogOverlay.classList.add('active');
         setTimeout(() => textarea.focus(), 100);
     });
 }
-
 /**
  * 颜色选择对话框
  * @param {string} defaultValue - 默认颜色值（十六进制，如 #000000）
@@ -363,8 +290,6 @@ function colorPickerDialog(defaultValue = '#000000', title = '选择颜色') {
     return new Promise((resolve) => {
         customDialogTitle.textContent = title;
         customDialogInput.style.display = 'none';
-        
-        // 创建颜色选择界面
         customDialogMessage.innerHTML = 
             '<div style="text-align: center; padding: 20px 0;">' +
             '<input type="color" id="colorPickerInput" value="' + escapeHtml(defaultValue) + '" style="width: 200px; height: 200px; border: 2px solid #ddd; border-radius: 4px; cursor: pointer;">' +
@@ -372,35 +297,26 @@ function colorPickerDialog(defaultValue = '#000000', title = '选择颜色') {
             '<label style="font-size: 12px; color: #666; display: block; margin-bottom: 4px;">颜色值（十六进制）</label>' +
             '<input type="text" id="colorTextInput" value="' + escapeHtml(defaultValue) + '" style="width: 150px; padding: 6px; border: 1px solid #ddd; border-radius: 4px; text-align: center; font-family: monospace; font-size: 14px;" placeholder="#000000" maxlength="7">' +
             '</div>';
-        
         customDialogFooter.innerHTML = 
             '<button class="custom-dialog-btn custom-dialog-btn-secondary" id="customDialogCancel">取消</button>' +
             '<button class="custom-dialog-btn custom-dialog-btn-primary" id="customDialogOk">确定</button>';
-        
         const colorPicker = document.getElementById('colorPickerInput');
         const colorText = document.getElementById('colorTextInput');
         const okBtn = document.getElementById('customDialogOk');
         const cancelBtn = document.getElementById('customDialogCancel');
         const closeBtn = customDialogClose;
-        
-        // 同步颜色选择器和文本输入框
         colorPicker.addEventListener('input', () => {
             colorText.value = colorPicker.value.toUpperCase();
         });
-        
         colorText.addEventListener('input', () => {
             let value = colorText.value.trim();
-            // 如果输入的值不是以#开头，自动添加
             if (value && !value.startsWith('#')) {
                 value = '#' + value;
             }
-            // 验证颜色格式
             if (/^#[0-9A-Fa-f]{6}$/.test(value)) {
                 colorPicker.value = value;
             }
         });
-        
-        // 验证颜色值格式
         function validateColor(value) {
             if (!value) return false;
             if (!value.startsWith('#')) {
@@ -408,16 +324,13 @@ function colorPickerDialog(defaultValue = '#000000', title = '选择颜色') {
             }
             return /^#[0-9A-Fa-f]{6}$/.test(value);
         }
-        
         const closeDialog = (result) => {
             customDialogOverlay.classList.remove('active');
             customDialogMessage.innerHTML = '';
-            // 恢复对话框宽度
             customDialog.style.maxWidth = '';
             customDialog.style.width = '';
             resolve(result);
         };
-        
         const handleOk = () => {
             let color = colorPicker.value.toUpperCase();
             if (validateColor(color)) {
@@ -426,12 +339,9 @@ function colorPickerDialog(defaultValue = '#000000', title = '选择颜色') {
                 showToast('请输入有效的颜色值（如 #FF0000）', 'error', 2000);
             }
         };
-        
         okBtn.onclick = handleOk;
         cancelBtn.onclick = () => closeDialog(null);
         closeBtn.onclick = () => closeDialog(null);
-        
-        // 键盘事件：回车确认，ESC取消
         colorText.onkeydown = (e) => {
             if (e.key === 'Enter') {
                 e.preventDefault();
@@ -441,16 +351,11 @@ function colorPickerDialog(defaultValue = '#000000', title = '选择颜色') {
                 closeDialog(null);
             }
         };
-        
-        // 点击遮罩层关闭
         customDialogOverlay.onclick = (e) => {
             if (e.target === customDialogOverlay) closeDialog(null);
         };
-        
-        // 调整对话框宽度
         customDialog.style.maxWidth = '400px';
         customDialog.style.width = '90%';
-        
         customDialogOverlay.classList.add('active');
         setTimeout(() => colorText.focus(), 100);
     });
