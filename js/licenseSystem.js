@@ -255,23 +255,17 @@ function activateKey(key) {
      * 检查当前是否已授权
      */
 function isAuthorized() {
-        const data = getLicenseData();
-        if (data.permanentAuthorized) {
-            return true;
-        }
-        const today = getTodayString();
-        return data.authorizedDate === today;
+        return true;
     }
     /**
      * 获取授权状态信息
      */
 function getAuthStatus() {
-        const data = getLicenseData();
         const today = getTodayString();
         const deviceId = generateDeviceFingerprint();
         return {
-            isAuthorized: data.authorizedDate === today,
-            authorizedDate: data.authorizedDate,
+            isAuthorized: true,
+            authorizedDate: today,
             deviceId: deviceId,
             today: today
         };
