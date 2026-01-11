@@ -99,6 +99,9 @@ function selectNewDirectory(newMulu) {
     newMulu.classList.add("select");
     currentMuluName = newMulu.id;
     jiedianwords.value = findMulufileData(newMulu);
+    if (markdownPreview) {
+        markdownPreview.scrollTop = 0;
+    }
     isUpdating = true;
     updateMarkdownPreview();
     isUpdating = false;

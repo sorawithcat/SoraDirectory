@@ -376,11 +376,12 @@ if (saveAsBtn) {
     });
 }
 document.querySelectorAll('.format-toolbar-btn').forEach(btn => {
-    if (btn.id === 'topLinkBtn') {
+    if (btn.id === 'topLinkBtn' || btn.id === 'topAnchorBtn') {
         btn.addEventListener('click', async function(e) {
             e.preventDefault();
             e.stopPropagation();
-            await applyFormat('link');
+            const cmd = btn.id === 'topAnchorBtn' ? 'anchor' : 'link';
+            await applyFormat(cmd);
         });
     } else {
         btn.addEventListener('click', function(e) {
@@ -398,13 +399,479 @@ if (topImageUploadBtn) {
         if (imageFileInput) imageFileInput.click();
     });
 }
-if (topVideoUploadBtn) {
-    topVideoUploadBtn.addEventListener('click', function(e) {
+
+function buildHelpNavHtml() {
+    const items = [
+        { id: 'mulu_help_root', name: '使用说明' },
+        { id: 'mulu_help_quickstart', name: '快速开始' },
+        { id: 'mulu_help_directory', name: '目录操作' },
+        { id: 'mulu_help_format', name: '编辑与格式' },
+        { id: 'mulu_help_link_anchor', name: '链接与锚点' },
+        { id: 'mulu_help_search', name: '查找与替换' },
+        { id: 'mulu_help_export', name: '保存、导出与加密' },
+        { id: 'mulu_help_notes', name: '注意事项与常见问题' }
+    ];
+    let out = '<p>';
+    for (let i = 0; i < items.length; i++) {
+        const it = items[i];
+        out += '<a href="sora-dir:' + it.id + '" data-sora-link="dir" data-dir-id="' + it.id + '">' + it.name + '</a>';
+        if (i !== items.length - 1) out += ' | ';
+    }
+    out += '</p>';
+    return out;
+}
+
+function buildHelpPageContents() {
+    const nav = buildHelpNavHtml();
+
+    const root = [
+        '<h1>使用说明</h1>',
+        nav,
+        '<p>这是内置的说明文档，会以“目录 + 正文”的形式展示，效果与导出网页一致。</p>',
+        '<h2 id="交互说明">交互说明</h2>',
+        '<ul>',
+        '<li><strong>目录区</strong>：左键选择；双击重命名；拖拽移动（含子目录）；右键打开菜单。</li>',
+        '<li><strong>编辑区</strong>：右侧为可编辑预览区，直接输入/粘贴即可。</li>',
+        '<li><strong>链接/锚点</strong>：在编辑器预览区，单击用于编辑；要跳转/打开请使用 <strong>Ctrl+单击</strong>。</li>',
+        '<li><strong>导出网页</strong>：网页里是普通单击跳转；锚点本身不可见且不可点击（仅作为跳转目标）。</li>',
+        '</ul>',
+        '<h2 id="常用快捷键">常用快捷键</h2>',
+        '<ul>',
+        '<li><strong>Ctrl+S</strong>：保存</li>',
+        '<li><strong>Ctrl+F</strong>：查找</li>',
+        '<li><strong>Ctrl+H</strong>：替换</li>',
+        '<li><strong>Ctrl+B / Ctrl+I / Ctrl+U</strong>：粗体 / 斜体 / 下划线</li>',
+        '</ul>',
+        '<h2 id="你可以做什么">你可以做什么</h2>',
+        '<ul>',
+        '<li>用左侧目录组织内容，支持多级目录与一整套复制/粘贴/快速复制操作。</li>',
+        '<li>在右侧预览区编辑，并用顶部工具栏或悬浮工具栏插入格式。</li>',
+        '<li>创建链接：外链、页内跳转（#锚点）、目录内跳转（dir:/name:）。</li>',
+        '<li>保存为普通文件或加密文件；导出网页或加密网页（需要密码才能查看）。</li>',
+        '</ul>',
+        '<h2 id="快速入口">快速入口</h2>',
+        '<ul>',
+        '<li><a href="sora-dir:mulu_help_quickstart" data-sora-link="dir" data-dir-id="mulu_help_quickstart">快速开始：从新建到导出</a></li>',
+        '<li><a href="sora-dir:mulu_help_directory" data-sora-link="dir" data-dir-id="mulu_help_directory">目录操作：复制/粘贴/拖拽/右键菜单</a></li>',
+        '<li><a href="sora-dir:mulu_help_format" data-sora-link="dir" data-dir-id="mulu_help_format">编辑与格式：所有格式按钮清单</a></li>',
+        '<li><a href="sora-dir:mulu_help_link_anchor" data-sora-link="dir" data-dir-id="mulu_help_link_anchor">链接与锚点：完整语法与示例</a></li>',
+        '<li><a href="sora-dir:mulu_help_export" data-sora-link="dir" data-dir-id="mulu_help_export">保存、导出与加密：文件/网页/密码</a></li>',
+        '</ul>',
+        '<h2 id="跳转示例">跳转示例（请 Ctrl+单击测试）</h2>',
+        '<ul>',
+        '<li>页内跳转：<a href="#示例标题" data-sora-link="anchor" data-anchor-id="示例标题">#示例标题</a></li>',
+        '<li>目录内跳转（按目录ID）：<a href="sora-dir:mulu_help_link_anchor#目录内跳转" data-sora-link="dir" data-dir-id="mulu_help_link_anchor" data-anchor-id="目录内跳转">dir:mulu_help_link_anchor#目录内跳转</a></li>',
+        '<li>目录内跳转（按目录名）：<a href="sora-dir:mulu_help_link_anchor#目录内跳转" data-sora-link="dir" data-dir-name="链接与锚点" data-anchor-id="目录内跳转">name:链接与锚点#目录内跳转</a></li>',
+        '</ul>',
+        '<h3 id="示例标题">示例标题</h3>',
+        '<p>如果你能跳到这里，说明页内跳转正常。</p>'
+    ].join('');
+
+    const quickstart = [
+        '<h1>快速开始</h1>',
+        nav,
+        '<h2 id="从零开始">从零开始（推荐流程）</h2>',
+        '<ol>',
+        '<li>点击顶部工具栏 <strong>文件 / 新建</strong>（会清空当前目录与内容，并清理已存储的媒体数据）。</li>',
+        '<li>点击 <strong>目录 / 添加目录</strong> 创建一级目录，再用 <strong>目录 / 添加节点</strong> 创建子目录。</li>',
+        '<li>左键单击目录，右侧开始编辑内容（可直接粘贴图片/文本）。</li>',
+        '<li>选择文字后会出现悬浮工具栏，用于快速加粗/链接/列表等；点击任意按钮后会自动收起。</li>',
+        '<li>按 <strong>Ctrl+S</strong> 保存；或用 <strong>另存为</strong> 导出网页/加密网页。</li>',
+        '</ol>',
+        '<h2 id="如何组织内容">如何组织内容</h2>',
+        '<ul>',
+        '<li>建议用 <strong>H1~H3</strong> 标题组织结构，标题会自动生成可跳转的 id，方便做目录内跳转。</li>',
+        '<li>需要自定义跳转点时，用 <strong>锚点</strong> 功能插入任意锚点。</li>',
+        '</ul>',
+        '<h2 id="保存与导出提示">保存与导出提示</h2>',
+        '<ul>',
+        '<li>按钮出现“保存 *”说明有未保存更改。</li>',
+        '<li><strong>另存为</strong>：可以选择“网页(.html)”或“自定义文件名”；两种都支持加密选项。</li>',
+        '<li>导出网页会把目录与正文打包进单个 HTML 文件，适合发送给别人直接打开。</li>',
+        '<li><strong>切换目录会自动回到顶部</strong>：无论左键切换、右键切换、目录内跳转或新建后选中，右侧内容都会从顶部开始显示（带锚点跳转除外）。</li>',
+        '</ul>'
+    ].join('');
+
+    const directory = [
+        '<h1>目录操作</h1>',
+        nav,
+        '<h2 id="目录基础">基础操作</h2>',
+        '<ul>',
+        '<li>左键单击：选中并切换右侧内容。</li>',
+        '<li>双击：重命名目录。</li>',
+        '<li>拖拽：移动目录（含子目录）。</li>',
+        '<li>点击目录左侧小三角：展开/收起子目录。</li>',
+        '</ul>',
+        '<h2 id="目录右键菜单">右键菜单</h2>',
+        '<ul>',
+        '<li><strong>复制目录（含子目录）</strong>：把当前目录以及所有子目录复制到剪贴板。</li>',
+        '<li><strong>复制目录（不含子目录）</strong>：只复制当前目录本身。</li>',
+        '<li><strong>粘贴目录</strong>：把剪贴板中的目录粘贴到当前目录同级（插入在当前目录之后）。</li>',
+        '<li><strong>快速复制（含子目录 / 不含子目录）</strong>：等价于复制后立刻粘贴。</li>',
+        '<li><strong>删除选中目录</strong>：会递归删除子目录与其内容。</li>',
+        '<li><strong>展开此目录 / 收起此目录</strong>：递归展开/收起该目录树。</li>',
+        '<li><strong>复制目录ID</strong>：复制 data-dir-id，用于写 <strong>dir:目录ID</strong> 类型的目录内跳转链接。</li>',
+        '</ul>',
+        '<h2 id="目录工具栏">目录工具栏</h2>',
+        '<ul>',
+        '<li><strong>添加目录</strong>：创建与当前目录同级的新目录。</li>',
+        '<li><strong>添加节点</strong>：创建当前目录的子目录。</li>',
+        '<li><strong>展开全部 / 收起全部</strong>：展开或收起所有有子目录的项。</li>',
+        '</ul>',
+        '<h2 id="目录ID示例">目录ID 示例</h2>',
+        '<p>例如你复制到的目录ID可能类似：<code>abc123xyz</code>。写目录内跳转时使用：</p>',
+        '<ul>',
+        '<li><code>dir:abc123xyz</code></li>',
+        '<li><code>dir:abc123xyz#某个标题或锚点</code></li>',
+        '</ul>'
+    ].join('');
+
+    const format = [
+        '<h1>编辑与格式</h1>',
+        nav,
+        '<h2 id="标题">标题</h2>',
+        '<ul>',
+        '<li>支持 <strong>H1~H6</strong>。标题会在预览渲染后自动生成 id（用于页内跳转）。</li>',
+        '<li>建议：一级目录用 H1/H2，小节用 H3/H4。</li>',
+        '</ul>',
+        '<h2 id="格式命令一览">格式命令一览</h2>',
+        '<p>以下清单与格式工具栏的 <code>data-command</code> 以及内部 <code>applyFormat(command)</code> 一一对应。</p>',
+        '<table>',
+        '<thead><tr><th>命令</th><th>说明</th><th>要点</th></tr></thead>',
+        '<tbody>',
+        '<tr><td><code>bold</code></td><td>粗体</td><td>支持 Ctrl+B；再次应用会取消</td></tr>',
+        '<tr><td><code>italic</code></td><td>斜体</td><td>支持 Ctrl+I；再次应用会取消</td></tr>',
+        '<tr><td><code>underline</code></td><td>下划线</td><td>支持 Ctrl+U；再次应用会取消</td></tr>',
+        '<tr><td><code>strikethrough</code></td><td>删除线</td><td>再次应用会取消</td></tr>',
+        '<tr><td><code>code</code></td><td>行内代码</td><td>行内代码内容会转义为纯文本（不保留嵌套 HTML）</td></tr>',
+        '<tr><td><code>code-block</code></td><td>代码块</td><td>会弹出代码编辑对话框；可选语言并高亮</td></tr>',
+        '<tr><td><code>highlight</code></td><td>高亮</td><td>使用 <code>&lt;mark&gt;</code>；再次应用会取消</td></tr>',
+        '<tr><td><code>spoiler</code></td><td>防剧透</td><td>使用 <code>&lt;spoiler&gt;</code>；悬停显示内容</td></tr>',
+        '<tr><td><code>superscript</code></td><td>上标</td><td>使用 <code>&lt;sup&gt;</code></td></tr>',
+        '<tr><td><code>subscript</code></td><td>下标</td><td>使用 <code>&lt;sub&gt;</code></td></tr>',
+        '<tr><td><code>color</code></td><td>文字颜色</td><td>会弹出颜色选择；已选中文本才能应用</td></tr>',
+        '<tr><td><code>background-color</code></td><td>背景颜色</td><td>会弹出颜色选择；已选中文本才能应用</td></tr>',
+        '<tr><td><code>unordered-list</code></td><td>无序列表</td><td>按行拆分生成 <code>&lt;ul&gt;&lt;li&gt;</code></td></tr>',
+        '<tr><td><code>ordered-list</code></td><td>有序列表</td><td>按行拆分生成 <code>&lt;ol&gt;&lt;li&gt;</code></td></tr>',
+        '<tr><td><code>task-list</code></td><td>任务列表</td><td>按行生成可勾选任务项</td></tr>',
+        '<tr><td><code>quote</code></td><td>引用</td><td>生成 <code>&lt;blockquote&gt;</code></td></tr>',
+        '<tr><td><code>table</code></td><td>表格</td><td>生成表格结构（适合粘贴后再调整）</td></tr>',
+        '<tr><td><code>paragraph</code></td><td>段落</td><td>用 <code>&lt;p&gt;</code> 包裹选中内容</td></tr>',
+        '<tr><td><code>hr</code></td><td>水平线</td><td>插入分隔线</td></tr>',
+        '<tr><td><code>link</code></td><td>链接</td><td>会弹窗输入；支持外链、<code>#锚点</code>、<code>dir:</code>、<code>name:</code></td></tr>',
+        '<tr><td><code>anchor</code></td><td>锚点</td><td>会弹窗输入锚点名；用于页内/跨目录跳转目标</td></tr>',
+        '</tbody>',
+        '</table>',
+        '<h2 id="格式小技巧">格式小技巧</h2>',
+        '<ul>',
+        '<li>大多数“包裹类格式”（粗体/斜体/下划线/高亮等）再次点击会取消。</li>',
+        '<li>对同一段文字叠加多个格式是允许的（例如：高亮 + 粗体）。</li>',
+        '<li>代码块是不可直接编辑的块，通常通过点击触发编辑对话框来修改。</li>',
+        '</ul>',
+        '<h2 id="插入图片">插入图片</h2>',
+        '<ul>',
+        '<li>顶部工具栏的“插入图片”用于选择图片文件插入到当前目录内容中。</li>',
+        '<li>媒体数据会存储在浏览器本地；导出网页时会一并打包（因此文件可能变大）。</li>',
+        '</ul>'
+    ].join('');
+
+    const linkAnchor = [
+        '<h1>链接与锚点</h1>',
+        nav,
+
+        '<h2 id="外部链接">外部链接</h2>',
+        '<ul>',
+        '<li>用“链接”按钮输入 <code>http://</code> 或 <code>https://</code> 地址即可。</li>',
+        '<li>编辑器里 <strong>Ctrl+单击</strong> 才会打开链接；单击会进入编辑。</li>',
+        '</ul>',
+        '<h2 id="页内跳转">页内跳转（当前目录）</h2>',
+        '<p>链接地址填写 <code>#锚点名</code> 可跳转到当前目录内容中的目标。</p>',
+        '<ul>',
+        '<li>你可以跳到标题（标题会自动有 id），也可以跳到任意锚点。</li>',
+        '<li>匹配顺序：元素 id → 任意锚点 <code>data-anchor-name</code> → 标题文本。</li>',
+        '<li>锚点名会被规范化：去掉开头的 <code>#</code>，并把空格替换为 <code>-</code>。</li>',
+        '</ul>',
+
+        '<p>示例（Ctrl+单击）：<a href="#本页示例锚点" data-sora-link="anchor" data-anchor-id="本页示例锚点">#本页示例锚点</a></p>',
+        '<h3 id="本页示例锚点">本页示例锚点</h3>',
+        '<p>如果你能跳到这里，说明页内跳转正常。</p>',
+        '<h2 id="目录内跳转">目录内跳转（跨目录）</h2>',
+        '<p>用于从一个目录跳到另一个目录的指定位置。支持两种写法：</p>',
+        '<ul>',
+        '<li><strong>按目录ID</strong>：<code>dir:目录ID</code> 或 <code>dir:目录ID#锚点</code></li>',
+        '<li><strong>按目录名</strong>：<code>name:目录名</code> 或 <code>name:目录名#锚点</code>（同名时跳第一个匹配项）</li>',
+        '</ul>',
+        '<p>输入兼容中文前缀：</p>',
+        '<ul>',
+        '<li><code>目录:目录ID</code> 等价于 <code>dir:目录ID</code></li>',
+        '<li><code>目录名:目录名</code> 等价于 <code>name:目录名</code></li>',
+        '</ul>',
+        '<p>示例（Ctrl+单击）：</p>',
+        '<ul>',
+        '<li><a href="sora-dir:mulu_help_export#加密导出" data-sora-link="dir" data-dir-id="mulu_help_export" data-anchor-id="加密导出">dir:mulu_help_export#加密导出</a></li>',
+        '<li><a href="sora-dir:mulu_help_export#加密导出" data-sora-link="dir" data-dir-name="保存、导出与加密" data-anchor-id="加密导出">name:保存、导出与加密#加密导出</a></li>',
+        '</ul>',
+        '<h2 id="任意锚点">创建任意锚点</h2>',
+        '<ul>',
+        '<li>用“锚点”按钮输入锚点名，会插入一个锚点标记。</li>',
+        '<li>锚点的 DOM id 会自动带前缀与随机后缀以避免冲突；跳转时按“锚点名”匹配（不是按 DOM id）。</li>',
+        '<li>你可以单击锚点标记进入编辑修改锚点名。</li>',
+        '</ul>',
+        '<h2 id="编辑提示">编辑提示</h2>',
+        '<ul>',
+        '<li>编辑器预览区：<strong>Ctrl+单击</strong> 才会跳转/打开；单击用于进入编辑与选中元素。</li>',
+        '<li>单击链接会弹出“编辑链接地址”对话框，支持把外链改成 <code>#锚点</code> / <code>dir:</code> / <code>name:</code>。</li>',
+        '</ul>'
+    ].join('');
+
+    const search = [
+        '<h1>查找与替换</h1>',
+        nav,
+        '<h2 id="打开方式">打开方式</h2>',
+        '<ul>',
+        '<li>查找：<strong>Ctrl+F</strong> 或顶部“编辑 / 查找”。</li>',
+        '<li>替换：<strong>Ctrl+H</strong> 或顶部“编辑 / 替换”。</li>',
+        '</ul>',
+        '<h2 id="选项说明">选项说明</h2>',
+        '<ul>',
+        '<li><strong>区分大小写</strong>：只匹配大小写完全一致的内容。</li>',
+        '<li><strong>全词匹配</strong>：只匹配完整单词（适合查找变量名）。</li>',
+        '<li><strong>正则表达式</strong>：使用正则进行高级匹配。</li>',
+        '</ul>',
+        '<h2 id="搜索范围">搜索范围</h2>',
+        '<ul>',
+        '<li><strong>当前目录</strong>：只搜索当前选中的目录内容。</li>',
+        '<li><strong>所有目录</strong>：会遍历所有目录内容。</li>',
+        '</ul>',
+        '<h2 id="使用建议">使用建议</h2>',
+        '<ul>',
+        '<li>替换前建议先用“查找”确认命中范围，再执行替换。</li>',
+        '<li>如果要批量替换带格式的内容，建议先在少量目录里试运行，确认效果后再全局替换。</li>',
+        '</ul>'
+    ].join('');
+
+    const exportPage = [
+        '<h1>保存、导出与加密</h1>',
+        nav,
+
+        '<h2 id="保存">保存</h2>',
+        '<ul>',
+        '<li><strong>保存（Ctrl+S）</strong>：保存到当前已加载的文件句柄（如果浏览器支持）。</li>',
+        '<li>按钮显示“保存 *”表示有未保存更改。</li>',
+        '<li>保存前会询问 <strong>保存范围</strong> 与 <strong>是否加密</strong>。</li>',
+        '</ul>',
+        '<h2 id="保存范围">保存范围</h2>',
+        '<ul>',
+        '<li><strong>保存全部</strong>：保存所有目录数据。</li>',
+        '<li><strong>仅保存修改的目录（增量）</strong>：只保存被修改过的目录的完整内容，文件名会带 <code>_incremental</code>。</li>',
+        '<li><strong>仅保存差异（补丁）</strong>：尽量只保存变化部分，文件名会带 <code>.patch</code>，体积更小。</li>',
+        '</ul>',
+        '<h2 id="另存为">另存为</h2>',
+        '<p>点击顶部工具栏 <strong>另存为</strong> 后会先选择保存格式：</p>',
+        '<ul>',
+        '<li><strong>网页 (.html)</strong>：导出为独立可浏览的网页。</li>',
+        '<li><strong>自定义文件名</strong>：手动输入文件名与扩展名（如：mydata.json）。</li>',
+        '</ul>',
+        '<p>两种格式都会再询问“是否加密”。</p>',
+        '<h2 id="导出网页">导出网页（不加密）</h2>',
+        '<ul>',
+        '<li>导出网页后可离线打开浏览，目录与内部跳转都可用。</li>',
+        '<li>导出网页中：锚点不可见且不可点击，只用于作为跳转目标。</li>',
+        '</ul>',
+        '<h2 id="加密导出">加密导出（网页/文件）</h2>',
+        '<ul>',
+        '<li>在“另存为”时选择加密：会要求设置密码并二次确认。</li>',
+        '<li><strong>加密保存</strong>：生成 <code>.encrypted.json</code>，打开时需要输入密码解密。</li>',
+        '<li><strong>加密网页</strong>：生成 <code>.encrypted.html</code>，打开网页会先显示输入密码页面，输入正确密码后才渲染内容。</li>',
+        '<li>如果忘记密码，无法恢复内容（请务必妥善保存）。</li>',
+        '</ul>',
+        '<h2 id="加密文件如何打开">加密文件如何打开</h2>',
+        '<ol>',
+        '<li>点击顶部工具栏 <strong>加载</strong> 选择 <code>.encrypted.json</code> 文件。</li>',
+        '<li>弹窗提示输入密码（最多可多次尝试）。</li>',
+        '<li>解密成功后才会加载目录与内容。</li>',
+        '</ol>',
+        '<h2 id="文件名规则">文件名规则</h2>',
+        '<ul>',
+        '<li><strong>全量</strong>：<code>{文件名}.json</code></li>',
+        '<li><strong>增量</strong>：<code>{文件名}_incremental.json</code>（或你选择的格式后缀）</li>',
+        '<li><strong>差异补丁</strong>：<code>{文件名}.patch.json</code></li>',
+        '<li><strong>加密全量</strong>：<code>{文件名}.encrypted.json</code></li>',
+        '<li><strong>加密增量</strong>：<code>{文件名}_incremental.encrypted.json</code></li>',
+        '<li><strong>加密差异补丁</strong>：<code>{文件名}.patch.encrypted.json</code></li>',
+        '<li><strong>加密网页</strong>：<code>{文件名}.encrypted.html</code></li>',
+        '</ul>',
+        '<h2 id="差异补丁说明">差异补丁说明</h2>',
+        '<ul>',
+        '<li>差异补丁文件用于在“已有基础数据”的前提下应用更新。</li>',
+        '<li><strong>应用补丁前需要先加载基础数据</strong>，否则无法知道补丁要改哪一份内容。</li>',
+        '<li>补丁应用后会标记为未保存状态，建议立即另存为全量或增量以固化结果。</li>',
+        '</ul>',
+        '<h2 id="支持的导入格式">支持的导入格式</h2>',
+        '<ul>',
+        '<li><strong>.json</strong>：推荐格式（可读性好）。</li>',
+        '<li><strong>.txt</strong>：文本格式。</li>',
+        '<li><strong>.xml</strong>：XML 格式。</li>',
+        '<li><strong>.csv</strong>：CSV 格式。</li>',
+        '</ul>',
+        '<h2 id="加载方式">加载方式：替换 / 合并 / 应用补丁</h2>',
+        '<ul>',
+        '<li><strong>替换</strong>：清空现有数据并加载文件。</li>',
+        '<li><strong>合并</strong>：将新数据合并到现有数据中（用于增量文件）。</li>',
+        '<li><strong>应用差异补丁</strong>：当加载到 <code>.patch</code> 文件时，会将补丁应用到当前数据上。</li>',
+        '</ul>',
+        '<h2 id="缓存与快速加载">缓存与快速加载</h2>',
+        '<ul>',
+        '<li>对<strong>未加密文件</strong>，系统可能会启用 FileCache 加速再次打开（提示“从缓存快速加载”）。</li>',
+        '<li>加密文件需要先解密，默认不使用缓存。</li>',
+        '</ul>',
+        '<h2 id="直接保存支持">直接保存支持</h2>',
+        '<ul>',
+        '<li>如果浏览器支持 File System Access API，则打开文件后可直接保存到原文件（Ctrl+S）。</li>',
+        '<li>如果不支持，仍可使用“另存为”导出文件/网页。</li>',
+        '</ul>',
+        '<h2 id="加载文件">加载</h2>',
+        '<ul>',
+        '<li>顶部工具栏 <strong>加载</strong>：选择文件导入目录数据。</li>',
+        '<li>加载加密文件时会提示输入密码，最多可重试。</li>',
+        '</ul>'
+    ].join('');
+
+    const notes = [
+        '<h1>注意事项与常见问题</h1>',
+        nav,
+
+        '<h2 id="交互相关">交互相关</h2>',
+        '<ul>',
+        '<li>编辑器预览区：<strong>Ctrl+单击</strong> 才会跳转/打开；单击用于进入编辑与选中元素。</li>',
+        '<li>切换目录时右侧内容会自动回到顶部；如果是带锚点的跳转，会在顶部归零后再滚动到锚点位置。</li>',
+        '<li>目录内跳转使用 <code>name:</code> 时，如果存在同名目录，会跳到第一个匹配项（建议用 <code>dir:</code> 更稳定）。</li>',
+        '</ul>',
+        '<h2 id="视图相关">视图相关</h2>',
+        '<ul>',
+        '<li><strong>切换侧边栏</strong>：隐藏/显示左侧目录树，右侧编辑区会自动铺满。</li>',
+        '<li><strong>拖拽调整宽度</strong>：拖动目录与正文之间的分隔条可调整侧边栏宽度（会自动记住）。</li>',
+        '<li><strong>全屏</strong>：进入/退出全屏模式，适合专注写作。</li>',
+        '</ul>',
+        '<h2 id="存储空间">存储空间</h2>',
+        '<ul>',
+        '<li>顶部“存储”区域会显示已用/剩余空间。</li>',
+        '<li><strong>左键</strong>点击存储信息：刷新统计。</li>',
+        '<li><strong>右键</strong>点击存储信息：清理孤立媒体数据（不再被任何目录引用的图片/视频/压缩文件）。</li>',
+        '<li>存储信息会定期自动刷新（也可手动刷新）。</li>',
+        '</ul>',
+        '<h2 id="新建会清空什么">新建会清空什么</h2>',
+        '<ul>',
+        '<li>“文件 / 新建”会清空当前目录与内容。</li>',
+        '<li>同时会清空已存储的媒体数据（图片/视频/压缩文件等）。如果你还需要这些媒体，请先导出网页或另存为文件备份。</li>',
+        '</ul>',
+        '<h2 id="导出相关">导出相关</h2>',
+        '<ul>',
+        '<li>导出网页可能较大（会内嵌媒体数据），建议用浏览器直接打开查看。</li>',
+        '<li>加密网页/加密文件如果忘记密码无法找回，请妥善保管。</li>',
+        '</ul>',
+        '<h2 id="编辑建议">编辑建议</h2>',
+        '<ul>',
+        '<li>批量替换/大范围格式化前建议先保存，避免误操作。</li>',
+        '<li>建议定期用“另存为”保存一个副本，尤其是大量修改之后。</li>',
+        '</ul>'
+    ].join('');
+
+    return {
+        mulu_help_root: root,
+        mulu_help_quickstart: quickstart,
+        mulu_help_directory: directory,
+        mulu_help_format: format,
+        mulu_help_link_anchor: linkAnchor,
+        mulu_help_search: search,
+        mulu_help_export: exportPage,
+        mulu_help_notes: notes
+    };
+}
+
+function buildHelpManualMulufile() {
+    const pages = buildHelpPageContents();
+    return [
+        ['mulu', '使用说明', 'mulu_help_root', pages.mulu_help_root],
+        ['mulu_help_root', '快速开始', 'mulu_help_quickstart', pages.mulu_help_quickstart],
+        ['mulu_help_root', '目录操作', 'mulu_help_directory', pages.mulu_help_directory],
+        ['mulu_help_root', '编辑与格式', 'mulu_help_format', pages.mulu_help_format],
+        ['mulu_help_root', '链接与锚点', 'mulu_help_link_anchor', pages.mulu_help_link_anchor],
+        ['mulu_help_root', '查找与替换', 'mulu_help_search', pages.mulu_help_search],
+        ['mulu_help_root', '保存、导出与加密', 'mulu_help_export', pages.mulu_help_export],
+        ['mulu_help_root', '注意事项与常见问题', 'mulu_help_notes', pages.mulu_help_notes]
+    ];
+}
+
+async function loadHelpManual(options = {}) {
+    const silent = !!options.silent;
+    const force = !!options.force;
+    const hasExistingData = (typeof mulufile !== 'undefined' && Array.isArray(mulufile) && mulufile.length > 0);
+
+    if (!force && typeof hasUnsavedChanges !== 'undefined' && hasUnsavedChanges) {
+        const msg = hasExistingData
+            ? '当前有未保存的更改，添加使用说明会修改目录数据（插入到最前面）。\n\n是否继续？'
+            : '当前有未保存的更改，打开使用说明会替换当前目录与内容。\n\n是否继续？';
+        const confirmed = await customConfirm(msg);
+        if (!confirmed) return;
+    }
+
+    const helpMulufile = buildHelpManualMulufile();
+    const helpDirIds = new Set(helpMulufile.map(row => row[2]));
+
+    if (!hasExistingData) {
+        if (typeof currentFileHandle !== 'undefined') {
+            currentFileHandle = null;
+        }
+        if (typeof currentFileName !== 'undefined') {
+            currentFileName = '使用说明';
+        }
+        mulufile = helpMulufile;
+    } else {
+        const existing = Array.isArray(mulufile) ? mulufile : [];
+        const filtered = existing.filter(row => !helpDirIds.has(row && row[2]));
+        mulufile = helpMulufile.concat(filtered);
+    }
+
+    if (typeof rebuildMulufileIndex === 'function') {
+        rebuildMulufileIndex();
+    }
+    if (typeof LoadMulu === 'function') {
+        LoadMulu();
+    }
+    if (typeof expandAllDirectories === 'function') {
+        expandAllDirectories();
+    }
+
+    if (typeof selectFirstRootDirectory === 'function') {
+        selectFirstRootDirectory();
+    }
+
+    if (typeof hasUnsavedChanges !== 'undefined') {
+        if (!hasExistingData) {
+            hasUnsavedChanges = false;
+        } else {
+            hasUnsavedChanges = true;
+        }
+    }
+    if (typeof updateSaveButtonState === 'function') {
+        updateSaveButtonState();
+    }
+    if (!silent && typeof showToast === 'function') {
+        showToast('已打开使用说明', 'success', 2000);
+    }
+}
+
+if (typeof helpBtn !== 'undefined' && helpBtn) {
+    helpBtn.addEventListener('click', async function(e) {
         e.preventDefault();
         e.stopPropagation();
-        if (videoFileInput) videoFileInput.click();
+        await loadHelpManual({ silent: false, force: false });
     });
 }
+
+window.loadHelpManual = loadHelpManual;
+
 document.addEventListener('keydown', function(e) {
     const isCtrl = e.ctrlKey || e.metaKey;
     if (isCtrl) {

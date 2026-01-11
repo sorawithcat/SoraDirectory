@@ -69,6 +69,10 @@ async function initializeApp() {
     }
     if (typeof mulufile !== 'undefined' && Array.isArray(mulufile) && mulufile.length > 0) {
         LoadMulu();
+    } else {
+        if (typeof window.loadHelpManual === 'function') {
+            await window.loadHelpManual({ silent: true, force: true });
+        }
     }
     if (typeof calculateAllHashes === 'function') {
         const calculateHashes = () => {

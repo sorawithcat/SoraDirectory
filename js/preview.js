@@ -22,6 +22,7 @@ function syncPreviewToTextarea() {
                 checkbox.removeAttribute('checked');
             }
         });
+        ensureAnchorElements(markdownPreview);
         let html = removeSearchHighlights(markdownPreview.innerHTML);
         const archiveElements = markdownPreview.querySelectorAll('.archive-attachment');
         archiveElements.forEach(archiveElement => {
@@ -94,10 +95,161 @@ function attachTaskListEvents() {
         }
     });
 }
+
 /** 存储视频原始 src 的映射（防止浏览器截断 base64 数据） */
 const videoOriginalSrcMap = new Map();
 /** 缓存上次的内容，用于比较是否真的需要更新 */
 let lastPreviewContent = '';
+
+function escapeCssSelectorValue(value) {
+    if (value === null || value === undefined) return '';
+    if (window.CSS && typeof window.CSS.escape === 'function') {
+        return window.CSS.escape(String(value));
+    }
+    return String(value).replace(/[^a-zA-Z0-9_\u00A0-\uFFFF-]/g, function(ch) {
+        const hex = ch.charCodeAt(0).toString(16);
+        return '\\' + hex + ' ';
+    });
+}
+
+function normalizeAnchorId(raw) {
+    if (!raw) return '';
+    let id = String(raw).trim();
+    id = id.replace(/^#/, '');
+    id = id.replace(/\s+/g, '-');
+    return id;
+}
+
+function generateShortRandomId(length = 6) {
+    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    let out = '';
+    for (let i = 0; i < length; i++) {
+        out += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return out;
+}
+
+function generateUniqueAnchorDomId(anchorName, root) {
+    const name = normalizeAnchorId(anchorName) || '锚点';
+    const base = 'sora-anchor-' + name;
+    const container = root || document;
+    for (let i = 0; i < 50; i++) {
+        const id = base + '-' + generateShortRandomId(6);
+        if (!container.getElementById || !container.getElementById(id)) {
+            if (!document.getElementById(id)) return id;
+        }
+    }
+    return base + '-' + Date.now();
+}
+
+function ensureAnchorElements(root) {
+    if (!root || !root.querySelectorAll) return;
+    const anchors = root.querySelectorAll('.sora-anchor[data-sora-anchor="true"]');
+    anchors.forEach(el => {
+        const existingName = el.getAttribute('data-anchor-name') || '';
+        let name = normalizeAnchorId(existingName);
+        if (!name) {
+            name = normalizeAnchorId(el.id || '') || '锚点';
+            el.setAttribute('data-anchor-name', name);
+        }
+        const id = el.id || '';
+        if (!String(id).startsWith('sora-anchor-')) {
+            el.id = generateUniqueAnchorDomId(name, document);
+        }
+    });
+}
+
+function assignHeadingAutoIds(root) {
+    if (!root) return;
+    const headings = root.querySelectorAll('h1, h2, h3, h4, h5, h6');
+    const used = new Set();
+    headings.forEach(h => {
+        if (h.id) {
+            used.add(h.id);
+            return;
+        }
+        const base = normalizeAnchorId(h.textContent || '') || '标题';
+        let candidate = base;
+        let i = 2;
+        while (candidate && (used.has(candidate) || root.querySelector('#' + escapeCssSelectorValue(candidate)))) {
+            candidate = base + '-' + i;
+            i++;
+        }
+        if (!candidate) return;
+        h.id = candidate;
+        used.add(candidate);
+    });
+}
+
+function scrollToAnchorInPreview(anchorId) {
+    if (!markdownPreview) return;
+    const id = normalizeAnchorId(anchorId);
+    if (!id) return;
+    const selector = '#' + escapeCssSelectorValue(id);
+    let el = markdownPreview.querySelector(selector);
+    if (!el) {
+        el = markdownPreview.querySelector('.sora-anchor[data-sora-anchor="true"][data-anchor-name="' + escapeCssSelectorValue(id) + '"]');
+    }
+    if (el && typeof el.scrollIntoView === 'function') {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+}
+
+async function navigateToDirectoryInternalLink(dirId, anchorId) {
+    if (!dirId) return;
+    const target = document.querySelector('.mulu[data-dir-id="' + escapeCssSelectorValue(dirId) + '"]');
+    if (!target) {
+        if (typeof showToast === 'function') {
+            showToast('未找到目标目录：' + dirId, 'warning', 2500);
+        }
+        return;
+    }
+
+    let parentId = target.getAttribute('data-parent-id');
+    while (parentId && parentId !== 'mulu') {
+        const parentEl = document.querySelector('.mulu[data-dir-id="' + escapeCssSelectorValue(parentId) + '"]');
+        if (parentEl) {
+            if (!parentEl.classList.contains('expanded')) {
+                parentEl.classList.add('expanded');
+            }
+            if (typeof toggleChildDirectories === 'function') {
+                toggleChildDirectories(parentId, true);
+            }
+            parentId = parentEl.getAttribute('data-parent-id');
+        } else {
+            break;
+        }
+    }
+
+    if (typeof target.scrollIntoView === 'function') {
+        target.scrollIntoView({ block: 'center' });
+    }
+
+    if (currentMuluName) {
+        const current = document.getElementById(currentMuluName);
+        if (current) {
+            syncPreviewToTextarea();
+        }
+    }
+
+    currentMuluName = target.id;
+    RemoveOtherSelect();
+    target.classList.add('select');
+    jiedianwords.value = findMulufileData(target);
+    if (markdownPreview) {
+        markdownPreview.scrollTop = 0;
+    }
+    isUpdating = true;
+    await updateMarkdownPreview();
+    isUpdating = false;
+
+    if (anchorId) {
+        requestAnimationFrame(() => {
+            scrollToAnchorInPreview(anchorId);
+        });
+    }
+}
+
 /**
  * 从 textarea 同步内容到预览区域
  * 性能优化：内容未变化时跳过更新，使用 requestAnimationFrame 优化DOM操作
@@ -116,6 +268,7 @@ async function updateMarkdownPreview() {
         if (content === lastPreviewContent && markdownPreview.innerHTML === content) {
             return;
         }
+
         // 在设置 innerHTML 之前，提取并保存视频的原始 src
         // 这是为了防止浏览器在处理 innerHTML 时截断 base64 数据
         videoOriginalSrcMap.clear();
@@ -129,6 +282,7 @@ async function updateMarkdownPreview() {
             }
             videoIndex++;
         }
+
         // 性能优化：移除压缩包的 data-export-url 属性（避免在显示时解析大的 base64 数据）
         // 但保留在原始 content 中，以便下载时使用
         // 这样可以避免切换目录时的卡顿
@@ -199,8 +353,10 @@ async function updateMarkdownPreview() {
                 // 对于大内容，不在字符串层面处理，而是在 DOM 更新后立即移除
             }
         }
+
         // 更新DOM（使用 requestAnimationFrame 优化）
         const processAfterDOMUpdate = () => {
+            assignHeadingAutoIds(markdownPreview);
             // 为每个视频设置 data-video-index 属性，用于后续恢复
             const videos = markdownPreview.querySelectorAll('video');
             videos.forEach((video, index) => {
@@ -209,6 +365,7 @@ async function updateMarkdownPreview() {
                     video.setAttribute('data-original-src', videoOriginalSrcMap.get(index));
                 }
             });
+
             // 处理压缩包元素：移除 DOM 中的 data-export-url 属性（避免解析），但保留在 Map 中供下载使用
             // 这样下载时可以使用，但不会在显示时解析大的 base64 数据
             // 对于大内容，这是关键的性能优化：立即移除属性，避免浏览器解析大的 base64 数据

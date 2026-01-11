@@ -48,6 +48,62 @@ function hideRightMouseMenu() {
 noneRightMouseMenu.addEventListener("click", function () {
     hideRightMouseMenu();
 });
+async function copyTextToClipboard(text) {
+    const val = String(text || '');
+    if (!val) return false;
+    try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(val);
+            return true;
+        }
+    } catch (err) {
+        console.warn('写入剪贴板失败，将尝试使用降级方案:', err);
+    }
+
+    try {
+        const textarea = document.createElement('textarea');
+        textarea.value = val;
+        textarea.setAttribute('readonly', 'readonly');
+        textarea.style.position = 'fixed';
+        textarea.style.left = '-9999px';
+        textarea.style.top = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        const ok = document.execCommand('copy');
+        textarea.remove();
+        return !!ok;
+    } catch (err) {
+        console.error('复制失败:', err);
+        return false;
+    }
+}
+
+if (typeof copyMuluId !== 'undefined' && copyMuluId) {
+    copyMuluId.addEventListener('click', async function() {
+        if (!currentMuluName) {
+            hideRightMouseMenu();
+            return;
+        }
+        const currentMulu = document.getElementById(currentMuluName);
+        if (!currentMulu) {
+            hideRightMouseMenu();
+            return;
+        }
+        const dirId = currentMulu.getAttribute('data-dir-id') || '';
+        if (!dirId) {
+            showToast('未找到目录ID', 'warning', 2000);
+            hideRightMouseMenu();
+            return;
+        }
+        const ok = await copyTextToClipboard(dirId);
+        if (ok) {
+            showToast('已复制目录ID：' + dirId, 'success', 2000);
+        } else {
+            showToast('复制失败，请手动复制', 'error', 2500);
+        }
+        hideRightMouseMenu();
+    });
+}
 deleteMulu.addEventListener("click", function () {
     customConfirm("是否删除此目录？").then(result => {
         if (!result) {

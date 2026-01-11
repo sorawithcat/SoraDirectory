@@ -133,7 +133,7 @@ if (markdownPreview) {
     });
 }
 document.querySelectorAll('.format-btn').forEach(btn => {
-    if (btn.id === 'linkBtn') return;
+    if (btn.id === 'linkBtn' || btn.id === 'anchorBtn') return;
     btn.addEventListener('click', function(e) {
         e.preventDefault();
         e.stopPropagation();
@@ -145,31 +145,221 @@ document.querySelectorAll('.format-btn').forEach(btn => {
 });
 const linkBtn = document.getElementById('linkBtn');
 if (linkBtn) {
-    linkBtn.addEventListener('click', function(e) {
+    linkBtn.addEventListener('click', async function(e) {
         e.preventDefault();
         e.stopPropagation();
-        applyFormat('link');
+        await applyFormat('link');
     });
 }
+const anchorBtn = document.getElementById('anchorBtn');
+if (anchorBtn) {
+    anchorBtn.addEventListener('click', async function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        await applyFormat('anchor');
+    });
+}
+
+function normalizeAnchorName(raw) {
+    if (!raw) return '';
+    let id = String(raw).trim();
+    id = id.replace(/^#/, '');
+    id = id.replace(/\s+/g, '-');
+    return id;
+}
+
+function generateShortRandomId(length = 6) {
+    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    let out = '';
+    for (let i = 0; i < length; i++) {
+        out += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return out;
+}
+
+function generateUniqueAnchorDomId(anchorName) {
+    const name = normalizeAnchorName(anchorName) || '锚点';
+    const base = 'sora-anchor-' + name;
+    for (let i = 0; i < 50; i++) {
+        const id = base + '-' + generateShortRandomId(6);
+        if (!document.getElementById(id)) return id;
+    }
+    return base + '-' + Date.now();
+}
+
+function buildLinkValueForEdit(a) {
+    if (!a) return '';
+    const href = a.getAttribute('href') || '';
+    const soraType = a.getAttribute('data-sora-link') || '';
+    if (href.startsWith('#') || soraType === 'anchor') {
+        const anchorId = a.getAttribute('data-anchor-id') || href.replace(/^#/, '');
+        return '#' + (anchorId || '');
+    }
+    if (href.toLowerCase().startsWith('sora-dir:') || soraType === 'dir') {
+        const dirId = a.getAttribute('data-dir-id');
+        const dirName = a.getAttribute('data-dir-name');
+        const anchorId = a.getAttribute('data-anchor-id');
+        const suffix = anchorId ? ('#' + anchorId) : '';
+        if (dirId) return 'dir:' + dirId + suffix;
+        if (dirName) return 'name:' + dirName + suffix;
+        const raw = href.substring('sora-dir:'.length);
+        return 'dir:' + raw;
+    }
+    return href;
+}
+
+function applyLinkAttributesToElement(a, inputValue) {
+    if (!a) return;
+    const trimmed = String(inputValue || '').trim();
+    if (!trimmed) return;
+
+    a.removeAttribute('data-sora-link');
+    a.removeAttribute('data-dir-id');
+    a.removeAttribute('data-dir-name');
+    a.removeAttribute('data-anchor-id');
+
+    const lower = trimmed.toLowerCase();
+    if (trimmed.startsWith('#')) {
+        const anchorName = normalizeAnchorName(trimmed);
+        a.setAttribute('href', '#' + anchorName);
+        a.setAttribute('data-sora-link', 'anchor');
+        a.setAttribute('data-anchor-id', anchorName);
+        a.removeAttribute('target');
+        return;
+    }
+    const isDir = lower.startsWith('dir:') || lower.startsWith('目录:');
+    const isName = lower.startsWith('name:') || lower.startsWith('目录名:');
+    if (isDir || isName) {
+        const prefixLen = trimmed.indexOf(':') + 1;
+        const rest = trimmed.substring(prefixLen);
+        const hashIndex = rest.indexOf('#');
+        const mainPart = (hashIndex >= 0 ? rest.substring(0, hashIndex) : rest).trim();
+        const anchorPart = (hashIndex >= 0 ? rest.substring(hashIndex + 1) : '').trim();
+
+        a.setAttribute('href', 'sora-dir:' + mainPart + (anchorPart ? ('#' + anchorPart) : ''));
+        a.setAttribute('data-sora-link', 'dir');
+        if (isDir) {
+            a.setAttribute('data-dir-id', mainPart);
+        } else {
+            a.setAttribute('data-dir-name', mainPart);
+        }
+        if (anchorPart) {
+            a.setAttribute('data-anchor-id', normalizeAnchorName(anchorPart));
+        }
+        a.removeAttribute('target');
+        return;
+    }
+
+    a.setAttribute('href', trimmed);
+    a.setAttribute('target', '_blank');
+}
+
+async function editLinkElement(a) {
+    const initial = buildLinkValueForEdit(a);
+    const val = await customPrompt('编辑链接地址:', initial);
+    if (!val) return;
+    applyLinkAttributesToElement(a, val);
+    syncPreviewToTextarea();
+}
+
+async function editAnchorElement(anchorEl) {
+    const current = anchorEl.getAttribute('data-anchor-name') || '';
+    const val = await customPrompt('编辑锚点名:', current);
+    if (!val) return;
+    const name = normalizeAnchorName(val);
+    if (!name) return;
+    anchorEl.setAttribute('data-anchor-name', name);
+    anchorEl.setAttribute('data-sora-anchor', 'true');
+    if (!anchorEl.id || !String(anchorEl.id).startsWith('sora-anchor-')) {
+        anchorEl.id = generateUniqueAnchorDomId(name);
+    }
+    syncPreviewToTextarea();
+}
+
 if (markdownPreview) {
-    markdownPreview.addEventListener('click', function(e) {
+    markdownPreview.addEventListener('click', async function(e) {
+        const clickedAnchor = e.target && e.target.closest ? e.target.closest('.sora-anchor[data-sora-anchor="true"]') : null;
+        if (clickedAnchor) {
+            e.preventDefault();
+            e.stopPropagation();
+            await editAnchorElement(clickedAnchor);
+            return;
+        }
+
+        const a = e.target && e.target.closest ? e.target.closest('a') : null;
+        if (!a) return;
+        const href = a.getAttribute('href') || '';
+        const soraType = a.getAttribute('data-sora-link') || '';
+        if (!href) return;
+
         if (e.ctrlKey || e.metaKey) {
-            let target = e.target;
-            while (target && target !== markdownPreview) {
-                if (target.tagName === 'A') {
-                    const href = target.getAttribute('href');
-                    if (href) {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        window.open(href, '_blank');
-                        return;
+            if (href.startsWith('#') || soraType === 'anchor') {
+                e.preventDefault();
+                e.stopPropagation();
+                if (typeof scrollToAnchorInPreview === 'function') {
+                    scrollToAnchorInPreview(href);
+                }
+                return;
+            }
+
+            if (href.toLowerCase().startsWith('sora-dir:') || soraType === 'dir') {
+                e.preventDefault();
+                e.stopPropagation();
+
+                let dirId = a.getAttribute('data-dir-id');
+                let dirName = a.getAttribute('data-dir-name');
+                let anchorId = a.getAttribute('data-anchor-id');
+
+                if (!anchorId) {
+                    const hashIndex = href.indexOf('#');
+                    if (hashIndex >= 0) {
+                        anchorId = href.substring(hashIndex + 1);
                     }
                 }
-                target = target.parentNode;
+                if (!dirId && !dirName) {
+                    const raw = href.substring('sora-dir:'.length);
+                    const hashIndex = raw.indexOf('#');
+                    dirId = (hashIndex >= 0 ? raw.substring(0, hashIndex) : raw).trim();
+                }
+
+                if (dirName) {
+                    if (typeof mulufile !== 'undefined' && Array.isArray(mulufile)) {
+                        let foundId = null;
+                        let duplicate = 0;
+                        for (let i = 0; i < mulufile.length; i++) {
+                            const item = mulufile[i];
+                            if (item && item.length === 4 && item[1] === dirName) {
+                                duplicate++;
+                                if (!foundId) foundId = item[2];
+                            }
+                        }
+                        if (duplicate > 1 && typeof showToast === 'function') {
+                            showToast('存在重复目录名，已跳转到第一个匹配项：' + dirName, 'warning', 2500);
+                        }
+                        if (foundId && typeof navigateToDirectoryInternalLink === 'function') {
+                            navigateToDirectoryInternalLink(foundId, anchorId);
+                        } else if (typeof showToast === 'function') {
+                            showToast('未找到目标目录：' + dirName, 'warning', 2500);
+                        }
+                    }
+                } else if (dirId && typeof navigateToDirectoryInternalLink === 'function') {
+                    navigateToDirectoryInternalLink(dirId, anchorId);
+                }
+                return;
             }
+
+            e.preventDefault();
+            e.stopPropagation();
+            window.open(href, '_blank');
+            return;
         }
+
+        e.preventDefault();
+        e.stopPropagation();
+        await editLinkElement(a);
     });
 }
+
 /**
  * 应用格式化命令
  * 在预览区域直接应用 HTML 格式，支持切换（再次点击取消格式）
@@ -190,6 +380,7 @@ async function applyFormat(command) {
     if (selectionRange) {
         range = selectionRange.cloneRange();
         selectedText = range.toString();
+        selectionRange = null;
     } else if (selection.rangeCount > 0) {
         range = selection.getRangeAt(0).cloneRange();
         selectedText = range.toString();
@@ -211,6 +402,12 @@ async function applyFormat(command) {
         }
     }
     if (!range) return;
+
+    if (textFormatToolbar) {
+        textFormatToolbar.style.display = 'none';
+        textFormatToolbar.style.visibility = 'hidden';
+    }
+
     // 辅助函数：提取选中范围的完整HTML内容（保留嵌套格式）
     function getRangeHtml(range) {
         const contents = range.cloneContents();
@@ -567,14 +764,64 @@ async function applyFormat(command) {
                 formattedHtml = '<sub>' + selectedHtml + '</sub>';
             }
             break;
-        // 链接和图片
+        case 'anchor':
+            {
+                const nameInput = await customPrompt('输入锚点名:', '');
+                if (!nameInput) return;
+                const anchorName = normalizeAnchorName(nameInput);
+                if (!anchorName) return;
+
+                const domId = generateUniqueAnchorDomId(anchorName);
+                const anchorHtml = '<span id="' + escapeHtml(domId) + '" class="sora-anchor" data-sora-anchor="true" data-anchor-name="' + escapeHtml(anchorName) + '">\u200B</span>';
+                formattedHtml = selectedText ? (anchorHtml + selectedHtml) : anchorHtml;
+            }
+            break;
         case 'link':
-            const url = await customPrompt('输入链接地址:', 'https://');
-            if (!url) return;
-            if (selectedText) {
-                formattedHtml = '<a href="' + escapeHtml(url) + '" target="_blank">' + selectedHtml + '</a>';
-            } else {
-                formattedHtml = '<a href="' + escapeHtml(url) + '" target="_blank">' + escapeHtml(url) + '</a>';
+            {
+                const url = await customPrompt('输入链接地址:', 'https://');
+                if (!url) return;
+
+                const trimmed = String(url).trim();
+                const displayHtml = selectedText ? selectedHtml : escapeHtml(trimmed);
+
+                if (trimmed.startsWith('#')) {
+                    const anchorName = normalizeAnchorName(trimmed);
+                    formattedHtml = '<a href="#' + escapeHtml(anchorName) + '" data-sora-link="anchor" data-anchor-id="' + escapeHtml(anchorName) + '">' + displayHtml + '</a>';
+                    break;
+                }
+
+                const lower = trimmed.toLowerCase();
+                const isDir = lower.startsWith('dir:') || lower.startsWith('目录:');
+                const isName = lower.startsWith('name:') || lower.startsWith('目录名:');
+                if (isDir || isName) {
+                    const prefixLen = trimmed.indexOf(':') + 1;
+                    const rest = trimmed.substring(prefixLen);
+                    const hashIndex = rest.indexOf('#');
+                    const mainPart = (hashIndex >= 0 ? rest.substring(0, hashIndex) : rest).trim();
+                    const anchorPartRaw = (hashIndex >= 0 ? rest.substring(hashIndex + 1) : '').trim();
+                    const anchorPart = anchorPartRaw ? normalizeAnchorName(anchorPartRaw) : '';
+
+                    const attrs = [];
+                    attrs.push('href="sora-dir:' + escapeHtml(mainPart) + (anchorPart ? ('#' + escapeHtml(anchorPart)) : '') + '"');
+                    attrs.push('data-sora-link="dir"');
+
+                    if (isDir) {
+                        attrs.push('data-dir-id="' + escapeHtml(mainPart) + '"');
+                    } else {
+                        attrs.push('data-dir-name="' + escapeHtml(mainPart) + '"');
+                    }
+                    if (anchorPart) {
+                        attrs.push('data-anchor-id="' + escapeHtml(anchorPart) + '"');
+                    }
+                    formattedHtml = '<a ' + attrs.join(' ') + '>' + displayHtml + '</a>';
+                    break;
+                }
+
+                if (selectedText) {
+                    formattedHtml = '<a href="' + escapeHtml(trimmed) + '" target="_blank">' + selectedHtml + '</a>';
+                } else {
+                    formattedHtml = '<a href="' + escapeHtml(trimmed) + '" target="_blank">' + escapeHtml(trimmed) + '</a>';
+                }
             }
             break;
         // 文本颜色

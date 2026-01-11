@@ -304,6 +304,9 @@ function bindMuluEvents(muluElement, mulufileIndex = -1) {
                 muluElement.classList.add("select");
                 let content = findMulufileData(muluElement);
                 jiedianwords.value = content;
+                if (markdownPreview) {
+                    markdownPreview.scrollTop = 0;
+                }
                 isUpdating = true;
                 updateMarkdownPreview();
                 isUpdating = false;
@@ -325,6 +328,9 @@ function bindMuluEvents(muluElement, mulufileIndex = -1) {
             muluElement.classList.add("select");
             let rightClickContent = findMulufileData(muluElement);
             jiedianwords.value = rightClickContent;
+            if (markdownPreview) {
+                markdownPreview.scrollTop = 0;
+            }
             isUpdating = true;
             updateMarkdownPreview();
             isUpdating = false;

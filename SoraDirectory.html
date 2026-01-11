@@ -738,11 +738,12 @@
         .markdown-preview a {
             color: #0066cc;
             text-decoration: none;
+            flex-wrap: wrap;
         }
+
         .markdown-preview a:hover {
             text-decoration: underline;
         }
-        
         /* 悬浮工具栏 */
         .text-format-toolbar {
             position: fixed;
@@ -753,6 +754,20 @@
             z-index: 10001;
             box-shadow: 0 2px 10px rgba(0,0,0,0.3);
             flex-wrap: wrap;
+        }
+        .markdown-preview .sora-anchor {
+            color: #0066cc;
+            cursor: pointer;
+            user-select: none;
+            padding: 0 2px;
+            border-radius: 2px;
+            font-size: 12px;
+            opacity: 0.75;
+        }
+
+        .markdown-preview .sora-anchor:hover {
+            text-decoration: underline;
+            opacity: 1;
         }
         
         /* 仅在有选中文字时显示的按钮 */
@@ -1420,6 +1435,7 @@
             <button class="top-toolbar-btn" id="saveAsBtn" title="另存为">另存为</button>
             <button class="top-toolbar-btn" id="loadBtn" title="加载">加载</button>
         </div>
+
         <div class="top-toolbar-group format-toolbar-group">
             <span class="top-toolbar-label">格式</span>
             <div class="format-toolbar-scroll">
@@ -1438,6 +1454,7 @@
                 <button class="top-toolbar-btn format-toolbar-btn" data-command="code" title="行内代码">&lt;/&gt;</button>
                 <button class="top-toolbar-btn format-toolbar-btn" data-command="code-block" title="代码块">代码块</button>
                 <button class="top-toolbar-btn format-toolbar-btn" data-command="link" id="topLinkBtn" title="链接">🔗</button>
+                <button class="top-toolbar-btn format-toolbar-btn" data-command="anchor" id="topAnchorBtn" title="锚点">锚点</button>
                 <button class="top-toolbar-btn" id="topImageUploadBtn" title="插入图片">🖼️</button>
                 <!--<button class="top-toolbar-btn" id="topVideoUploadBtn" title="插入视频">🎬</button>-->
                 <!--<button class="top-toolbar-btn" id="topArchiveUploadBtn" title="插入压缩文件">📦</button>-->
@@ -1454,6 +1471,7 @@
                 <button class="top-toolbar-btn format-toolbar-btn" data-command="subscript" title="下标">x₂</button>
             </div>
         </div>
+
         <div class="top-toolbar-group">
             <span class="top-toolbar-label">目录</span>
             <button class="top-toolbar-btn addNewMuluButton" title="添加目录">添加目录</button>
@@ -1461,16 +1479,20 @@
             <button class="top-toolbar-btn" id="expandAllBtn" title="展开全部">展开全部</button>
             <button class="top-toolbar-btn" id="collapseAllBtn" title="收起全部">收起全部</button>
         </div>
+
         <div class="top-toolbar-group">
             <span class="top-toolbar-label">编辑</span>
             <button class="top-toolbar-btn" id="searchBtn" title="查找 (Ctrl+F)">查找</button>
             <button class="top-toolbar-btn" id="replaceBtn" title="替换 (Ctrl+H)">替换</button>
+            <button class="top-toolbar-btn" id="helpBtn" title="打开内置使用说明">使用说明</button>
         </div>
+
         <div class="top-toolbar-group">
             <span class="top-toolbar-label">视图</span>
             <button class="top-toolbar-btn" id="toggleSidebarBtn" title="切换侧边栏">切换侧边栏</button>
             <button class="top-toolbar-btn" id="fullscreenBtn" title="全屏">全屏</button>
         </div>
+
         <div class="top-toolbar-group storage-info-group">
             <span class="top-toolbar-label">存储</span>
             <span id="storageInfo" class="storage-info" title="点击刷新存储信息">计算中...</span>
@@ -1479,7 +1501,7 @@
     
     <div class="bigbox">
         <div style="padding: 10px; background-color: #f9f9f9; border-bottom: 1px solid #ddd; font-size: 12px; color: #666;">
-            左键选择/展开，右键菜单，双击改名，拖拽移动目录（含子目录）
+            左键选择/展开，右键菜单，双击改名，拖拽移动目录（含子目录）。链接：Ctrl+单击打开；页内跳转输入 #锚点；任意锚点：点“锚点”输入锚点名；目录内跳转输入 dir:目录ID#锚点 或 name:目录名#锚点
         </div>
         <div class="showbox">
             <div class="mulubox">
@@ -1512,6 +1534,7 @@
         <button class="format-btn format-btn-selection" data-command="color" title="文字颜色">🎨</button>
         <button class="format-btn format-btn-selection" data-command="background-color" title="背景颜色">🖍️</button>
         <button class="format-btn format-btn-selection" data-command="link" id="linkBtn" title="链接 (Ctrl+单击打开)">🔗</button>
+        <button class="format-btn format-btn-selection" data-command="anchor" id="anchorBtn" title="锚点">锚点</button>
         <button class="format-btn format-btn-selection" data-command="unordered-list" title="无序列表">无序列表</button>
         <button class="format-btn format-btn-selection" data-command="ordered-list" title="有序列表">有序列表</button>
         <button class="format-btn format-btn-selection" data-command="task-list" title="任务列表">任务</button>
@@ -1523,6 +1546,7 @@
     <div class="rightmousemenu">
         <div class="copyMuluWithChildren">复制目录（含子目录）</div>
         <div class="copyMuluWithoutChildren">复制目录（不含子目录）</div>
+        <div class="copyMuluId">复制目录ID</div>
         <div class="pasteMulu">粘贴目录</div>
         <div class="menu-divider"></div>
         <div class="quickDuplicateWithChildren">快速复制（含子目录）</div>

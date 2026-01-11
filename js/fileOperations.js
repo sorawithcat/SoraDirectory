@@ -732,6 +732,7 @@ function selectFirstRootDirectory() {
     let allMulusForSelect = document.querySelectorAll(".mulu");
     for (let i = 0; i < allMulusForSelect.length; i++) {
         let mulu = allMulusForSelect[i];
+
         let parentId = mulu.getAttribute("data-parent-id");
         if (!parentId || parentId === "mulu") {
             firstRootMulu = mulu;
@@ -744,6 +745,9 @@ function selectFirstRootDirectory() {
         firstRootMulu.classList.add("select");
         let loadedContent = findMulufileData(firstRootMulu);
         jiedianwords.value = loadedContent;
+        if (markdownPreview) {
+            markdownPreview.scrollTop = 0;
+        }
         isUpdating = true;
         updateMarkdownPreview();
         isUpdating = false;
@@ -2087,6 +2091,15 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
         .content-body a:hover {
             text-decoration: underline;
         }
+        .content-body .sora-anchor {
+            display: inline-block;
+            width: 0;
+            height: 0;
+            overflow: hidden;
+            line-height: 0;
+            pointer-events: none;
+            user-select: none;
+        }
         .content-body mark {
             background-color: #ffeb3b;
             padding: 2px 4px;
@@ -2266,11 +2279,79 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
         let mediaDataMap = {};
         let currentSelected = null;
         const nameMap = {};
+        const nameIndex = {};
+
+        function escapeCssSelectorValue(value) {
+            if (value === null || value === undefined) return '';
+            if (window.CSS && typeof window.CSS.escape === 'function') {
+                return window.CSS.escape(String(value));
+            }
+            const backslash = String.fromCharCode(92);
+            return String(value).replace(/[^a-zA-Z0-9_\u00A0-\uFFFF-]/g, function(ch) {
+                const hex = ch.charCodeAt(0).toString(16);
+                return backslash + hex + ' ';
+            });
+        }
+
+        function normalizeAnchorId(raw) {
+            if (!raw) return '';
+            let id = String(raw).trim();
+            id = id.replace(/^#/, '');
+            id = id.replace(/\s+/g, '-');
+            return id;
+        }
+
+        function assignHeadingAutoIds(root) {
+            if (!root) return;
+            const headings = root.querySelectorAll('h1, h2, h3, h4, h5, h6');
+            const used = new Set();
+            headings.forEach(h => {
+                if (h.id) {
+                    used.add(h.id);
+                    return;
+                }
+                const base = normalizeAnchorId(h.textContent || '') || '标题';
+                let candidate = base;
+                let i = 2;
+                while (candidate && (used.has(candidate) || root.querySelector('#' + escapeCssSelectorValue(candidate)))) {
+                    candidate = base + '-' + i;
+                    i++;
+                }
+                if (!candidate) return;
+                h.id = candidate;
+                used.add(candidate);
+            });
+        }
+
+        function scrollToAnchorInContent(anchorId) {
+            const contentBody = document.getElementById('contentBody');
+            if (!contentBody) return;
+            const id = normalizeAnchorId(anchorId);
+            if (!id) return;
+            let el = contentBody.querySelector('#' + escapeCssSelectorValue(id));
+            if (!el) {
+                el = contentBody.querySelector('.sora-anchor[data-sora-anchor="true"][data-anchor-name="' + escapeCssSelectorValue(id) + '"]');
+            }
+            if (!el) {
+                const headings = contentBody.querySelectorAll('h1, h2, h3, h4, h5, h6');
+                for (const h of headings) {
+                    if (normalizeAnchorId(h.textContent || '') === id) {
+                        el = h;
+                        break;
+                    }
+                }
+            }
+            if (el && typeof el.scrollIntoView === 'function') {
+                el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }
+
         function selectDirectory(dirId, toggleExpand = false) {
             if (currentSelected) {
                 currentSelected.classList.remove('selected');
             }
             const element = document.querySelector('[data-dir-id="' + dirId + '"]');
+
             if (element) {
                 element.classList.add('selected');
                 currentSelected = element;
@@ -2283,6 +2364,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
             const title = nameMap[dirId] || '未命名';
             document.getElementById('contentTitle').textContent = title;
             document.getElementById('contentBody').innerHTML = content || '<div class="empty-state">此目录暂无内容</div>';
+            assignHeadingAutoIds(document.getElementById('contentBody'));
             initCodeBlocks();
             initImageViewer();
             initArchiveDownloads();
@@ -2290,6 +2372,77 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                 loadLazyMedia();
             }, 100);
         }
+
+        function resolveDirIdFromName(dirName) {
+            const name = (dirName || '').trim();
+            if (!name) return null;
+            const ids = nameIndex[name];
+            if (ids && ids.length > 0) {
+                if (ids.length > 1) {
+                    console.warn('存在重复目录名，已跳转到第一个匹配项:', name);
+                }
+                return ids[0];
+            }
+            return null;
+        }
+
+        function handleInternalLinkClick(e) {
+            const a = e.target && e.target.closest ? e.target.closest('a') : null;
+            if (!a) return;
+            const href = a.getAttribute('href') || '';
+            const soraType = a.getAttribute('data-sora-link') || '';
+            if (!href) return;
+
+            if (href.startsWith('#') || soraType === 'anchor') {
+                e.preventDefault();
+                e.stopPropagation();
+                scrollToAnchorInContent(href);
+                return;
+            }
+
+            if (href.toLowerCase().startsWith('sora-dir:') || soraType === 'dir') {
+                e.preventDefault();
+                e.stopPropagation();
+
+                let dirId = a.getAttribute('data-dir-id');
+                const dirName = a.getAttribute('data-dir-name');
+                let anchorId = a.getAttribute('data-anchor-id');
+
+                if (!anchorId) {
+                    const hashIndex = href.indexOf('#');
+                    if (hashIndex >= 0) {
+                        anchorId = href.substring(hashIndex + 1);
+                    }
+                }
+                if (!dirId && !dirName) {
+                    const raw = href.substring('sora-dir:'.length);
+                    const hashIndex = raw.indexOf('#');
+                    dirId = (hashIndex >= 0 ? raw.substring(0, hashIndex) : raw).trim();
+                }
+                if (!dirId && dirName) {
+                    dirId = resolveDirIdFromName(dirName);
+                }
+                if (dirId) {
+                    const exists = document.querySelector('[data-dir-id="' + escapeCssSelectorValue(dirId) + '"]');
+                    if (!exists) {
+                        const resolved = resolveDirIdFromName(dirId);
+                        if (resolved) {
+                            dirId = resolved;
+                        }
+                    }
+                }
+                if (!dirId) return;
+
+                selectDirectory(dirId, false);
+                if (anchorId) {
+                    requestAnimationFrame(() => {
+                        scrollToAnchorInContent(anchorId);
+                    });
+                }
+                return;
+            }
+        }
+
         function toggleDirectory(dirId, event) {
             if (event) {
                 event.stopPropagation();
@@ -2649,8 +2802,21 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
             return null;
         }
         document.querySelectorAll('.mulu').forEach(el => {
-            nameMap[el.dataset.dirId] = el.textContent.trim();
+            const dirId = el.dataset.dirId;
+            const nameEl = el.querySelector('.mulu-text');
+            const name = (nameEl ? nameEl.textContent : el.textContent).trim();
+            nameMap[dirId] = name;
+            if (!nameIndex[name]) nameIndex[name] = [];
+            nameIndex[name].push(dirId);
         });
+
+        (function() {
+            const contentBody = document.getElementById('contentBody');
+            if (contentBody) {
+                contentBody.addEventListener('click', handleInternalLinkClick);
+            }
+        })();
+
         function initCodeBlocks() {
             const contentBody = document.getElementById('contentBody');
             if (!contentBody) return;
