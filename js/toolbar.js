@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 更新工具栏高度，动态调整其他元素位置
  */
 function updateToolbarHeight() {
@@ -408,8 +408,10 @@ function buildHelpNavHtml() {
         { id: 'mulu_help_format', name: '编辑与格式' },
         { id: 'mulu_help_link_anchor', name: '链接与锚点' },
         { id: 'mulu_help_search', name: '查找与替换' },
+        { id: 'mulu_help_advanced', name: '高级操作' },
         { id: 'mulu_help_export', name: '保存、导出与加密' },
-        { id: 'mulu_help_notes', name: '注意事项与常见问题' }
+        { id: 'mulu_help_notes', name: '注意事项与常见问题' },
+        { id: 'mulu_help_decrypt', name: '解密游戏模板' }
     ];
     let out = '<p>';
     for (let i = 0; i < items.length; i++) {
@@ -427,7 +429,7 @@ function buildHelpPageContents() {
     const root = [
         '<h1>使用说明</h1>',
         nav,
-        '<p>这是内置的说明文档，会以“目录 + 正文”的形式展示，效果与导出网页一致。</p>',
+        '<p>这是内置的说明文档</p>',
         '<h2 id="交互说明">交互说明</h2>',
         '<ul>',
         '<li><strong>目录区</strong>：左键选择；双击重命名；拖拽移动（含子目录）；右键打开菜单。</li>',
@@ -650,6 +652,133 @@ function buildHelpPageContents() {
         '</ul>'
     ].join('');
 
+    const advanced = [
+        '<h1>高级操作</h1>',
+        nav,
+        '<h2 id="方法是什么">方法是什么</h2>',
+        '<p>方法是一种特殊的链接格式：它在编辑器里用于配置，在<strong>导出网页</strong>里会按触发方式自动执行，用于实现隐藏/显示/切换内容、重命名目录、动态替换内容、批量添加格式、触发目录动作等高级交互。</p>',
+        '<p>方法链接本质上是一个 <code>&lt;a&gt;</code> 元素，具有以下属性：</p>',
+        '<ul>',
+        '<li><code>data-sora-link="method"</code>：标识这是方法链接。</li>',
+        '<li><code>data-sora-methods</code>：一个 JSON 数组，保存一个或多个方法配置。</li>',
+        '</ul>',
+        '<h2 id="编辑方式">编辑方式</h2>',
+        '<ul>',
+        '<li>编辑器预览区：对方法链接使用 <strong>Alt+单击</strong> 打开编辑对话框。</li>',
+        '<li>编辑器里方法不会执行，这是刻意设计：避免编辑时误触导致内容被改写。</li>',
+        '</ul>',
+        '<h2 id="字段说明">字段说明</h2>',
+        '<table>',
+        '<thead><tr><th>字段</th><th>含义</th><th>要点</th></tr></thead>',
+        '<tbody>',
+        '<tr><td><code>trigger</code></td><td>触发方式</td><td>可选：<code>open</code> 打开时、<code>enter_dir</code> 进入目录时、<code>click</code> 点击时、<code>hover</code> 悬浮时</td></tr>',
+        '<tr><td><code>frontAnchor</code></td><td>目标前锚点</td><td>必填。用于确定要操作的范围起点（可带目录引用）</td></tr>',
+        '<tr><td><code>backAnchor</code></td><td>目标后锚点</td><td>可为空。为空表示目录级操作（不限定范围）；不为空表示范围级操作（限定到前后锚点之间）</td></tr>',
+        '<tr><td><code>methodType</code></td><td>方法类型</td><td>支持：<code>隐藏</code> / <code>隐藏（初始不隐藏）</code> / <code>显示</code> / <code>切换</code> / <code>更换内容</code> / <code>添加格式</code> / <code>目录右键动作</code></td></tr>',
+        '<tr><td><code>once</code></td><td>是否只执行一次</td><td>开启后同一个方法在导出网页中最多成功执行一次</td></tr>',
+        '<tr><td><code>renameTo</code></td><td>目录新名称</td><td>当目录级选择“更换内容（目录：重命名）”时使用</td></tr>',
+        '<tr><td><code>replaceSourceType</code></td><td>更换内容的来源类型</td><td><code>anchor</code> 表示从某个锚点范围提取；<code>text</code> 表示直接输入替换文本</td></tr>',
+        '<tr><td><code>replaceFromFrontAnchor</code></td><td>替换来源前锚点</td><td>当 <code>replaceSourceType=anchor</code> 时必填</td></tr>',
+        '<tr><td><code>replaceFromBackAnchor</code></td><td>替换来源后锚点</td><td>可为空。为空表示直到来源目录末尾</td></tr>',
+        '<tr><td><code>replaceText</code></td><td>替换文本</td><td>当 <code>replaceSourceType=text</code> 时使用</td></tr>',
+        '<tr><td><code>formatCommand</code></td><td>添加格式命令</td><td>当方法类型为“添加格式”时使用（例如 <code>bold</code> / <code>color</code> / <code>link</code> / <code>method</code>）</td></tr>',
+        '<tr><td><code>formatValue</code></td><td>格式参数</td><td>当命令需要参数时使用（如颜色、链接地址）</td></tr>',
+        '<tr><td><code>formatMethods</code></td><td>嵌套方法</td><td>当添加格式命令为 <code>method</code> 时，保存一个或多个嵌套方法配置</td></tr>',
+        '<tr><td><code>formatFallbackText</code></td><td>方法显示文本</td><td>当添加格式命令为 <code>method</code> 且范围内无文本时使用</td></tr>',
+        '<tr><td><code>dirAction</code></td><td>目录动作</td><td>当方法类型为“目录右键动作”时使用（复制ID、删除、复制/粘贴/快速复制、展开/收起）</td></tr>',
+        '</tbody>',
+        '</table>',
+        '<h2 id="目录级与范围级">目录级与范围级</h2>',
+        '<ul>',
+        '<li><strong>目录级</strong>：后锚点为空。此时前锚点必须指向目录（<code>dir:目录ID</code> 或 <code>name:目录名</code>），且不能带 <code>#锚点</code>。</li>',
+        '<li><strong>范围级</strong>：后锚点不为空。此时前后锚点必须在同一目录内（可写 <code>#锚点</code> 或带目录引用）。</li>',
+        '<li><strong>隐藏（初始不隐藏）</strong>：第一次触发会建立范围标记但不隐藏；后续触发才执行隐藏/显示逻辑（用于先让内容可见，再通过其它触发控制隐藏）。</li>',
+        '</ul>',
+        '<h2 id="方法类型说明">方法类型说明</h2>',
+        '<ul>',
+        '<li><strong>隐藏/显示/切换</strong>：目录级作用于目录树（含子目录）；范围级作用于锚点范围内内容。</li>',
+        '<li><strong>更换内容</strong>：目录级表示重命名目录；范围级表示用文本或来源锚点范围替换目标锚点范围内容。</li>',
+        '<li><strong>添加格式</strong>：仅范围级可用，把目标锚点范围内容用指定格式包裹（也可生成“嵌套方法”链接）。</li>',
+        '<li><strong>目录右键动作</strong>：仅目录级可用，等价于导出页里对该目录执行一次右键菜单动作。</li>',
+        '</ul>',
+        '<h2 id="锚点引用写法">锚点引用写法</h2>',
+        '<ul>',
+        '<li><code>#锚点名</code>：当前目录内的锚点。</li>',
+        '<li><code>dir:目录ID#锚点名</code>：指定目录ID内的锚点。</li>',
+        '<li><code>name:目录名#锚点名</code>：指定目录名内的锚点（同名目录会取第一个）。</li>',
+        '</ul>',
+        '<p>也支持只写目录不写锚点（表示整篇范围）：</p>',
+        '<ul>',
+        '<li><code>dir:目录ID</code></li>',
+        '<li><code>name:目录名</code></li>',
+        '</ul>',
+        '<h2 id="使用案例">使用案例</h2>',
+        '<p>下面的案例按“你在编辑器里怎么填”为主；另外也给出一份可直接参考的 <code>data-sora-methods</code> JSON（你不需要手写 HTML，正常用“方法”对话框配置即可）。</p>',
+
+        '<h3 id="案例1_打开时替换一段内容">案例 1：打开时替换一段内容（来源为其它目录锚点范围）</h3>',
+        '<ol>',
+        '<li>在目标目录插入两个锚点：<code>#开始</code> 和 <code>#结束</code>，中间放需要被替换的内容。</li>',
+        '<li>插入一个方法链接（显示文本随意）。</li>',
+        '<li>编辑方法：触发方式选 <strong>打开时</strong>；目标前锚点 <code>#开始</code>；目标后锚点 <code>#结束</code>；方法类型选 <strong>更换内容</strong>；建议勾选 <strong>只执行一次</strong>。</li>',
+        '<li>替换来源选 <strong>用锚点范围/目录内容替换</strong>，来源前锚点填 <code>dir:某目录ID#源开始</code>，来源后锚点填 <code>dir:某目录ID#源结束</code>。</li>',
+        '</ol>',
+        '<p>对应的 <code>data-sora-methods</code> JSON（示意，目录ID请替换成你自己的）：</p>',
+        '<pre><code>' + escapeHtml('[{"trigger":"open","frontAnchor":"#开始","backAnchor":"#结束","methodType":"更换内容","once":true,"replaceSourceType":"anchor","replaceFromFrontAnchor":"dir:某目录ID#源开始","replaceFromBackAnchor":"dir:某目录ID#源结束"}]') + '</code></pre>',
+
+        '<h3 id="案例2_点击按钮切换说明">案例 2：点击按钮把占位区替换成说明（来源为直接输入文本）</h3>',
+        '<ol>',
+        '<li>在目录中插入锚点 <code>#说明区开始</code> 和 <code>#说明区结束</code>，中间放“（点击按钮显示说明）”。</li>',
+        '<li>创建方法链接（显示为“显示详细说明”）。</li>',
+        '<li>触发方式选 <strong>点击时</strong>；目标前锚点 <code>#说明区开始</code>；目标后锚点 <code>#说明区结束</code>；方法类型选 <strong>更换内容</strong>。</li>',
+        '<li>替换来源选 <strong>直接输入替换文本</strong>，输入要替换进去的内容（文本会按纯文本处理，不会当作 HTML 执行）。</li>',
+        '</ol>',
+        '<p>对应的 JSON（示意）：</p>',
+        '<pre><code>' + escapeHtml('[{"trigger":"click","frontAnchor":"#说明区开始","backAnchor":"#说明区结束","methodType":"更换内容","once":false,"replaceSourceType":"text","replaceText":"这里是说明内容（纯文本）"}]') + '</code></pre>',
+
+        '<h3 id="案例3_悬浮预览">案例 3：悬浮预览（鼠标放上去就替换一块预览区）</h3>',
+        '<ol>',
+        '<li>在当前目录放一个预览占位区：锚点 <code>#预览开始</code> ~ <code>#预览结束</code>。</li>',
+        '<li>创建方法链接（显示文本随意），触发方式选 <strong>悬浮时</strong>。</li>',
+        '<li>方法类型选 <strong>更换内容</strong>，来源用锚点范围指向另一目录的摘要区（例如 <code>dir:某目录ID#摘要开始</code> ~ <code>dir:某目录ID#摘要结束</code>）。</li>',
+        '</ol>',
+        '<p>对应的 JSON（示意）：</p>',
+        '<pre><code>' + escapeHtml('[{"trigger":"hover","frontAnchor":"#预览开始","backAnchor":"#预览结束","methodType":"更换内容","once":false,"replaceSourceType":"anchor","replaceFromFrontAnchor":"dir:某目录ID#摘要开始","replaceFromBackAnchor":"dir:某目录ID#摘要结束"}]') + '</code></pre>',
+
+        '<h3 id="案例4_点击切换隐藏">案例 4：点击切换隐藏/显示（范围级）</h3>',
+        '<ol>',
+        '<li>在目录里插入锚点 <code>#折叠开始</code> 和 <code>#折叠结束</code>，中间放你希望可折叠的一段内容。</li>',
+        '<li>插入一个方法链接，显示为“展开/收起”。</li>',
+        '<li>触发方式选 <strong>点击时</strong>；前后锚点填 <code>#折叠开始</code> ~ <code>#折叠结束</code>；方法类型选 <strong>切换</strong>。</li>',
+        '</ol>',
+        '<p>对应的 JSON（示意）：</p>',
+        '<pre><code>' + escapeHtml('[{"trigger":"click","frontAnchor":"#折叠开始","backAnchor":"#折叠结束","methodType":"切换","once":false}]') + '</code></pre>',
+
+        '<h3 id="案例5_目录级重命名与右键动作">案例 5：目录级重命名 / 目录右键动作（仅导出页有效）</h3>',
+        '<ol>',
+        '<li>插入一个方法链接（显示为“把目录改名为：已完成”）。</li>',
+        '<li>触发方式选 <strong>点击时</strong>；前锚点填 <code>dir:目录ID</code>（不带 <code>#</code>）；后锚点留空；方法类型选 <strong>更换内容（目录：重命名）</strong>；输入新名称。</li>',
+        '<li>再插入一个方法链接（显示为“复制本目录ID”）。</li>',
+        '<li>前锚点同样填 <code>dir:目录ID</code>；方法类型选 <strong>目录右键动作</strong>；动作选 <strong>复制目录ID</strong>。</li>',
+        '</ol>',
+        '<p>对应的 JSON（示意）：</p>',
+        '<pre><code>' + escapeHtml('[{"trigger":"click","frontAnchor":"dir:目录ID","backAnchor":"","methodType":"更换内容","once":true,"renameTo":"已完成"}]') + '</code></pre>',
+        '<pre><code>' + escapeHtml('[{"trigger":"click","frontAnchor":"dir:目录ID","backAnchor":"","methodType":"目录右键动作","once":false,"dirAction":"复制目录ID"}]') + '</code></pre>',
+
+        '<h3 id="案例6_点击解密游戏">案例 6：点击解密游戏（示例模板）</h3>',
+        '<ul>',
+        '<li>点击顶部工具栏 <strong>编辑 / 插入解密游戏</strong>，系统会在当前目录插入一个可直接导出的“点击解密游戏”示例。</li>',
+        '<li>游戏核心用到：打开时隐藏后续关卡（范围级 <code>隐藏</code>）、点击时逐关显示（范围级 <code>显示</code>/<code>隐藏</code>）、最终用 <code>更换内容</code> 替换“密码占位区”，并演示目录级重命名。</li>',
+        '</ul>',
+        '<h2 id="注意事项">注意事项</h2>',
+        '<ul>',
+        '<li>方法只在导出网页生效，编辑器内不会自动执行。</li>',
+        '<li>建议尽量使用 <code>dir:</code>，比 <code>name:</code> 更稳定。</li>',
+        '<li>当你使用前后锚点限定范围时，前后锚点必须在同一目录内；替换来源的前后锚点也必须在同一目录内。</li>',
+        '<li>更换内容会写入导出网页运行时缓存，切换目录后仍保持已替换的结果。</li>',
+        '<li>导出网页会做方法级联执行：同一次触发内，如果方法执行产生了新的可触发方法，会继续扫描执行，直到没有新增或达到安全次数上限。</li>',
+        '</ul>'
+    ].join('');
+
     const exportPage = [
         '<h1>保存、导出与加密</h1>',
         nav,
@@ -677,6 +806,7 @@ function buildHelpPageContents() {
         '<ul>',
         '<li>导出网页后可离线打开浏览，目录与内部跳转都可用。</li>',
         '<li>导出网页中：锚点不可见且不可点击，只用于作为跳转目标。</li>',
+        '<li>导出网页中：方法会生效（按触发方式执行），可用于隐藏/显示/切换、重命名、替换内容、添加格式、目录动作等。</li>',
         '</ul>',
         '<h2 id="加密导出">加密导出（网页/文件）</h2>',
         '<ul>',
@@ -784,8 +914,10 @@ function buildHelpPageContents() {
         mulu_help_format: format,
         mulu_help_link_anchor: linkAnchor,
         mulu_help_search: search,
+        mulu_help_advanced: advanced,
         mulu_help_export: exportPage,
-        mulu_help_notes: notes
+        mulu_help_notes: notes,
+        mulu_help_decrypt: buildDecryptGameTemplateHtml('mulu_help_decrypt')
     };
 }
 
@@ -798,8 +930,10 @@ function buildHelpManualMulufile() {
         ['mulu_help_root', '编辑与格式', 'mulu_help_format', pages.mulu_help_format],
         ['mulu_help_root', '链接与锚点', 'mulu_help_link_anchor', pages.mulu_help_link_anchor],
         ['mulu_help_root', '查找与替换', 'mulu_help_search', pages.mulu_help_search],
+        ['mulu_help_root', '高级操作', 'mulu_help_advanced', pages.mulu_help_advanced],
         ['mulu_help_root', '保存、导出与加密', 'mulu_help_export', pages.mulu_help_export],
-        ['mulu_help_root', '注意事项与常见问题', 'mulu_help_notes', pages.mulu_help_notes]
+        ['mulu_help_root', '注意事项与常见问题', 'mulu_help_notes', pages.mulu_help_notes],
+        ['mulu_help_root', '解密游戏模板', 'mulu_help_decrypt', pages.mulu_help_decrypt]
     ];
 }
 
@@ -870,6 +1004,190 @@ if (typeof helpBtn !== 'undefined' && helpBtn) {
     });
 }
 
+function insertHtmlIntoPreview(html) {
+    if (!markdownPreview) return false;
+    const selection = window.getSelection();
+    let range = null;
+    if (selection && selection.rangeCount > 0) {
+        const r = selection.getRangeAt(0);
+        const container = r.commonAncestorContainer;
+        const inPreview = (container === markdownPreview) || (container && markdownPreview.contains(container));
+        if (inPreview) {
+            range = r;
+        }
+    }
+    if (!range) {
+        range = document.createRange();
+        range.selectNodeContents(markdownPreview);
+        range.collapse(false);
+    }
+
+    const div = document.createElement('div');
+    div.innerHTML = html;
+    const frag = document.createDocumentFragment();
+    let lastNode = null;
+    while (div.firstChild) {
+        const node = div.firstChild;
+        frag.appendChild(node);
+        lastNode = node;
+    }
+    range.deleteContents();
+    range.insertNode(frag);
+
+    const newRange = document.createRange();
+    if (lastNode) {
+        newRange.setStartAfter(lastNode);
+        newRange.collapse(true);
+    } else {
+        newRange.setStart(range.startContainer, range.startOffset);
+        newRange.collapse(true);
+    }
+    if (selection) {
+        selection.removeAllRanges();
+        selection.addRange(newRange);
+    }
+    markdownPreview.focus();
+    syncPreviewToTextarea();
+    if (typeof markUnsavedChanges === 'function') {
+        markUnsavedChanges();
+    }
+    return true;
+}
+
+function prependHtmlIntoPreview(html) {
+    if (!markdownPreview) return false;
+    const range = document.createRange();
+    range.selectNodeContents(markdownPreview);
+    range.collapse(true);
+
+    const div = document.createElement('div');
+    div.innerHTML = html;
+    const frag = document.createDocumentFragment();
+    let lastNode = null;
+    while (div.firstChild) {
+        const node = div.firstChild;
+        frag.appendChild(node);
+        lastNode = node;
+    }
+    range.insertNode(frag);
+
+    const selection = window.getSelection();
+    if (selection) {
+        const newRange = document.createRange();
+        if (lastNode) {
+            newRange.setStartAfter(lastNode);
+            newRange.collapse(true);
+        } else {
+            newRange.setStart(range.startContainer, range.startOffset);
+            newRange.collapse(true);
+        }
+        selection.removeAllRanges();
+        selection.addRange(newRange);
+    }
+
+    markdownPreview.focus();
+    syncPreviewToTextarea();
+    if (typeof markUnsavedChanges === 'function') {
+        markUnsavedChanges();
+    }
+    return true;
+}
+
+function buildDecryptGameTemplateHtml(dirId) {
+    function anchor(name) {
+        const n = String(name || '').trim();
+        return '<span id="' + escapeHtmlAttr(n) + '" class="sora-anchor" data-sora-anchor="true" data-anchor-name="' + escapeHtmlAttr(n) + '">\u200B</span>';
+    }
+    function escapeHtmlAttr(str) {
+        return String(str || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+    function methodLink(text, methods) {
+        const json = escapeHtmlAttr(JSON.stringify(methods || []));
+        return '<a href="#" data-sora-link="method" data-sora-methods="' + json + '">' + escapeHtml(String(text || '')) + '</a>';
+    }
+
+    const dirRef = dirId ? ('dir:' + String(dirId)) : '';
+
+    const openInit = [
+        { trigger: 'open', frontAnchor: '#game_stage2_start', backAnchor: '#game_stage2_end', methodType: '隐藏', once: true },
+        { trigger: 'open', frontAnchor: '#game_stage3_start', backAnchor: '#game_stage3_end', methodType: '隐藏', once: true },
+        { trigger: 'open', frontAnchor: '#game_success_start', backAnchor: '#game_success_end', methodType: '隐藏', once: true },
+        { trigger: 'open', frontAnchor: '#game_clue1_start', backAnchor: '#game_clue1_end', methodType: '隐藏', once: true },
+        { trigger: 'open', frontAnchor: '#game_clue2_start', backAnchor: '#game_clue2_end', methodType: '隐藏', once: true }
+    ];
+
+    const openInitLink = methodLink('初始化游戏（导出页打开时会自动执行）', openInit);
+
+    const toggleClue1 = methodLink('切换线索1', [
+        { trigger: 'click', frontAnchor: '#game_clue1_start', backAnchor: '#game_clue1_end', methodType: '切换', once: false }
+    ]);
+    const passStage1 = methodLink('提交第一关答案：CAT', [
+        { trigger: 'click', frontAnchor: '#game_stage2_start', backAnchor: '#game_stage2_end', methodType: '显示', once: true },
+        { trigger: 'click', frontAnchor: '#game_stage1_start', backAnchor: '#game_stage1_end', methodType: '隐藏', once: true }
+    ]);
+
+    const toggleClue2 = methodLink('切换线索2', [
+        { trigger: 'click', frontAnchor: '#game_clue2_start', backAnchor: '#game_clue2_end', methodType: '切换', once: false }
+    ]);
+    const passStage2 = methodLink('提交第二关答案：3', [
+        { trigger: 'click', frontAnchor: '#game_stage3_start', backAnchor: '#game_stage3_end', methodType: '显示', once: true },
+        { trigger: 'click', frontAnchor: '#game_stage2_start', backAnchor: '#game_stage2_end', methodType: '隐藏', once: true }
+    ]);
+
+    const finalDecrypt = methodLink('解密并领取密码', (function() {
+        const ms = [
+            { trigger: 'click', frontAnchor: '#game_password_start', backAnchor: '#game_password_end', methodType: '更换内容', once: true, replaceSourceType: 'text', replaceText: '密码：SORA-2026' },
+            { trigger: 'click', frontAnchor: '#game_success_start', backAnchor: '#game_success_end', methodType: '显示', once: true },
+            { trigger: 'click', frontAnchor: '#game_stage3_start', backAnchor: '#game_stage3_end', methodType: '隐藏', once: true }
+        ];
+        if (dirRef) {
+            ms.push({ trigger: 'click', frontAnchor: dirRef, backAnchor: '', methodType: '更换内容', once: true, renameTo: '已通关' });
+        }
+        return ms;
+    })());
+
+    return [
+        '<hr>',
+        '<h2>点击解密游戏（导出网页后点击游玩）</h2>',
+        '<p>提示：编辑器里方法不会执行；导出网页后，点击下面的按钮会触发隐藏/显示/替换等效果。</p>',
+        '<p>' + openInitLink + '</p>',
+
+        anchor('game_stage1_start'),
+        '<h3>第一关：找出动物</h3>',
+        '<p>题目：我会喵喵叫，也会抓老鼠。我是谁？</p>',
+        '<p>操作：' + toggleClue1 + ' | ' + passStage1 + '</p>',
+        anchor('game_clue1_start'),
+        '<p>线索1：英文是 3 个字母。</p>',
+        anchor('game_clue1_end'),
+        anchor('game_stage1_end'),
+
+        anchor('game_stage2_start'),
+        '<h3>第二关：算一算</h3>',
+        '<p>题目：1 + 2 = ?</p>',
+        '<p>操作：' + toggleClue2 + ' | ' + passStage2 + '</p>',
+        anchor('game_clue2_start'),
+        '<p>线索2：答案是一个数字。</p>',
+        anchor('game_clue2_end'),
+        anchor('game_stage2_end'),
+
+        anchor('game_stage3_start'),
+        '<h3>第三关：最终解密</h3>',
+        '<p>点击按钮将会替换下面的“密码占位区”，并显示通关信息。</p>',
+        '<p>' + finalDecrypt + '</p>',
+        '<p>密码占位区：</p>',
+        anchor('game_password_start'),
+        '<p>（尚未解密）</p>',
+        anchor('game_password_end'),
+        anchor('game_stage3_end'),
+
+        anchor('game_success_start'),
+        '<h3>通关</h3>',
+        '<p>你已解密成功。提示：如果你配置了目录级“重命名”，导出页里目录名称会变成“已通关”。</p>',
+        anchor('game_success_end'),
+        '<hr>'
+    ].join('');
+}
+
 window.loadHelpManual = loadHelpManual;
 
 document.addEventListener('keydown', function(e) {
@@ -930,7 +1248,13 @@ async function updateStorageInfo() {
             const availableStr = formatStorageSize(available);
             const quotaStr = formatStorageSize(quota);
             storageInfoElement.textContent = `已用 ${usedStr} / 剩余 ${availableStr}`;
-            storageInfoElement.title = `存储空间详情:\n已使用: ${usedStr}\n剩余: ${availableStr}\n总配额: ${quotaStr}\n使用率: ${usagePercent.toFixed(1)}%\n\n左键刷新 | 右键清理孤立数据`;
+            storageInfoElement.title = `存储空间详情:
+已使用: ${usedStr}
+剩余: ${availableStr}
+总配额: ${quotaStr}
+使用率: ${usagePercent.toFixed(1)}%
+
+左键刷新 | 右键清理孤立数据`;
             // 根据使用率设置样式
             storageInfoElement.classList.remove('calculating', 'warning', 'danger');
             if (usagePercent > 90) {

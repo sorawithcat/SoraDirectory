@@ -1571,20 +1571,27 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
     function generateDirectoryHTML(items, level = 0, rootId = null) {
         let html = '';
         items.forEach((item, index) => {
+            const safeDirId = String(item.id)
+                .replace(/\\/g, '\\\\')
+                .replace(/'/g, "\\'")
+                .replace(/\r/g, '\\r')
+                .replace(/\n/g, '\\n')
+                .replace(/\u2028/g, '\\u2028')
+                .replace(/\u2029/g, '\\u2029');
             const hasChildren = item.children && item.children.length > 0;
             const indent = 20 + (level * 20);
             // 有子目录时添加可点击的三角形图标，点击三角形才切换折叠/展开
             const toggleIcon = hasChildren 
-                ? `<span class="toggle-icon" onclick="toggleDirectory('${item.id}', event)"></span>` 
+                ? `<span class="toggle-icon"></span>` 
                 : `<span class="bullet-icon"></span>`;
             // 计算当前目录的根目录ID和底色
             const currentRootId = level === 0 ? item.id : rootId;
             const bgColor = level === 0 ? '#f9f9f9' : getRootColor(currentRootId);
             html += `<div class="mulu${hasChildren ? ' has-children expanded' : ''}" 
-                         data-dir-id="${item.id}" 
+                         data-dir-id="${escapeHtml(item.id)}" 
                          data-level="${level}"
                          style="padding-left: ${indent}px; background-color: ${bgColor};"
-                         onclick="selectDirectory('${item.id}', false)">
+                         >
                         ${toggleIcon}<span class="mulu-text">${escapeHtml(item.name)}</span>
                     </div>`;
             if (hasChildren) {
@@ -1599,192 +1606,214 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
         div.textContent = text;
         return div.innerHTML;
     }
-    async function generateContentScripts(muluData) {
-        let contentScripts = '';
-        let mediaDataScripts = '';
-        const mediaDataMap = {};
-        const allMediaPromises = [];
-        for (const item of muluData) {
+
+    function escapeCssSelectorValue(value) {
+        if (value === null || value === undefined) return '';
+        if (window.CSS && typeof window.CSS.escape === 'function') {
+            return window.CSS.escape(String(value));
+        }
+        const backslash = String.fromCharCode(92);
+        return String(value).replace(/[^a-zA-Z0-9_\u00A0-\uFFFF-]/g, function(ch) {
+            const hex = ch.charCodeAt(0).toString(16);
+            return backslash + hex + ' ';
+        });
+    }
+
+    // 根据根目录ID生成颜色
+    function getRootColorForRootId(rootId) {
+        if (!rootId) return '#f9f9f9';
+        const hash = stringToHash(rootId);
+        const hue = hash % 360;
+        const saturation = 40 + (hash % 20);
+        const lightness = 88 + (hash % 5);
+        return 'hsl(' + hue + ', ' + saturation + '%, ' + lightness + '%)';
+    }
+
+    // 构建目录树结构
+    function buildDirectoryTree(muluData) {
+        const tree = [];
+        const idMap = {};
+        // 创建ID到索引的映射
+        muluData.forEach((item, index) => {
             if (item.length === 4) {
-                const dirId = item[2];
-                let content = item[3];
-                if (!content) {
-                    const escapedContent = JSON.stringify(content).replace(/<\/script>/gi, '<\\/script>');
-                    contentScripts += `<script type="text/plain" id="content_${dirId}">${escapedContent}</script>\n`;
-                    continue;
+                idMap[item[2]] = {
+                    parentId: item[0],
+                    name: item[1],
+                    id: item[2],
+                    content: item[3],
+                    children: []
+                };
+            }
+        });
+        // 构建树形结构
+        Object.values(idMap).forEach(item => {
+            if (item.parentId === 'mulu') {
+                tree.push(item);
+            } else if (idMap[item.parentId]) {
+                idMap[item.parentId].children.push(item);
+            }
+        });
+        return tree;
+    }
+
+    // 递归生成目录HTML，rootId 用于设置底色
+    function generateDirectoryHTML(items, level = 0, rootId = null) {
+        let html = '';
+        items.forEach((item, index) => {
+            const safeDirId = String(item.id)
+                .replace(/\\/g, '\\\\')
+                .replace(/'/g, "\\'")
+                .replace(/\r/g, '\\r')
+                .replace(/\n/g, '\\n')
+                .replace(/\u2028/g, '\\u2028')
+                .replace(/\u2029/g, '\\u2029');
+            const hasChildren = item.children && item.children.length > 0;
+            const indent = 20 + (level * 20);
+            // 有子目录时添加可点击的三角形图标，点击三角形才切换折叠/展开
+            const toggleIcon = hasChildren 
+                ? `<span class="toggle-icon"></span>` 
+                : `<span class="bullet-icon"></span>`;
+            // 计算当前目录的根目录ID和底色
+            const currentRootId = level === 0 ? item.id : rootId;
+            const bgColor = level === 0 ? '#f9f9f9' : getRootColorForRootId(currentRootId);
+            html += `<div class="mulu${hasChildren ? ' has-children expanded' : ''}" 
+                         data-dir-id="${escapeHtml(item.id)}" 
+                         data-level="${level}"
+                         style="padding-left: ${indent}px; background-color: ${bgColor};"
+                         >
+                        ${toggleIcon}<span class="mulu-text">${escapeHtml(item.name)}</span>
+                    </div>`;
+            if (hasChildren) {
+                html += generateDirectoryHTML(item.children, level + 1, currentRootId);
+            }
+        });
+        return html;
+    }
+
+    async function generateContentScripts(muluData) {
+        const contentScriptParts = [];
+        const mediaDataMap = {};
+
+        const escapeHtmlAttribute = (value) => {
+            return String(value)
+                .replace(/&/g, '&amp;')
+                .replace(/"/g, '&quot;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        };
+
+        const jsonSafeStringify = (value) => {
+            return JSON.stringify(value).replace(/</g, '\\u003c');
+        };
+
+        const generatePlaceholderKeyPart = (value) => {
+            return String(value || '')
+                .trim()
+                .replace(/[^a-zA-Z0-9_-]/g, '_')
+                .slice(0, 80);
+        };
+
+        const emptyPixel = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
+        let placeholderCounter = 0;
+
+        for (let i = 0; i < muluData.length; i++) {
+            const item = muluData[i];
+            if (!item || item.length !== 4) continue;
+            const dirId = item[2];
+            let content = item[3] || '';
+
+            if (content && content.includes('data-media-storage-id') && typeof MediaStorage !== 'undefined' && MediaStorage && typeof MediaStorage.processHtmlForExport === 'function') {
+                content = await MediaStorage.processHtmlForExport(content);
+            }
+
+            try {
+                const temp = document.createElement('div');
+                temp.innerHTML = String(content);
+
+                const images = Array.from(temp.querySelectorAll('img'));
+                for (let j = 0; j < images.length; j++) {
+                    const img = images[j];
+                    const src = img.getAttribute('src') || '';
+                    if (!src || !src.startsWith('data:') || src.includes('about:blank')) {
+                        continue;
+                    }
+                    placeholderCounter++;
+                    const placeholderId = 'media_' + generatePlaceholderKeyPart(dirId) + '_' + placeholderCounter.toString(36);
+                    mediaDataMap[placeholderId] = {
+                        type: 'image',
+                        data: src,
+                        originalTag: img.outerHTML
+                    };
+                    img.setAttribute('data-placeholder-id', placeholderId);
+                    img.setAttribute('data-loading', 'true');
+                    img.classList.add('lazy-media');
+                    img.setAttribute('src', emptyPixel);
                 }
-                if (content.includes('data-media-storage-id') && typeof MediaStorage !== 'undefined') {
-                    const processed = await processContentForLazyLoad(content, dirId, mediaDataMap);
-                    content = processed.html;
-                    if (processed.promises && processed.promises.length > 0) {
-                        allMediaPromises.push(...processed.promises);
+
+                const videos = Array.from(temp.querySelectorAll('video'));
+                for (let j = 0; j < videos.length; j++) {
+                    const videoEl = videos[j];
+                    let dataUrl = videoEl.getAttribute('src') || '';
+                    if ((!dataUrl || !dataUrl.startsWith('data:') || dataUrl.includes('about:blank')) && videoEl.querySelector) {
+                        const source = videoEl.querySelector('source[src^="data:"]');
+                        if (source) {
+                            dataUrl = source.getAttribute('src') || '';
+                        }
+                    }
+                    if (!dataUrl || !dataUrl.startsWith('data:') || dataUrl.includes('about:blank')) {
+                        continue;
+                    }
+                    placeholderCounter++;
+                    const placeholderId = 'media_' + generatePlaceholderKeyPart(dirId) + '_' + placeholderCounter.toString(36);
+                    mediaDataMap[placeholderId] = {
+                        type: 'video',
+                        data: dataUrl,
+                        originalTag: videoEl.outerHTML
+                    };
+
+                    const placeholder = document.createElement('div');
+                    placeholder.className = 'lazy-media';
+                    placeholder.setAttribute('data-loading', 'true');
+                    placeholder.setAttribute('data-placeholder-id', placeholderId);
+                    placeholder.style.cssText = 'display: block; margin: 1em auto; max-width: 640px; max-height: 360px; width: 100%; height: auto; padding: 12px; background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 8px; text-align: center; color: #57606a;';
+                    placeholder.textContent = '视频加载中...';
+
+                    if (videoEl.parentNode) {
+                        videoEl.parentNode.replaceChild(placeholder, videoEl);
                     }
                 }
-                const escapedContent = JSON.stringify(content).replace(/<\/script>/gi, '<\\/script>');
-                contentScripts += `<script type="text/plain" id="content_${dirId}">${escapedContent}</script>\n`;
+
+                const archives = Array.from(temp.querySelectorAll('.archive-attachment'));
+                for (let j = 0; j < archives.length; j++) {
+                    const archive = archives[j];
+                    const dataUrl = archive.getAttribute('data-export-url') || '';
+                    if (!dataUrl || !dataUrl.startsWith('data:') || dataUrl.includes('about:blank')) {
+                        continue;
+                    }
+                    placeholderCounter++;
+                    const placeholderId = 'media_' + generatePlaceholderKeyPart(dirId) + '_' + placeholderCounter.toString(36);
+                    mediaDataMap[placeholderId] = {
+                        type: 'archive',
+                        data: dataUrl
+                    };
+                    archive.setAttribute('data-placeholder-id', placeholderId);
+                    archive.removeAttribute('data-export-url');
+                }
+
+                content = temp.innerHTML;
+            } catch (e) {
             }
+
+            const scriptId = 'content_' + String(dirId);
+            contentScriptParts.push('<script type="application/json" id="' + escapeHtmlAttribute(scriptId) + '">' + jsonSafeStringify(String(content)) + '</script>');
         }
-        if (allMediaPromises.length > 0) {
-            await Promise.all(allMediaPromises);
-        }
-        const escapedMediaData = JSON.stringify(mediaDataMap).replace(/<\/script>/gi, '<\\/script>');
-        mediaDataScripts = `<script type="text/plain" id="mediaData">${escapedMediaData}</script>\n`;
+
+        const contentScripts = contentScriptParts.join('\n');
+        const mediaDataScripts = '<script type="application/json" id="mediaData">' + jsonSafeStringify(mediaDataMap) + '</script>';
         return { contentScripts, mediaDataScripts };
     }
-    async function processContentForLazyLoad(html, dirId, mediaDataMap) {
-        let result = html;
-        let mediaIndex = 0;
-        const mediaIdsToProcess = [];
-        const mediaPromises = [];
-        // 处理视频 - 先收集，不立即处理数据
-        if (result.includes('data-media-storage-id')) {
-            const videoRegex = /<video([^>]*)data-media-storage-id=["']([^"']+)["']([^>]*)>/gi;
-            let match;
-            const videoReplacements = [];
-            while ((match = videoRegex.exec(result)) !== null) {
-                const fullMatch = match[0];
-                const mediaId = match[2];
-                const placeholderId = `media_${dirId}_${mediaIndex++}`;
-                // 先创建占位符，数据稍后批量处理
-                const placeholder = `<video class="lazy-media" data-placeholder-id="${placeholderId}" data-loading="true" style="display: block; margin: 1em auto; max-width: 640px; max-height: 360px; background: #f0f0f0; border-radius: 5px; min-width: 320px; min-height: 180px;">
-                    <div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #999; font-size: 14px;">加载中...</div>
-                </video>`;
-                videoReplacements.push({ from: fullMatch, to: placeholder });
-                // 记录需要处理的媒体
-                mediaIdsToProcess.push({ mediaId, placeholderId, type: 'video', originalTag: fullMatch });
-            }
-            for (const { from, to } of videoReplacements) {
-                result = result.replace(from, to);
-            }
-        }
-        // 处理图片 - 先收集，不立即处理数据
-        if (result.includes('data-media-storage-id')) {
-            const imgRegex = /<img([^>]*)data-media-storage-id=["']([^"']+)["']([^>]*)>/gi;
-            let match;
-            const imgReplacements = [];
-            while ((match = imgRegex.exec(result)) !== null) {
-                const fullMatch = match[0];
-                const mediaId = match[2];
-                const placeholderId = `media_${dirId}_${mediaIndex++}`;
-                // 提取 alt 和 title 属性
-                const altMatch = fullMatch.match(/\salt=["']([^"']*)["']/);
-                const titleMatch = fullMatch.match(/\stitle=["']([^"']*)["']/);
-                const alt = altMatch ? altMatch[1] : '';
-                const title = titleMatch ? titleMatch[1] : '';
-                // 先创建占位符
-                const placeholder = `<img class="lazy-media" data-placeholder-id="${placeholderId}" data-loading="true" 
-                    src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='300'%3E%3Crect fill='%23f0f0f0' width='400' height='300'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.3em' fill='%23999' font-size='14'%3E加载中...%3C/text%3E%3C/svg%3E" 
-                    ${alt ? `alt="${escapeHtml(alt)}"` : ''} ${title ? `title="${escapeHtml(title)}"` : ''}
-                    style="max-width: 800px; max-height: 600px; width: auto; height: auto; border-radius: 5px; display: block; margin: 1em auto; cursor: pointer;">`;
-                imgReplacements.push({ from: fullMatch, to: placeholder });
-                // 记录需要处理的媒体
-                mediaIdsToProcess.push({ mediaId, placeholderId, type: 'image', originalTag: fullMatch, alt, title });
-            }
-            for (const { from, to } of imgReplacements) {
-                result = result.replace(from, to);
-            }
-        }
-        // 处理压缩文件附件 - 先收集，不立即处理数据
-        if (result.includes('data-media-storage-id')) {
-            const archiveRegex = /<div([^>]*)class=["']archive-attachment["']([^>]*)data-media-storage-id=["']([^"']+)["']([^>]*)>/gi;
-            const archiveRegex2 = /<div([^>]*)data-media-storage-id=["']([^"']+)["']([^>]*)class=["']archive-attachment["']([^>]*)>/gi;
-            for (const regex of [archiveRegex, archiveRegex2]) {
-                let match;
-                const archiveReplacements = [];
-                while ((match = regex.exec(result)) !== null) {
-                    const fullMatch = match[0];
-                    const mediaId = regex === archiveRegex ? match[3] : match[2];
-                    const placeholderId = `archive_${dirId}_${mediaIndex++}`;
-                    // 提取压缩包信息
-                    const nameMatch = fullMatch.match(/\sdata-archive-name=["']([^"']*)["']/);
-                    const sizeMatch = fullMatch.match(/\sdata-archive-size=["']([^"']*)["']/);
-                    const archiveName = nameMatch ? nameMatch[1] : 'archive.zip';
-                    const archiveSize = sizeMatch ? sizeMatch[1] : '0';
-                    // 创建占位符（保持原有样式，但不包含数据URL）
-                    let newTag = fullMatch;
-                    newTag = newTag.replace(/\sdata-media-storage-id=["'][^"']*["']/, '');
-                    newTag = newTag.replace(/\sdata-export-url=["'][^"']*["']/, '');
-                    newTag = newTag.replace(/>$/, ` data-placeholder-id="${placeholderId}">`);
-                    archiveReplacements.push({ from: fullMatch, to: newTag });
-                    // 记录压缩包信息，导出时会加载数据到 mediaDataMap
-                    mediaIdsToProcess.push({ 
-                        mediaId, 
-                        placeholderId,
-                        type: 'archive', 
-                        name: archiveName, 
-                        size: archiveSize,
-                        originalTag: fullMatch 
-                    });
-                }
-                for (const { from, to } of archiveReplacements) {
-                    result = result.replace(from, to);
-                }
-            }
-        }
-        if (mediaIdsToProcess.length > 0) {
-            mediaIdsToProcess.forEach(({ mediaId, placeholderId, type, originalTag, alt, title, name, size }) => {
-                const promise = (async () => {
-                    try {
-                        let dataUrl = null;
-                        if (type === 'video') {
-                            const tempHtml = `<video data-media-storage-id="${mediaId}"></video>`;
-                            const processed = await MediaStorage.processHtmlForExport(tempHtml);
-                            const srcMatch = processed.match(/\ssrc=["']([^"']+)["']/);
-                            if (srcMatch) dataUrl = srcMatch[1];
-                        } else if (type === 'image') {
-                            const tempHtml = `<img data-media-storage-id="${mediaId}">`;
-                            const processed = await MediaStorage.processHtmlForExport(tempHtml);
-                            const srcMatch = processed.match(/\ssrc=["']([^"']+)["']/);
-                            if (srcMatch) dataUrl = srcMatch[1];
-                        } else if (type === 'archive') {
-                            try {
-                                const dataUrl = await MediaStorage.getMediaAsDataUrl(mediaId);
-                                if (dataUrl) {
-                                    mediaDataMap[placeholderId] = {
-                                        type: 'archive',
-                                        data: dataUrl,
-                                        name: name,
-                                        size: size,
-                                        originalTag: originalTag
-                                    };
-                                } else {
-                                    mediaDataMap[placeholderId] = {
-                                        type: 'archive',
-                                        mediaId: mediaId,
-                                        name: name,
-                                        size: size,
-                                        originalTag: originalTag
-                                    };
-                                }
-                            } catch (err) {
-                                console.error('加载压缩包数据失败:', err);
-                                mediaDataMap[placeholderId] = {
-                                    type: 'archive',
-                                    mediaId: mediaId,
-                                    name: name,
-                                    size: size,
-                                    originalTag: originalTag
-                                };
-                            }
-                            return;
-                        }
-                        if (dataUrl) {
-                            mediaDataMap[placeholderId] = {
-                                type: type,
-                                data: dataUrl,
-                                originalTag: originalTag
-                            };
-                        }
-                    } catch (err) {
-                        console.error(`处理${type}数据失败:`, err);
-                    }
-                })();
-                mediaPromises.push(promise);
-            });
-        }
-        return { html: result, promises: mediaPromises };
-    }
-    showToast('正在生成网页...', 'info', 2000);
+
+    // 生成完整的HTML页面
     const directoryTree = buildDirectoryTree(mulufile);
     const directoryHTML = generateDirectoryHTML(directoryTree);
     const { contentScripts, mediaDataScripts } = await generateContentScripts(mulufile);
@@ -2278,8 +2307,12 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
         const contentCache = {};
         let mediaDataMap = {};
         let currentSelected = null;
+        let currentDirId = null;
         const nameMap = {};
         const nameIndex = {};
+        const soraExecutedMethodIds = new Set();
+        const soraMethodHoverCooldownMap = new WeakMap();
+        let soraDirClipboard = null;
 
         function escapeCssSelectorValue(value) {
             if (value === null || value === undefined) return '';
@@ -2297,7 +2330,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
             if (!raw) return '';
             let id = String(raw).trim();
             id = id.replace(/^#/, '');
-            id = id.replace(/\s+/g, '-');
+            id = id.replace(/\\s+/g, '-');
             return id;
         }
 
@@ -2347,11 +2380,13 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
         }
 
         function selectDirectory(dirId, toggleExpand = false) {
+            console.log('[Sora方法] selectDirectory被调用, dirId:', dirId);
             if (currentSelected) {
                 currentSelected.classList.remove('selected');
             }
-            const element = document.querySelector('[data-dir-id="' + dirId + '"]');
+            const element = document.querySelector('[data-dir-id="' + escapeCssSelectorValue(dirId) + '"]');
 
+            currentDirId = dirId;
             if (element) {
                 element.classList.add('selected');
                 currentSelected = element;
@@ -2360,7 +2395,9 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                     updateChildrenVisibility(dirId, element.classList.contains('expanded'));
                 }
             }
+
             const content = getContent(dirId) || '';
+            console.log('[Sora方法] 目录内容长度:', content.length, '前100字符:', content.substring(0, 100));
             const title = nameMap[dirId] || '未命名';
             document.getElementById('contentTitle').textContent = title;
             document.getElementById('contentBody').innerHTML = content || '<div class="empty-state">此目录暂无内容</div>';
@@ -2371,12 +2408,18 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
             setTimeout(() => {
                 loadLazyMedia();
             }, 100);
+
+            console.log('[Sora方法] 开始执行open触发');
+            handleSoraMethodTriggersCascade('open');
+            console.log('[Sora方法] 开始执行enter_dir触发');
+            handleSoraMethodTriggersCascade('enter_dir');
         }
 
         function resolveDirIdFromName(dirName) {
             const name = (dirName || '').trim();
             if (!name) return null;
             const ids = nameIndex[name];
+
             if (ids && ids.length > 0) {
                 if (ids.length > 1) {
                     console.warn('存在重复目录名，已跳转到第一个匹配项:', name);
@@ -2386,18 +2429,1223 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
             return null;
         }
 
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function escapeHtmlAttr(str) {
+            return String(str || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        function showExportToast(message, duration = 2500) {
+            if (!message) return;
+            let el = document.getElementById('soraExportToast');
+            if (!el) {
+                el = document.createElement('div');
+                el.id = 'soraExportToast';
+                el.style.position = 'fixed';
+                el.style.left = '50%';
+                el.style.bottom = '18px';
+                el.style.transform = 'translateX(-50%)';
+                el.style.maxWidth = '80vw';
+                el.style.padding = '10px 14px';
+                el.style.background = 'rgba(0, 0, 0, 0.78)';
+                el.style.color = '#fff';
+                el.style.borderRadius = '8px';
+                el.style.fontSize = '14px';
+                el.style.lineHeight = '1.4';
+                el.style.zIndex = '10000';
+                el.style.display = 'none';
+                el.style.boxShadow = '0 6px 18px rgba(0,0,0,0.25)';
+                document.body.appendChild(el);
+            }
+            el.textContent = String(message);
+            el.style.display = 'block';
+            clearTimeout(el._hideTimer);
+            el._hideTimer = setTimeout(() => {
+                el.style.display = 'none';
+            }, duration);
+        }
+
+        function safeParseJson(raw, fallback) {
+            try {
+                if (raw === null || raw === undefined) return fallback;
+                const text = String(raw).trim();
+                if (!text) return fallback;
+                return JSON.parse(text);
+            } catch (e) {
+                console.error('[Sora方法] JSON解析失败:', e, '原始数据:', raw);
+                return fallback;
+            }
+        }
+
+        function stringToHash(str) {
+            let hash = 0;
+            const s = String(str || '');
+            for (let i = 0; i < s.length; i++) {
+                hash = ((hash << 5) - hash) + s.charCodeAt(i);
+                hash |= 0;
+            }
+            return Math.abs(hash);
+        }
+
+        function ensureMethodId(cfg, idx, salt) {
+            if (!cfg || typeof cfg !== 'object') return null;
+            if (cfg.methodId) return cfg.methodId;
+            const h = stringToHash(JSON.stringify(cfg) + '_' + String(idx || 0) + '_' + String(salt || ''));
+            cfg.methodId = 'm_' + h;
+            return cfg.methodId;
+        }
+
+        function readMethodsFromElement(a) {
+            if (!a || !a.getAttribute) return [];
+            const raw = a.getAttribute('data-sora-methods') || '';
+            const parsed = safeParseJson(raw, []);
+            const arr = Array.isArray(parsed) ? parsed : [];
+            for (let i = 0; i < arr.length; i++) {
+                const cfg = arr[i];
+                if (!cfg || typeof cfg !== 'object') continue;
+                if (!cfg.trigger) cfg.trigger = 'click';
+                ensureMethodId(cfg, i, (a.textContent || '').slice(0, 30));
+            }
+            return arr;
+        }
+
+        function executeMethodsForElement(a, trigger) {
+            const methods = readMethodsFromElement(a);
+            if (!methods || methods.length === 0) return false;
+            const executedInRun = arguments.length >= 3 ? arguments[2] : null;
+            let anyOk = false;
+            for (let i = 0; i < methods.length; i++) {
+                const cfg = methods[i];
+                if (!cfg || typeof cfg !== 'object') continue;
+                if ((cfg.trigger || 'click') !== trigger) continue;
+                const id = ensureMethodId(cfg, i, (a.textContent || '').slice(0, 30));
+                if (executedInRun && id && executedInRun.has(id)) {
+                    continue;
+                }
+                if (cfg.once && id && soraExecutedMethodIds.has(id)) {
+                    continue;
+                }
+                const ok = executeSingleMethod(cfg);
+                if (!ok) continue;
+                anyOk = true;
+                if (executedInRun && id) {
+                    executedInRun.add(id);
+                }
+                if (cfg.once && id) {
+                    soraExecutedMethodIds.add(id);
+                }
+            }
+            return anyOk;
+        }
+
+        function handleSoraMethodTriggersCascade(reason) {
+            console.log('[Sora方法] 开始级联触发:', reason);
+            const maxPasses = 20;
+            const executedInRun = new Set();
+            for (let pass = 0; pass < maxPasses; pass++) {
+                const contentBody = document.getElementById('contentBody');
+                if (!contentBody) {
+                    console.log('[Sora方法] contentBody不存在');
+                    return;
+                }
+                const links = Array.from(contentBody.querySelectorAll('a[data-sora-link="method"]'));
+                console.log('[Sora方法] 找到方法链接数量:', links.length);
+                let anyOk = false;
+                for (let i = 0; i < links.length; i++) {
+                    const a = links[i];
+                    const methods = readMethodsFromElement(a);
+                    console.log('[Sora方法] 链接', i, '方法数:', methods.length, '配置:', methods);
+                    if (!methods || methods.length === 0) continue;
+                    if (!methods.some(m => (m.trigger || 'click') === reason)) {
+                        console.log('[Sora方法] 链接', i, '没有匹配', reason, '的方法');
+                        continue;
+                    }
+                    const ok = executeMethodsForElement(a, reason, executedInRun);
+                    console.log('[Sora方法] 链接', i, '执行结果:', ok);
+                    if (ok) {
+                        anyOk = true;
+                    }
+                }
+                if (!anyOk) {
+                    console.log('[Sora方法] 级联结束,没有方法执行');
+                    return;
+                }
+            }
+            showExportToast('方法触发次数过多，已停止继续执行');
+        }
+
+        function executeSingleMethod(cfg) {
+            if (!cfg || typeof cfg !== 'object') return false;
+            const type = cfg.methodType || '';
+            console.log('[Sora方法] 执行单个方法, 类型:', type, '配置:', cfg);
+            if (type === '更换内容') {
+                if (cfg.renameTo && String(cfg.renameTo).trim()) {
+                    return executeRenameDirectoryMethod(cfg);
+                }
+                return executeChangeContentMethod(cfg);
+            }
+            if (type === '隐藏') {
+                return executeVisibilityMethod(cfg, 'hide');
+            }
+            if (type === '隐藏（初始不隐藏）') {
+                return executeVisibilityMethod(cfg, 'hide_init_visible');
+            }
+            if (type === '显示') {
+                return executeVisibilityMethod(cfg, 'show');
+            }
+            if (type === '切换') {
+                return executeVisibilityMethod(cfg, 'toggle');
+            }
+            if (type === '添加格式') {
+                return executeAddFormatMethod(cfg);
+            }
+            if (type === '目录右键动作') {
+                return executeDirActionMethod(cfg);
+            }
+            console.warn('[Sora方法] 未支持的方法类型:', type);
+            showExportToast('未支持的方法类型：' + type);
+            return false;
+        }
+
+        function removeDirFromNameIndex(name, dirId) {
+            const key = String(name || '').trim();
+            if (!key) return;
+            const arr = nameIndex[key];
+            if (!arr || arr.length === 0) return;
+            const next = arr.filter(id => id !== dirId);
+            if (next.length === 0) {
+                delete nameIndex[key];
+            } else {
+                nameIndex[key] = next;
+            }
+        }
+
+        function addDirToNameIndex(name, dirId) {
+            const key = String(name || '').trim();
+            if (!key) return;
+            if (!nameIndex[key]) nameIndex[key] = [];
+            if (!nameIndex[key].includes(dirId)) {
+                nameIndex[key].push(dirId);
+            }
+        }
+
+        async function copyTextToClipboard(text) {
+            const val = String(text || '');
+            if (!val) return false;
+            try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(val);
+                    return true;
+                }
+            } catch (err) {
+            }
+            try {
+                const textarea = document.createElement('textarea');
+                textarea.value = val;
+                textarea.setAttribute('readonly', 'readonly');
+                textarea.style.position = 'fixed';
+                textarea.style.left = '-9999px';
+                textarea.style.top = '0';
+                document.body.appendChild(textarea);
+                textarea.select();
+                const ok = document.execCommand('copy');
+                textarea.remove();
+                return !!ok;
+            } catch (err) {
+                return false;
+            }
+        }
+
+        function getMuluList() {
+            return Array.from(document.querySelectorAll('.mulu'));
+        }
+
+        function getMuluLevel(el) {
+            if (!el) return 0;
+            const lvl = parseInt(el.dataset.level, 10);
+            return isNaN(lvl) ? 0 : lvl;
+        }
+
+        function getMuluNameFromElement(el) {
+            if (!el) return '';
+            const nameEl = el.querySelector('.mulu-text');
+            return (nameEl ? nameEl.textContent : el.textContent).trim();
+        }
+
+        function getSubtreeLastIndex(allMulu, startIndex) {
+            if (!allMulu || startIndex < 0 || startIndex >= allMulu.length) return startIndex;
+            const baseLevel = getMuluLevel(allMulu[startIndex]);
+            let last = startIndex;
+            for (let i = startIndex + 1; i < allMulu.length; i++) {
+                const lvl = getMuluLevel(allMulu[i]);
+                if (lvl <= baseLevel) break;
+                last = i;
+            }
+            return last;
+        }
+
+        function refreshMuluVisibility() {
+            const allMulu = getMuluList();
+            const parentVisible = [];
+            const parentExpanded = [];
+            for (let i = 0; i < allMulu.length; i++) {
+                const el = allMulu[i];
+                const lvl = getMuluLevel(el);
+                const hidden = el.dataset.soraHidden === 'true';
+                const expanded = el.classList.contains('expanded');
+
+                let visible = true;
+                if (lvl > 0) {
+                    const pv = parentVisible[lvl - 1] !== false;
+                    const pe = parentExpanded[lvl - 1] === true;
+                    visible = pv && pe;
+                }
+                if (hidden) visible = false;
+                el.style.display = visible ? '' : 'none';
+
+                parentVisible[lvl] = visible;
+                parentExpanded[lvl] = expanded;
+            }
+        }
+
+        function hideDirectoryTree(dirId) {
+            const allMulu = getMuluList();
+            const el = document.querySelector('[data-dir-id="' + escapeCssSelectorValue(dirId) + '"]');
+            if (!el) return false;
+            const idx = allMulu.indexOf(el);
+            if (idx < 0) return false;
+            const last = getSubtreeLastIndex(allMulu, idx);
+            for (let i = idx; i <= last; i++) {
+                allMulu[i].dataset.soraHidden = 'true';
+            }
+            refreshMuluVisibility();
+            if (currentDirId && currentDirId === dirId) {
+                const contentBody = document.getElementById('contentBody');
+                if (contentBody) {
+                    contentBody.innerHTML = '<div class="empty-state">此目录已隐藏</div>';
+                }
+                const titleEl = document.getElementById('contentTitle');
+                if (titleEl) {
+                    titleEl.textContent = '选择一个目录查看内容';
+                }
+                if (currentSelected) {
+                    currentSelected.classList.remove('selected');
+                    currentSelected = null;
+                }
+                currentDirId = null;
+            }
+            return true;
+        }
+
+        function showDirectoryTree(dirId) {
+            const allMulu = getMuluList();
+            const el = document.querySelector('[data-dir-id="' + escapeCssSelectorValue(dirId) + '"]');
+            if (!el) return false;
+            const idx = allMulu.indexOf(el);
+            if (idx < 0) return false;
+            const last = getSubtreeLastIndex(allMulu, idx);
+            for (let i = idx; i <= last; i++) {
+                if (allMulu[i].dataset.soraHidden === 'true') {
+                    delete allMulu[i].dataset.soraHidden;
+                }
+            }
+            refreshMuluVisibility();
+            return true;
+        }
+
+        function toggleDirectoryTree(dirId) {
+            const el = document.querySelector('[data-dir-id="' + escapeCssSelectorValue(dirId) + '"]');
+            if (!el) return false;
+            const hidden = el.dataset.soraHidden === 'true' || el.style.display === 'none';
+            return hidden ? showDirectoryTree(dirId) : hideDirectoryTree(dirId);
+        }
+
+        function executeRenameDirectoryMethod(cfg) {
+            const frontRef = parseAnchorRef(cfg.frontAnchor);
+            if (!frontRef) {
+                showExportToast('前锚点无效，无法执行目录重命名');
+                return false;
+            }
+            const dirId = resolveDirIdFromRef(frontRef);
+            if (!dirId) {
+                showExportToast('未能确定目标目录，无法执行目录重命名');
+                return false;
+            }
+            const newName = String(cfg.renameTo || '').trim();
+            if (!newName) {
+                showExportToast('目录新名称为空，无法执行目录重命名');
+                return false;
+            }
+            const el = document.querySelector('[data-dir-id="' + escapeCssSelectorValue(dirId) + '"]');
+            if (!el) {
+                showExportToast('未找到目标目录，无法执行目录重命名');
+                return false;
+            }
+            const oldName = nameMap[dirId] || getMuluNameFromElement(el);
+            const nameEl = el.querySelector('.mulu-text');
+            if (nameEl) {
+                nameEl.textContent = newName;
+            } else {
+                el.textContent = newName;
+            }
+            nameMap[dirId] = newName;
+            removeDirFromNameIndex(oldName, dirId);
+            addDirToNameIndex(newName, dirId);
+            if (currentDirId && currentDirId === dirId) {
+                const titleEl = document.getElementById('contentTitle');
+                if (titleEl) {
+                    titleEl.textContent = newName;
+                }
+            }
+            return true;
+        }
+
+        function getRangeWrapperId(dirId, frontId, backId) {
+            const key = String(dirId || '') + '|' + String(frontId || '') + '|' + String(backId || '');
+            return 'rng_' + stringToHash(key);
+        }
+
+        function findRangeWrapper(root, wrapperId) {
+            if (!root || !wrapperId) return null;
+            return root.querySelector('[data-sora-range-id="' + escapeCssSelectorValue(wrapperId) + '"]');
+        }
+
+        function wrapRangeInRoot(root, frontId, backId, wrapperId, initialDisplay) {
+            console.log('[Sora方法] wrapRangeInRoot, frontId:', frontId, 'backId:', backId, 'wrapperId:', wrapperId);
+            if (!root) return null;
+            const range = document.createRange();
+            try {
+                if (frontId) {
+                    const frontEl = findAnchorElementInRoot(root, frontId);
+                    if (!frontEl) {
+                        console.error('[Sora方法] 找不到前锚点元素:', frontId);
+                        return null;
+                    }
+                    console.log('[Sora方法] 找到前锚点:', frontEl);
+                    range.setStartAfter(frontEl);
+                } else {
+                    range.setStart(root, 0);
+                }
+                if (backId) {
+                    const backEl = findAnchorElementInRoot(root, backId);
+                    if (!backEl) {
+                        console.error('[Sora方法] 找不到后锚点元素:', backId);
+                        return null;
+                    }
+                    console.log('[Sora方法] 找到后锚点:', backEl);
+                    range.setEndBefore(backEl);
+                } else {
+                    range.setEnd(root, root.childNodes.length);
+                }
+            } catch (e) {
+                console.error('[Sora方法] 创建Range失败:', e);
+                return null;
+            }
+            const frag = range.extractContents();
+            const wrapper = document.createElement('span');
+            wrapper.setAttribute('data-sora-range-id', wrapperId);
+            wrapper.style.display = initialDisplay;
+            wrapper.appendChild(frag);
+            range.insertNode(wrapper);
+            console.log('[Sora方法] wrapper创建成功, display:', initialDisplay);
+            return wrapper;
+        }
+
+        function applyRangeDisplay(wrapper, mode) {
+            if (!wrapper) return false;
+            if (mode === 'hide') {
+                wrapper.style.display = 'none';
+                return true;
+            }
+            if (mode === 'show') {
+                wrapper.style.display = 'contents';
+                return true;
+            }
+            if (mode === 'toggle') {
+                wrapper.style.display = (wrapper.style.display === 'none') ? 'contents' : 'none';
+                return true;
+            }
+            return false;
+        }
+
+        function executeVisibilityMethod(cfg, mode) {
+            console.log('[Sora方法] executeVisibilityMethod, mode:', mode, 'frontAnchor:', cfg.frontAnchor, 'backAnchor:', cfg.backAnchor);
+            const frontRef = parseAnchorRef(cfg.frontAnchor);
+            if (!frontRef) {
+                console.error('[Sora方法] 前锚点解析失败:', cfg.frontAnchor);
+                showExportToast('前锚点无效，无法执行方法');
+                return false;
+            }
+            console.log('[Sora方法] 前锚点解析结果:', frontRef);
+            const targetDir = resolveDirIdFromRef(frontRef);
+            console.log('[Sora方法] 目标目录:', targetDir, 'currentDirId:', currentDirId);
+            if (!targetDir) {
+                showExportToast('未能确定目标目录，无法执行方法');
+                return false;
+            }
+            const isRange = !!(cfg.backAnchor && String(cfg.backAnchor).trim());
+            console.log('[Sora方法] 是否范围操作:', isRange);
+            if (!isRange) {
+                if (mode === 'hide') return hideDirectoryTree(targetDir);
+                if (mode === 'show') return showDirectoryTree(targetDir);
+                if (mode === 'toggle') return toggleDirectoryTree(targetDir);
+                if (mode === 'hide_init_visible') {
+                    return showDirectoryTree(targetDir);
+                }
+                return false;
+            }
+
+            const backRef = parseAnchorRef(cfg.backAnchor);
+            if (!backRef) {
+                showExportToast('后锚点无效，无法执行方法');
+                return false;
+            }
+            const backDirId = resolveDirIdFromRef(backRef);
+            if (!backDirId || backDirId !== targetDir) {
+                showExportToast('后锚点必须与前锚点在同一目录内');
+                return false;
+            }
+
+            const frontId = frontRef.anchorId || '';
+            const backId = backRef.anchorId || '';
+            const wrapperId = getRangeWrapperId(targetDir, frontId, backId);
+
+            const applyInRoot = (root, commit) => {
+                let wrapper = findRangeWrapper(root, wrapperId);
+                if (!wrapper) {
+                    if (mode === 'hide_init_visible') {
+                        wrapper = wrapRangeInRoot(root, frontId, backId, wrapperId, 'contents');
+                        if (!wrapper) return false;
+                        commit(root);
+                        return true;
+                    }
+                    const initial = (mode === 'show') ? 'contents' : 'none';
+                    wrapper = wrapRangeInRoot(root, frontId, backId, wrapperId, initial);
+                    if (!wrapper) return false;
+                    if (mode === 'toggle') {
+                        wrapper.style.display = 'none';
+                    }
+                    commit(root);
+                    return true;
+                }
+                const actualMode = (mode === 'hide_init_visible') ? 'hide' : mode;
+                const ok = applyRangeDisplay(wrapper, actualMode);
+                if (!ok) return false;
+                commit(root);
+                return true;
+            };
+
+            if (targetDir === currentDirId) {
+                const contentBody = document.getElementById('contentBody');
+                if (!contentBody) return false;
+                const ok = applyInRoot(contentBody, (root) => setDirHtmlById(targetDir, root.innerHTML, true));
+                if (!ok) {
+                    showExportToast('目标锚点范围无效，无法执行方法');
+                }
+                return ok;
+            }
+
+            const html = getDirHtmlById(targetDir);
+            const root = document.createElement('div');
+            root.innerHTML = html;
+            const ok = applyInRoot(root, (r) => setDirHtmlById(targetDir, r.innerHTML));
+            if (!ok) {
+                showExportToast('目标锚点范围无效，无法执行方法');
+            }
+            return ok;
+        }
+
+        function buildFormattedHtml(command, innerHtml, value, methods, fallbackText) {
+            const cmd = String(command || '').trim();
+            const html = String(innerHtml || '');
+            if (!cmd) return html;
+            if (cmd === 'bold') return '<strong>' + html + '</strong>';
+            if (cmd === 'italic') return '<em>' + html + '</em>';
+            if (cmd === 'underline') return '<u>' + html + '</u>';
+            if (cmd === 'strikethrough') return '<s>' + html + '</s>';
+            if (cmd === 'highlight') return '<mark>' + html + '</mark>';
+            if (cmd === 'spoiler') return '<spoiler>' + html + '</spoiler>';
+            if (cmd === 'superscript') return '<sup>' + html + '</sup>';
+            if (cmd === 'subscript') return '<sub>' + html + '</sub>';
+            if (cmd === 'code') {
+                const div = document.createElement('div');
+                div.innerHTML = html;
+                return '<code>' + escapeHtml(div.textContent || '') + '</code>';
+            }
+            if (cmd === 'color') {
+                const c = String(value || '').trim();
+                if (!c) return html;
+                return '<span style="color: ' + escapeHtml(c) + '">' + html + '</span>';
+            }
+            if (cmd === 'background-color') {
+                const c = String(value || '').trim();
+                if (!c) return html;
+                return '<span style="background-color: ' + escapeHtml(c) + '">' + html + '</span>';
+            }
+            if (cmd === 'link') {
+                const hrefRaw = String(value || '').trim();
+                if (!hrefRaw) return html;
+                const display = html || escapeHtml(hrefRaw);
+                if (hrefRaw.startsWith('#')) {
+                    const id = normalizeAnchorId(hrefRaw);
+                    return '<a href="#' + escapeHtml(id) + '">' + display + '</a>';
+                }
+                const lower = hrefRaw.toLowerCase();
+                const isDir = lower.startsWith('dir:') || lower.startsWith('目录:');
+                const isName = lower.startsWith('name:') || lower.startsWith('目录名:');
+                if (isDir || isName) {
+                    const prefixLen = hrefRaw.indexOf(':') + 1;
+                    const rest = hrefRaw.substring(prefixLen);
+                    const hashIndex = rest.indexOf('#');
+                    const mainPart = (hashIndex >= 0 ? rest.substring(0, hashIndex) : rest).trim();
+                    const anchorPartRaw = (hashIndex >= 0 ? rest.substring(hashIndex + 1) : '').trim();
+                    const anchorPart = anchorPartRaw ? normalizeAnchorId(anchorPartRaw) : '';
+                    const attrs = [];
+                    attrs.push('href="sora-dir:' + escapeHtml(mainPart) + (anchorPart ? ('#' + escapeHtml(anchorPart)) : '') + '"');
+                    attrs.push('data-sora-link="dir"');
+                    if (isDir) {
+                        attrs.push('data-dir-id="' + escapeHtml(mainPart) + '"');
+                    } else {
+                        attrs.push('data-dir-name="' + escapeHtml(mainPart) + '"');
+                    }
+                    if (anchorPart) {
+                        attrs.push('data-anchor-id="' + escapeHtml(anchorPart) + '"');
+                    }
+                    return '<a ' + attrs.join(' ') + '>' + display + '</a>';
+                }
+                return '<a href="' + escapeHtml(hrefRaw) + '" target="_blank">' + display + '</a>';
+            }
+            if (cmd === 'method') {
+                const ms = Array.isArray(methods) ? methods : [];
+                if (!Array.isArray(ms) || ms.length === 0) {
+                    return html;
+                }
+                const div = document.createElement('div');
+                div.innerHTML = html;
+                const textContent = String(div.textContent || '').trim();
+                const empty = textContent === '';
+                let display;
+                if (empty) {
+                    display = escapeHtml(String(fallbackText || '方法'));
+                } else {
+                    display = escapeHtml(textContent);
+                }
+                const methodsJson = escapeHtmlAttr(JSON.stringify(ms));
+                return '<a href="#" data-sora-link="method" data-sora-methods="' + methodsJson + '">' + display + '</a>';
+            }
+            return html;
+        }
+
+        function executeAddFormatMethod(cfg) {
+            const frontRef = parseAnchorRef(cfg.frontAnchor);
+            const backRef = parseAnchorRef(cfg.backAnchor);
+            if (!frontRef || !backRef) {
+                showExportToast('锚点无效，无法执行添加格式');
+                return false;
+            }
+            const targetDir = resolveDirIdFromRef(frontRef);
+            const backDirId = resolveDirIdFromRef(backRef);
+            if (!targetDir || !backDirId || targetDir !== backDirId) {
+                showExportToast('前后锚点必须在同一目录内');
+                return false;
+            }
+            const frontId = frontRef.anchorId || '';
+            const backId = backRef.anchorId || '';
+            const cmd = cfg.formatCommand || '';
+            const value = cfg.formatValue || '';
+            const methods = Array.isArray(cfg.formatMethods) ? cfg.formatMethods : [];
+            const fallbackText = cfg.formatFallbackText || '';
+
+            const applyInRoot = (root, commit) => {
+                const extracted = extractHtmlBetweenAnchors(root, frontId, backId);
+                if (extracted === null) return false;
+                const formatted = buildFormattedHtml(cmd, extracted, value, methods, fallbackText);
+                const ok = replaceHtmlBetweenAnchors(root, frontId, backId, formatted);
+                if (!ok) return false;
+                commit(root);
+                return true;
+            };
+
+            if (targetDir === currentDirId) {
+                const contentBody = document.getElementById('contentBody');
+                if (!contentBody) return false;
+                const ok = applyInRoot(contentBody, (root) => setDirHtmlById(targetDir, root.innerHTML, true));
+                if (!ok) {
+                    showExportToast('目标锚点范围无效，无法执行添加格式');
+                }
+                return ok;
+            }
+
+            const html = getDirHtmlById(targetDir);
+            const root = document.createElement('div');
+            root.innerHTML = html;
+            const ok = applyInRoot(root, (r) => setDirHtmlById(targetDir, r.innerHTML));
+            if (!ok) {
+                showExportToast('目标锚点范围无效，无法执行添加格式');
+            }
+            return ok;
+        }
+
+        function genNewDirId() {
+            let id = 'd_' + Math.random().toString(36).slice(2, 10) + '_' + Date.now().toString(36);
+            while (document.querySelector('[data-dir-id="' + escapeCssSelectorValue(id) + '"]')) {
+                id = 'd_' + Math.random().toString(36).slice(2, 10) + '_' + Date.now().toString(36);
+            }
+            return id;
+        }
+
+        function getRootIdForIndex(allMulu, index) {
+            if (!allMulu || index < 0 || index >= allMulu.length) return null;
+            for (let i = index; i >= 0; i--) {
+                if (getMuluLevel(allMulu[i]) === 0) {
+                    return allMulu[i].dataset.dirId || null;
+                }
+            }
+            return null;
+        }
+
+        function getRootColorForRootId(rootId) {
+            if (!rootId) return '#f9f9f9';
+            const hash = stringToHash(rootId);
+            const hue = hash % 360;
+            const saturation = 40 + (hash % 20);
+            const lightness = 88 + (hash % 5);
+            return 'hsl(' + hue + ', ' + saturation + '%, ' + lightness + '%)';
+        }
+
+        function buildMuluElement(dirId, name, level, hasChildren, rootId) {
+            const el = document.createElement('div');
+            el.classList.add('mulu');
+            if (hasChildren) {
+                el.classList.add('has-children', 'expanded');
+            }
+            el.dataset.dirId = dirId;
+            el.dataset.level = String(level);
+            const indent = 20 + (level * 20);
+            const bg = level === 0 ? '#f9f9f9' : getRootColorForRootId(rootId);
+            el.style.paddingLeft = indent + 'px';
+            el.style.backgroundColor = bg;
+
+            const toggleIcon = hasChildren
+                ? '<span class="toggle-icon"></span>'
+                : '<span class="bullet-icon"></span>';
+            el.innerHTML = toggleIcon + '<span class="mulu-text">' + escapeHtml(String(name || '未命名')) + '</span>';
+            return el;
+        }
+
+        function copyDirectoryDataFromDom(dirId, includeChildren) {
+            const allMulu = getMuluList();
+            const el = document.querySelector('[data-dir-id="' + escapeCssSelectorValue(dirId) + '"]');
+            if (!el) return null;
+            const idx = allMulu.indexOf(el);
+            if (idx < 0) return null;
+            const baseLevel = getMuluLevel(el);
+
+            const node = {
+                name: nameMap[dirId] || getMuluNameFromElement(el) || '未命名',
+                content: getDirHtmlById(dirId) || '',
+                children: []
+            };
+            if (!includeChildren) return node;
+
+            for (let i = idx + 1; i < allMulu.length; i++) {
+                const lvl = getMuluLevel(allMulu[i]);
+                if (lvl <= baseLevel) break;
+                if (lvl === baseLevel + 1) {
+                    const childId = allMulu[i].dataset.dirId;
+                    if (childId) {
+                        const child = copyDirectoryDataFromDom(childId, true);
+                        if (child) node.children.push(child);
+                    }
+                    i = getSubtreeLastIndex(allMulu, i);
+                }
+            }
+            return node;
+        }
+
+        function pasteDirectoryDataAfterDir(dirData, afterDirId) {
+            if (!dirData || typeof dirData !== 'object') return null;
+            const allMulu = getMuluList();
+            const afterEl = document.querySelector('[data-dir-id="' + escapeCssSelectorValue(afterDirId) + '"]');
+            if (!afterEl) return null;
+            const afterIndex = allMulu.indexOf(afterEl);
+            if (afterIndex < 0) return null;
+            const insertAfterIndex = getSubtreeLastIndex(allMulu, afterIndex);
+            const refNode = allMulu[insertAfterIndex];
+            const container = refNode.parentNode;
+            const nextSibling = refNode.nextSibling;
+            const baseLevel = getMuluLevel(afterEl);
+            const rootId = getRootIdForIndex(allMulu, afterIndex);
+
+            const created = [];
+            const createdIds = [];
+
+            function createSubtree(node, level, rootIdForChild) {
+                const newDirId = genNewDirId();
+                const children = Array.isArray(node.children) ? node.children : [];
+                const el = buildMuluElement(newDirId, String(node.name || '未命名'), level, children.length > 0, rootIdForChild);
+                created.push(el);
+                createdIds.push(newDirId);
+                nameMap[newDirId] = String(node.name || '未命名');
+                addDirToNameIndex(String(node.name || '未命名'), newDirId);
+                contentCache[newDirId] = String(node.content || '');
+
+                const nextRoot = (level === 0) ? newDirId : rootIdForChild;
+                for (let i = 0; i < children.length; i++) {
+                    createSubtree(children[i], level + 1, nextRoot);
+                }
+                return newDirId;
+            }
+
+            const topRootId = (baseLevel === 0) ? null : rootId;
+            const newTopId = createSubtree(dirData, baseLevel, topRootId);
+            for (let i = 0; i < created.length; i++) {
+                container.insertBefore(created[i], nextSibling);
+            }
+            refreshMuluVisibility();
+            return newTopId;
+        }
+
+        function deleteDirectoryFromDom(dirId) {
+            const allMulu = getMuluList();
+            const el = document.querySelector('[data-dir-id="' + escapeCssSelectorValue(dirId) + '"]');
+            if (!el) return false;
+            const idx = allMulu.indexOf(el);
+            if (idx < 0) return false;
+            const last = getSubtreeLastIndex(allMulu, idx);
+            const removedIds = [];
+            for (let i = idx; i <= last; i++) {
+                const id = allMulu[i].dataset.dirId;
+                if (id) removedIds.push(id);
+            }
+            for (let i = last; i >= idx; i--) {
+                allMulu[i].remove();
+            }
+            for (let i = 0; i < removedIds.length; i++) {
+                const id = removedIds[i];
+                const nm = nameMap[id];
+                if (nm) removeDirFromNameIndex(nm, id);
+                delete nameMap[id];
+                delete contentCache[id];
+            }
+            refreshMuluVisibility();
+            if (currentDirId && removedIds.includes(currentDirId)) {
+                const contentBody = document.getElementById('contentBody');
+                if (contentBody) {
+                    contentBody.innerHTML = '<div class="empty-state">点击左侧目录查看内容</div>';
+                }
+                const titleEl = document.getElementById('contentTitle');
+                if (titleEl) {
+                    titleEl.textContent = '选择一个目录查看内容';
+                }
+                if (currentSelected) {
+                    currentSelected.classList.remove('selected');
+                    currentSelected = null;
+                }
+                currentDirId = null;
+            }
+            return true;
+        }
+
+        function setExpandedRecursively(dirId, expanded) {
+            const allMulu = getMuluList();
+            const el = document.querySelector('[data-dir-id="' + escapeCssSelectorValue(dirId) + '"]');
+            if (!el) return false;
+            const idx = allMulu.indexOf(el);
+            if (idx < 0) return false;
+            const last = getSubtreeLastIndex(allMulu, idx);
+            for (let i = idx; i <= last; i++) {
+                const node = allMulu[i];
+                if (node.classList.contains('has-children')) {
+                    if (expanded) node.classList.add('expanded');
+                    else node.classList.remove('expanded');
+                }
+            }
+            refreshMuluVisibility();
+            return true;
+        }
+
+        function executeDirActionMethod(cfg) {
+            const frontRef = parseAnchorRef(cfg.frontAnchor);
+            if (!frontRef) {
+                showExportToast('前锚点无效，无法执行目录动作');
+                return false;
+            }
+            const targetDir = resolveDirIdFromRef(frontRef);
+            if (!targetDir) {
+                showExportToast('未能确定目标目录，无法执行目录动作');
+                return false;
+            }
+            const action = String(cfg.dirAction || '').trim();
+            if (!action) {
+                showExportToast('目录动作未设置');
+                return false;
+            }
+
+            if (action === '复制目录ID') {
+                copyTextToClipboard(targetDir).then(ok => {
+                    showExportToast(ok ? ('已复制目录ID：' + targetDir) : '复制失败，请手动复制');
+                });
+                return true;
+            }
+            if (action === '删除目录') {
+                const okConfirm = window.confirm('是否删除此目录？此操作不可撤销。');
+                if (!okConfirm) return false;
+                const ok = deleteDirectoryFromDom(targetDir);
+                if (!ok) {
+                    showExportToast('删除失败：未找到目标目录');
+                    return false;
+                }
+                return true;
+            }
+            if (action === '复制目录（含子目录）') {
+                const data = copyDirectoryDataFromDom(targetDir, true);
+                if (!data) {
+                    showExportToast('复制失败：未找到目标目录');
+                    return false;
+                }
+                soraDirClipboard = { data, includeChildren: true };
+                showExportToast('已复制目录（含子目录）');
+                return true;
+            }
+            if (action === '复制目录（不含子目录）') {
+                const data = copyDirectoryDataFromDom(targetDir, false);
+                if (!data) {
+                    showExportToast('复制失败：未找到目标目录');
+                    return false;
+                }
+                soraDirClipboard = { data, includeChildren: false };
+                showExportToast('已复制目录（不含子目录）');
+                return true;
+            }
+            if (action === '粘贴目录') {
+                if (!soraDirClipboard || !soraDirClipboard.data) {
+                    showExportToast('剪贴板为空，请先复制目录');
+                    return false;
+                }
+                const newId = pasteDirectoryDataAfterDir(soraDirClipboard.data, targetDir);
+                if (!newId) {
+                    showExportToast('粘贴失败');
+                    return false;
+                }
+                showExportToast('已粘贴目录' + (soraDirClipboard.includeChildren ? '（含子目录）' : ''));
+                return true;
+            }
+            if (action === '快速复制目录（含子目录）') {
+                const data = copyDirectoryDataFromDom(targetDir, true);
+                if (!data) {
+                    showExportToast('快速复制失败：未找到目标目录');
+                    return false;
+                }
+                soraDirClipboard = { data, includeChildren: true };
+                const newId = pasteDirectoryDataAfterDir(data, targetDir);
+                if (!newId) {
+                    showExportToast('快速复制失败：粘贴失败');
+                    return false;
+                }
+                showExportToast('已快速复制目录（含子目录）');
+                return true;
+            }
+            if (action === '快速复制目录（不含子目录）') {
+                const data = copyDirectoryDataFromDom(targetDir, false);
+                if (!data) {
+                    showExportToast('快速复制失败：未找到目标目录');
+                    return false;
+                }
+                soraDirClipboard = { data, includeChildren: false };
+                const newId = pasteDirectoryDataAfterDir(data, targetDir);
+                if (!newId) {
+                    showExportToast('快速复制失败：粘贴失败');
+                    return false;
+                }
+                showExportToast('已快速复制目录（不含子目录）');
+                return true;
+            }
+            if (action === '展开此目录') {
+                const ok = setExpandedRecursively(targetDir, true);
+                if (!ok) {
+                    showExportToast('展开失败');
+                    return false;
+                }
+                return true;
+            }
+            if (action === '收起此目录') {
+                const ok = setExpandedRecursively(targetDir, false);
+                if (!ok) {
+                    showExportToast('收起失败');
+                    return false;
+                }
+                return true;
+            }
+
+            showExportToast('未支持的目录动作：' + action);
+            return false;
+        }
+
+        function executeChangeContentMethod(cfg) {
+            const targetFrontRef = parseAnchorRef(cfg.frontAnchor);
+            if (!targetFrontRef) {
+                showExportToast('前锚点无效，无法执行更换内容');
+                return false;
+            }
+            const targetDir = resolveDirIdFromRef(targetFrontRef);
+            if (!targetDir) {
+                showExportToast('未能确定目标目录，无法执行更换内容');
+                return false;
+            }
+
+            const targetBackRef = parseAnchorRef(cfg.backAnchor);
+            if (cfg.backAnchor && targetBackRef) {
+                const backDirId = resolveDirIdFromRef(targetBackRef);
+                if (backDirId && backDirId !== targetDir) {
+                    showExportToast('后锚点必须与前锚点在同一目录内');
+                    return false;
+                }
+            }
+
+            let replacementHtml = '';
+            if (cfg.replaceSourceType === 'text') {
+                replacementHtml = escapeHtml(cfg.replaceText || '');
+            } else {
+                const srcFrontRef = parseAnchorRef(cfg.replaceFromFrontAnchor);
+                if (!srcFrontRef) {
+                    showExportToast('替换来源前锚点无效，无法执行更换内容');
+                    return false;
+                }
+                const srcDir = resolveDirIdFromRef(srcFrontRef);
+                if (!srcDir) {
+                    showExportToast('未能确定替换来源目录，无法执行更换内容');
+                    return false;
+                }
+                const srcBackRef = parseAnchorRef(cfg.replaceFromBackAnchor);
+                if (cfg.replaceFromBackAnchor && srcBackRef) {
+                    const backDirId = resolveDirIdFromRef(srcBackRef);
+                    if (backDirId && backDirId !== srcDir) {
+                        showExportToast('替换来源后锚点必须与前锚点在同一目录内');
+                        return false;
+                    }
+                }
+                const srcHtml = getDirHtmlById(srcDir);
+                const srcRoot = document.createElement('div');
+                srcRoot.innerHTML = srcHtml;
+                const extracted = extractHtmlBetweenAnchors(
+                    srcRoot,
+                    srcFrontRef.anchorId || '',
+                    srcBackRef && srcBackRef.anchorId ? srcBackRef.anchorId : ''
+                );
+                if (extracted === null) {
+                    showExportToast('无法从替换来源锚点范围提取内容');
+                    return false;
+                }
+                replacementHtml = extracted;
+            }
+
+            if (targetDir === currentDirId) {
+                const contentBody = document.getElementById('contentBody');
+                if (!contentBody) return false;
+                const ok = replaceHtmlBetweenAnchors(
+                    contentBody,
+                    targetFrontRef.anchorId || '',
+                    targetBackRef && targetBackRef.anchorId ? targetBackRef.anchorId : '',
+                    replacementHtml
+                );
+                if (!ok) {
+                    showExportToast('目标锚点范围无效，无法执行更换内容');
+                    return false;
+                }
+                setDirHtmlById(targetDir, contentBody.innerHTML, true);
+                return true;
+            }
+
+            const targetHtml = getDirHtmlById(targetDir);
+            const targetRoot = document.createElement('div');
+            targetRoot.innerHTML = targetHtml;
+            const ok = replaceHtmlBetweenAnchors(
+                targetRoot,
+                targetFrontRef.anchorId || '',
+                targetBackRef && targetBackRef.anchorId ? targetBackRef.anchorId : '',
+                replacementHtml
+            );
+            if (!ok) {
+                showExportToast('目标锚点范围无效，无法执行更换内容');
+                return false;
+            }
+            setDirHtmlById(targetDir, targetRoot.innerHTML);
+            return true;
+        }
+
+        function parseAnchorRef(input) {
+            const trimmed = String(input || '').trim();
+            if (!trimmed) return null;
+            const lower = trimmed.toLowerCase();
+            const build = (dirId, dirName, anchorId) => {
+                const aid = anchorId ? normalizeAnchorId(anchorId) : '';
+                return {
+                    dirId: dirId || null,
+                    dirName: dirName || null,
+                    anchorId: aid || ''
+                };
+            };
+            if (lower.startsWith('dir:') || lower.startsWith('目录:')) {
+                const prefixLen = trimmed.indexOf(':') + 1;
+                const rest = trimmed.substring(prefixLen);
+                const hashIndex = rest.indexOf('#');
+                const mainPart = (hashIndex >= 0 ? rest.substring(0, hashIndex) : rest).trim();
+                const anchorPart = (hashIndex >= 0 ? rest.substring(hashIndex + 1) : '').trim();
+                return build(mainPart, null, anchorPart);
+            }
+            if (lower.startsWith('name:') || lower.startsWith('目录名:')) {
+                const prefixLen = trimmed.indexOf(':') + 1;
+                const rest = trimmed.substring(prefixLen);
+                const hashIndex = rest.indexOf('#');
+                const mainPart = (hashIndex >= 0 ? rest.substring(0, hashIndex) : rest).trim();
+                const anchorPart = (hashIndex >= 0 ? rest.substring(hashIndex + 1) : '').trim();
+                return build(null, mainPart, anchorPart);
+            }
+            if (trimmed.startsWith('#')) {
+                return build(null, null, trimmed.substring(1));
+            }
+            return build(null, null, trimmed);
+        }
+
+        function resolveDirIdFromRef(ref) {
+            if (!ref) return null;
+            if (ref.dirId) return ref.dirId;
+            if (ref.dirName) {
+                return resolveDirIdFromName(ref.dirName);
+            }
+            return currentDirId;
+        }
+
+        function getDirHtmlById(dirId) {
+            if (!dirId) return '';
+            const cachedHtml = contentCache[dirId];
+            if (cachedHtml) return cachedHtml;
+            const html = getContent(dirId);
+            contentCache[dirId] = html;
+            return html;
+        }
+
+        function setDirHtmlById(dirId, html, skipDomUpdate) {
+            if (!dirId) return;
+            contentCache[dirId] = html;
+            if (skipDomUpdate) return;
+            if (currentDirId && currentDirId === dirId) {
+                const contentBody = document.getElementById('contentBody');
+                if (contentBody) {
+                    contentBody.innerHTML = html || '<div class="empty-state">此目录暂无内容</div>';
+                    assignHeadingAutoIds(contentBody);
+                    initCodeBlocks();
+                    initImageViewer();
+                    initArchiveDownloads();
+                    setTimeout(() => {
+                        loadLazyMedia();
+                    }, 100);
+                }
+            }
+        }
+
+        function findAnchorElementInRoot(root, anchorId) {
+            if (!root || !anchorId) return null;
+            const id = normalizeAnchorId(anchorId);
+            if (!id) return null;
+            const selector1 = '#' + escapeCssSelectorValue(id);
+            let el = root.querySelector(selector1);
+            if (!el) {
+                const selector2 = '.sora-anchor[data-sora-anchor="true"][data-anchor-name="' + escapeCssSelectorValue(id) + '"]';
+                el = root.querySelector(selector2);
+                if (!el) {
+                    console.log('[Sora方法] 找不到锚点, id:', id, '选择器:', selector1, selector2);
+                }
+            }
+            return el;
+        }
+
+        function extractHtmlBetweenAnchors(root, frontId, backId) {
+            if (!root) return null;
+            if (!frontId && !backId) {
+                return root.innerHTML;
+            }
+            const range = document.createRange();
+            try {
+                if (frontId) {
+                    const frontEl = findAnchorElementInRoot(root, frontId);
+                    if (!frontEl) return null;
+                    range.setStartAfter(frontEl);
+                } else {
+                    range.setStart(root, 0);
+                }
+                if (backId) {
+                    const backEl = findAnchorElementInRoot(root, backId);
+                    if (!backEl) return null;
+                    range.setEndBefore(backEl);
+                } else {
+                    range.setEnd(root, root.childNodes.length);
+                }
+            } catch (e) {
+                return null;
+            }
+            const frag = range.cloneContents();
+            const div = document.createElement('div');
+            div.appendChild(frag);
+            return div.innerHTML;
+        }
+
+        function replaceHtmlBetweenAnchors(root, frontId, backId, replacementHtml) {
+            if (!root) return false;
+            const range = document.createRange();
+            try {
+                if (frontId) {
+                    const frontEl = findAnchorElementInRoot(root, frontId);
+                    if (!frontEl) return false;
+                    range.setStartAfter(frontEl);
+                } else {
+                    range.setStart(root, 0);
+                }
+                if (backId) {
+                    const backEl = findAnchorElementInRoot(root, backId);
+                    if (!backEl) return false;
+                    range.setEndBefore(backEl);
+                } else {
+                    range.setEnd(root, root.childNodes.length);
+                }
+            } catch (e) {
+                return false;
+            }
+            range.deleteContents();
+            const div = document.createElement('div');
+            div.innerHTML = replacementHtml;
+            const frag = document.createDocumentFragment();
+            while (div.firstChild) {
+                frag.appendChild(div.firstChild);
+            }
+            range.insertNode(frag);
+            return true;
+        }
+
         function handleInternalLinkClick(e) {
             const a = e.target && e.target.closest ? e.target.closest('a') : null;
             if (!a) return;
             const href = a.getAttribute('href') || '';
             const soraType = a.getAttribute('data-sora-link') || '';
+
             if (!href) return;
+
+            if (soraType === 'method') {
+                e.preventDefault();
+                e.stopPropagation();
+                executeMethodsForElement(a, 'click');
+                return;
+            }
 
             if (href.startsWith('#') || soraType === 'anchor') {
                 e.preventDefault();
                 e.stopPropagation();
                 scrollToAnchorInContent(href);
-                return;
             }
 
             if (href.toLowerCase().startsWith('sora-dir:') || soraType === 'dir') {
@@ -2447,12 +3695,13 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
             if (event) {
                 event.stopPropagation();
             }
-            const element = document.querySelector('[data-dir-id="' + dirId + '"]');
+            const element = document.querySelector('[data-dir-id="' + escapeCssSelectorValue(dirId) + '"]');
             if (element && element.classList.contains('has-children')) {
                 element.classList.toggle('expanded');
                 updateChildrenVisibility(dirId, element.classList.contains('expanded'));
             }
         }
+
         function updateChildrenVisibility(parentId, show) {
             const allMulu = Array.from(document.querySelectorAll('.mulu'));
             const parentEl = document.querySelector('[data-dir-id="' + parentId + '"]');
@@ -2479,6 +3728,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                 }
             }
         }
+
         function findDirectParent(element, allMulu, currentIndex) {
             const currentLevel = parseInt(element.dataset.level) || 0;
             for (let i = currentIndex - 1; i >= 0; i--) {
@@ -2489,6 +3739,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
             }
             return null;
         }
+
         (function() {
             const mediaDataScript = document.getElementById('mediaData');
             if (mediaDataScript) {
@@ -2499,6 +3750,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                 }
             }
         })();
+
         function getContent(dirId) {
             if (contentCache[dirId] !== undefined) {
                 return contentCache[dirId];
@@ -2515,6 +3767,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
             }
             return '';
         }
+
         let mediaObserver = null;
         function initMediaObserver() {
             if (typeof IntersectionObserver === 'undefined') {
@@ -2544,6 +3797,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                 });
             }
         }
+
         async function loadSingleMedia(media) {
             if (media.hasAttribute('data-loading-media')) {
                 return;
@@ -2663,7 +3917,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                     video.style.cssText = 'display: block; margin: 1em auto; max-width: 640px; max-height: 360px; width: auto; height: auto; border-radius: 5px;';
                     const originalTag = mediaInfo.originalTag;
                     if (originalTag && originalTag.includes('title=')) {
-                        const titleMatch = originalTag.match(/\stitle=["']([^"']*)["']/);
+                        const titleMatch = originalTag.match(/\\stitle=["']([^"']*)["']/);
                         if (titleMatch) video.title = titleMatch[1];
                     }
                     video.onloadedmetadata = () => {
@@ -2683,6 +3937,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                 });
             }
         }
+
         async function loadLazyMedia() {
             const contentBody = document.getElementById('contentBody');
             if (!contentBody) return;
@@ -2696,6 +3951,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                 console.error('加载媒体时出错:', err);
             });
         }
+
         async function loadArchiveData(placeholderId) {
             if (!mediaDataMap[placeholderId] || mediaDataMap[placeholderId].type !== 'archive') {
                 return null;
@@ -2801,6 +4057,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
             }
             return null;
         }
+
         document.querySelectorAll('.mulu').forEach(el => {
             const dirId = el.dataset.dirId;
             const nameEl = el.querySelector('.mulu-text');
@@ -2811,9 +4068,40 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
         });
 
         (function() {
+            const container = document.querySelector('.sidebar-content-inner') || document.querySelector('.sidebar-content') || document.querySelector('.sidebar');
+            if (!container) return;
+            container.addEventListener('click', function(e) {
+                const toggle = e.target && e.target.closest ? e.target.closest('.toggle-icon') : null;
+                if (toggle) {
+                    const muluEl = toggle.closest ? toggle.closest('.mulu') : null;
+                    if (!muluEl) return;
+                    const id = muluEl.dataset ? (muluEl.dataset.dirId || '') : '';
+                    toggleDirectory(id, e);
+                    return;
+                }
+                const muluEl = e.target && e.target.closest ? e.target.closest('.mulu') : null;
+                if (!muluEl) return;
+                const id = muluEl.dataset ? (muluEl.dataset.dirId || '') : '';
+                selectDirectory(id, false);
+            });
+        })();
+
+        (function() {
             const contentBody = document.getElementById('contentBody');
             if (contentBody) {
                 contentBody.addEventListener('click', handleInternalLinkClick);
+                contentBody.addEventListener('mouseover', function(e) {
+                    const a = e.target && e.target.closest ? e.target.closest('a[data-sora-link="method"]') : null;
+                    if (!a) return;
+                    const methods = readMethodsFromElement(a);
+                    if (!methods || methods.length === 0) return;
+                    if (!methods.some(m => (m.trigger || 'click') === 'hover')) return;
+                    const now = Date.now();
+                    const last = soraMethodHoverCooldownMap.get(a) || 0;
+                    if (now - last < 400) return;
+                    soraMethodHoverCooldownMap.set(a, now);
+                    executeMethodsForElement(a, 'hover');
+                });
             }
         })();
 
@@ -2954,16 +4242,21 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
         });
         window.selectDirectory = selectDirectory;
         window.toggleDirectory = toggleDirectory;
-        ${firstDirId ? `selectDirectory('${firstDirId}', false);` : ''}
+        const defaultDirId = ${JSON.stringify(firstDirId || '').replace(/<\/script>/gi, '<\\/script')};
+        if (defaultDirId) {
+            selectDirectory(defaultDirId, false);
+        }
     </script>
 </body>
 </html>`;
+
     // 如果加密，包装 HTML
     let finalContent = htmlContent;
     if (encrypt && password) {
         const encryptedHtml = await encryptData(htmlContent, password);
         finalContent = generateEncryptedHtmlWrapper(baseName, encryptedHtml);
     }
+
     // 创建并下载文件
     const blob = new Blob([finalContent], { type: 'text/html;charset=utf-8' });
     const objectURL = URL.createObjectURL(blob);

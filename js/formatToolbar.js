@@ -267,6 +267,7 @@ async function editAnchorElement(anchorEl) {
     const val = await customPrompt('编辑锚点名:', current);
     if (!val) return;
     const name = normalizeAnchorName(val);
+
     if (!name) return;
     anchorEl.setAttribute('data-anchor-name', name);
     anchorEl.setAttribute('data-sora-anchor', 'true');
@@ -274,6 +275,522 @@ async function editAnchorElement(anchorEl) {
         anchorEl.id = generateUniqueAnchorDomId(name);
     }
     syncPreviewToTextarea();
+}
+
+function escapeCssSelectorValue(value) {
+    if (value === null || value === undefined) return '';
+    if (window.CSS && typeof window.CSS.escape === 'function') {
+        return window.CSS.escape(String(value));
+    }
+    const backslash = String.fromCharCode(92);
+    return String(value).replace(/[^a-zA-Z0-9_\u00A0-\uFFFF-]/g, function(ch) {
+        const hex = ch.charCodeAt(0).toString(16);
+        return backslash + hex + ' ';
+    });
+}
+
+function safeParseJson(raw, fallback) {
+    try {
+        if (raw === null || raw === undefined) return fallback;
+        const text = String(raw).trim();
+        if (!text) return fallback;
+        return JSON.parse(text);
+    } catch (e) {
+        return fallback;
+    }
+}
+
+function ensureMethodId(cfg) {
+    if (!cfg || typeof cfg !== 'object') return null;
+    if (cfg.methodId) return cfg.methodId;
+    cfg.methodId = 'm_' + Date.now() + '_' + generateShortRandomId(6);
+    return cfg.methodId;
+}
+
+function readMethodsFromElement(a) {
+    if (!a || !a.getAttribute) return [];
+    const raw = a.getAttribute('data-sora-methods') || '';
+    const parsed = safeParseJson(raw, []);
+    const arr = Array.isArray(parsed) ? parsed : [];
+    let changed = false;
+    for (let i = 0; i < arr.length; i++) {
+        const cfg = arr[i];
+        if (!cfg || typeof cfg !== 'object') continue;
+        if (!cfg.trigger) {
+            cfg.trigger = 'click';
+            changed = true;
+        }
+        if (!cfg.methodId) {
+            ensureMethodId(cfg);
+            changed = true;
+        }
+    }
+    if (changed) {
+        writeMethodsToElement(a, arr);
+    }
+    return arr;
+}
+
+function writeMethodsToElement(a, methods) {
+    if (!a || !a.setAttribute) return;
+    const arr = Array.isArray(methods) ? methods : [];
+    for (let i = 0; i < arr.length; i++) {
+        ensureMethodId(arr[i]);
+    }
+    a.setAttribute('data-sora-link', 'method');
+    a.setAttribute('href', '#');
+    a.setAttribute('data-sora-methods', JSON.stringify(arr));
+}
+
+function readExecutedMethodIdsFromElement(a) {
+    if (!a || !a.getAttribute) return new Set();
+    const raw = a.getAttribute('data-sora-methods-executed') || '';
+    const parsed = safeParseJson(raw, []);
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter(v => typeof v === 'string' && v));
+}
+
+function writeExecutedMethodIdsToElement(a, idSet) {
+    if (!a || !a.setAttribute) return;
+    const arr = Array.from(idSet || []);
+    a.setAttribute('data-sora-methods-executed', JSON.stringify(arr));
+}
+
+function buildTriggerLabel(trigger) {
+    switch (trigger) {
+        case 'open':
+            return '打开时';
+        case 'enter_dir':
+            return '进入此目录时';
+        case 'hover':
+            return '悬浮时';
+        case 'click':
+        default:
+            return '点击时';
+    }
+}
+
+function buildMethodLabel(cfg) {
+    if (!cfg || typeof cfg !== 'object') return '方法';
+    const type = cfg.methodType || '未设置';
+    const triggerLabel = buildTriggerLabel(cfg.trigger || 'click');
+    const onceLabel = cfg.once ? '一次性' : '可重复';
+    const front = cfg.frontAnchor || '';
+    const back = cfg.backAnchor || '';
+    const rangeLabel = back ? (front + ' ~ ' + back) : (front || '未设置');
+    return type + ' / ' + triggerLabel + ' / ' + onceLabel + ' / ' + rangeLabel;
+}
+
+function parseAnchorRef(input) {
+    const trimmed = String(input || '').trim();
+    if (!trimmed) return null;
+    const lower = trimmed.toLowerCase();
+    const build = (dirId, dirName, anchorId) => {
+        const aid = anchorId ? normalizeAnchorName(anchorId) : '';
+        return {
+            dirId: dirId || null,
+            dirName: dirName || null,
+            anchorId: aid || ''
+        };
+    };
+    if (lower.startsWith('dir:') || lower.startsWith('目录:')) {
+        const prefixLen = trimmed.indexOf(':') + 1;
+        const rest = trimmed.substring(prefixLen);
+        const hashIndex = rest.indexOf('#');
+        const mainPart = (hashIndex >= 0 ? rest.substring(0, hashIndex) : rest).trim();
+        const anchorPart = (hashIndex >= 0 ? rest.substring(hashIndex + 1) : '').trim();
+        return build(mainPart, null, anchorPart);
+    }
+    if (lower.startsWith('name:') || lower.startsWith('目录名:')) {
+        const prefixLen = trimmed.indexOf(':') + 1;
+        const rest = trimmed.substring(prefixLen);
+        const hashIndex = rest.indexOf('#');
+        const mainPart = (hashIndex >= 0 ? rest.substring(0, hashIndex) : rest).trim();
+        const anchorPart = (hashIndex >= 0 ? rest.substring(hashIndex + 1) : '').trim();
+        return build(null, mainPart, anchorPart);
+    }
+    if (trimmed.startsWith('#')) {
+        return build(null, null, trimmed.substring(1));
+    }
+    return build(null, null, trimmed);
+}
+
+function resolveDirIdFromRef(ref) {
+    if (!ref) return null;
+    if (ref.dirId) return ref.dirId;
+    const name = (ref.dirName || '').trim();
+    if (!name) return null;
+    if (typeof mulufile === 'undefined' || !Array.isArray(mulufile)) return null;
+    let foundId = null;
+    let duplicate = 0;
+    for (let i = 0; i < mulufile.length; i++) {
+        const item = mulufile[i];
+        if (item && item.length === 4 && item[1] === name) {
+            duplicate++;
+            if (!foundId) foundId = item[2];
+        }
+    }
+    if (duplicate > 1 && typeof showToast === 'function') {
+        showToast('存在重复目录名，已使用第一个匹配项：' + name, 'warning', 2500);
+    }
+    return foundId;
+}
+
+function getCurrentDirIdForEditor() {
+    if (!currentMuluName) return null;
+    const el = document.getElementById(currentMuluName);
+    if (!el) return null;
+    return el.getAttribute('data-dir-id') || null;
+}
+
+function getDirHtmlById(dirId) {
+    if (!dirId) return '';
+    if (typeof getMulufileByDirId === 'function') {
+        const data = getMulufileByDirId(dirId);
+        return data ? (data[3] || '') : '';
+    }
+    if (typeof mulufile !== 'undefined' && Array.isArray(mulufile)) {
+        for (let i = 0; i < mulufile.length; i++) {
+            const item = mulufile[i];
+            if (item && item.length === 4 && item[2] === dirId) {
+                return item[3] || '';
+            }
+        }
+    }
+    return '';
+}
+
+async function setDirHtmlById(dirId, html) {
+    if (!dirId) return;
+    const selector = '.mulu[data-dir-id="' + escapeCssSelectorValue(dirId) + '"]';
+    const el = document.querySelector(selector);
+    if (el && typeof updateMulufileData === 'function') {
+        updateMulufileData(el, html);
+    } else if (typeof getMulufileByDirId === 'function') {
+        const data = getMulufileByDirId(dirId);
+        if (data) {
+            data[3] = html;
+            if (typeof markUnsavedChanges === 'function') {
+                markUnsavedChanges();
+            }
+        }
+    }
+    const currentDirId = getCurrentDirIdForEditor();
+    if (currentDirId && currentDirId === dirId && typeof updateMarkdownPreview === 'function') {
+        isUpdating = true;
+        jiedianwords.value = html;
+        await updateMarkdownPreview();
+        isUpdating = false;
+    }
+}
+
+function findAnchorElementInRoot(root, anchorId) {
+    if (!root || !anchorId) return null;
+    const id = normalizeAnchorName(anchorId);
+    if (!id) return null;
+    let el = root.querySelector('#' + escapeCssSelectorValue(id));
+    if (!el) {
+        el = root.querySelector('.sora-anchor[data-sora-anchor="true"][data-anchor-name="' + escapeCssSelectorValue(id) + '"]');
+    }
+    return el;
+}
+
+function extractHtmlBetweenAnchors(root, frontId, backId) {
+    if (!root) return null;
+    if (!frontId && !backId) {
+        return root.innerHTML;
+    }
+
+    const range = document.createRange();
+    try {
+        if (frontId) {
+            const frontEl = findAnchorElementInRoot(root, frontId);
+            if (!frontEl) return null;
+            range.setStartAfter(frontEl);
+        } else {
+            range.setStart(root, 0);
+        }
+
+        if (backId) {
+            const backEl = findAnchorElementInRoot(root, backId);
+            if (!backEl) return null;
+            range.setEndBefore(backEl);
+        } else {
+            range.setEnd(root, root.childNodes.length);
+        }
+    } catch (e) {
+        return null;
+    }
+    const frag = range.cloneContents();
+    const div = document.createElement('div');
+    div.appendChild(frag);
+    return div.innerHTML;
+}
+
+function replaceHtmlBetweenAnchors(root, frontId, backId, replacementHtml) {
+    if (!root) return false;
+    const range = document.createRange();
+    try {
+        if (frontId) {
+            const frontEl = findAnchorElementInRoot(root, frontId);
+            if (!frontEl) return false;
+            range.setStartAfter(frontEl);
+        } else {
+            range.setStart(root, 0);
+        }
+
+        if (backId) {
+            const backEl = findAnchorElementInRoot(root, backId);
+            if (!backEl) return false;
+            range.setEndBefore(backEl);
+        } else {
+            range.setEnd(root, root.childNodes.length);
+        }
+    } catch (e) {
+        return false;
+    }
+    range.deleteContents();
+
+    const div = document.createElement('div');
+    div.innerHTML = replacementHtml;
+    const frag = document.createDocumentFragment();
+    while (div.firstChild) {
+        frag.appendChild(div.firstChild);
+    }
+    range.insertNode(frag);
+    return true;
+}
+
+async function promptMethodConfig(existing) {
+    const triggerOptions = [
+        { value: 'open', label: '打开时' },
+        { value: 'enter_dir', label: '进入此目录时' },
+        { value: 'click', label: '点击时' },
+        { value: 'hover', label: '悬浮时' }
+    ];
+    const cfg = existing && typeof existing === 'object' ? JSON.parse(JSON.stringify(existing)) : {};
+    ensureMethodId(cfg);
+    const trigger = await customSelect('选择触发方式：', triggerOptions, cfg.trigger || 'click', '方法');
+    if (trigger === null) return null;
+    cfg.trigger = trigger;
+    const front = await customPrompt('输入前锚点（可写 dir:目录ID#锚点 或 name:目录名#锚点 或 #锚点）：', cfg.frontAnchor || '', '方法');
+    if (front === null) return null;
+    if (!String(front).trim()) return null;
+    cfg.frontAnchor = String(front).trim();
+    const back = await customPrompt('输入后锚点（可为空）：', cfg.backAnchor || '', '方法');
+    if (back === null) return null;
+    cfg.backAnchor = String(back || '').trim();
+
+    const frontRef = parseAnchorRef(cfg.frontAnchor);
+    if (!frontRef) return null;
+    const backRef = cfg.backAnchor ? parseAnchorRef(cfg.backAnchor) : null;
+    const isRangeLevel = !!(cfg.backAnchor && String(cfg.backAnchor).trim());
+    const isDirLevel = !isRangeLevel;
+
+    if (isDirLevel) {
+        const isDirRef = !!((frontRef.dirId || '').trim() || (frontRef.dirName || '').trim());
+        if (!isDirRef || (frontRef.anchorId || '').trim()) {
+            if (typeof showToast === 'function') {
+                showToast('仅有前锚点时，前锚点必须指向目录，例如 dir:目录ID 或 name:目录名', 'warning', 3000);
+            }
+            return null;
+        }
+    } else {
+        const frontDirId = resolveDirIdFromRef(frontRef);
+        const backDirId = backRef ? resolveDirIdFromRef(backRef) : null;
+        if (!frontDirId || !backDirId || frontDirId !== backDirId) {
+            if (typeof showToast === 'function') {
+                showToast('前后锚点必须在同一目录内', 'warning', 2500);
+            }
+            return null;
+        }
+    }
+
+    const methodTypeOptionsAll = [
+        { value: '隐藏', label: '隐藏' },
+        { value: '隐藏（初始不隐藏）', label: '隐藏（初始不隐藏）' },
+        { value: '显示', label: '显示' },
+        { value: '切换', label: '切换' },
+        { value: '更换内容', label: isDirLevel ? '更换内容（目录：重命名）' : '更换内容' },
+        { value: '添加格式', label: '添加格式' },
+        { value: '目录右键动作', label: '目录右键动作' }
+    ];
+    const methodTypeOptions = methodTypeOptionsAll.filter(it => {
+        if (it.value === '添加格式') return !isDirLevel;
+        return true;
+    });
+    const defaultType = methodTypeOptions.some(o => o.value === (cfg.methodType || '')) ? (cfg.methodType || '') : (isDirLevel ? '隐藏' : '更换内容');
+    const methodType = await customSelect('选择方法类型：', methodTypeOptions, defaultType, '方法');
+    if (methodType === null) return null;
+    cfg.methodType = methodType;
+    const once = await customConfirm('是否只执行一次？', '是', '否', '方法');
+    cfg.once = !!once;
+    if (cfg.methodType === '更换内容') {
+        if (isDirLevel) {
+            const newName = await customPrompt('输入目录新名称：', cfg.renameTo || '', '更换内容');
+            if (newName === null) return null;
+            if (!String(newName).trim()) return null;
+            cfg.renameTo = String(newName).trim();
+            cfg.replaceSourceType = '';
+            cfg.replaceFromFrontAnchor = '';
+            cfg.replaceFromBackAnchor = '';
+            cfg.replaceText = '';
+            return cfg;
+        }
+        const sourceOptions = [
+            { value: 'anchor', label: '用锚点范围/目录内容替换' },
+            { value: 'text', label: '直接输入替换文本' }
+        ];
+        const sourceType = await customSelect('选择替换来源：', sourceOptions, cfg.replaceSourceType || 'anchor', '更换内容');
+        if (sourceType === null) return null;
+        cfg.replaceSourceType = sourceType;
+        if (sourceType === 'anchor') {
+            const srcFront = await customPrompt('输入替换来源前锚点（必填）：', (cfg.replaceFromFrontAnchor || ''), '更换内容');
+            if (srcFront === null) return null;
+            if (!String(srcFront).trim()) return null;
+            cfg.replaceFromFrontAnchor = String(srcFront).trim();
+            const srcBack = await customPrompt('输入替换来源后锚点（可为空）：', (cfg.replaceFromBackAnchor || ''), '更换内容');
+            if (srcBack === null) return null;
+            cfg.replaceFromBackAnchor = String(srcBack || '').trim();
+            cfg.replaceText = '';
+        } else {
+            const text = await customPrompt('输入替换文本：', (cfg.replaceText || ''), '更换内容');
+            if (text === null) return null;
+            cfg.replaceText = String(text || '');
+            cfg.replaceFromFrontAnchor = '';
+            cfg.replaceFromBackAnchor = '';
+        }
+    }
+    if (cfg.methodType === '添加格式') {
+        if (isDirLevel) {
+            if (typeof showToast === 'function') {
+                showToast('仅有前锚点（目录级）不允许使用“添加格式”', 'warning', 2500);
+            }
+            return null;
+        }
+        const formatCommandOptions = [
+            { value: 'bold', label: '粗体' },
+            { value: 'italic', label: '斜体' },
+            { value: 'underline', label: '下划线' },
+            { value: 'strikethrough', label: '删除线' },
+            { value: 'highlight', label: '高亮' },
+            { value: 'spoiler', label: '防剧透' },
+            { value: 'superscript', label: '上标' },
+            { value: 'subscript', label: '下标' },
+            { value: 'code', label: '行内代码' },
+            { value: 'color', label: '文字颜色' },
+            { value: 'background-color', label: '背景颜色' },
+            { value: 'link', label: '链接' },
+            { value: 'method', label: '方法（嵌套）' }
+        ];
+        const cmd = await customSelect('选择要添加的格式：', formatCommandOptions, cfg.formatCommand || 'bold', '添加格式');
+        if (cmd === null) return null;
+        cfg.formatCommand = cmd;
+        cfg.formatValue = '';
+        cfg.formatMethods = [];
+        cfg.formatFallbackText = '';
+
+        if (cmd === 'color') {
+            const color = await customPrompt('输入颜色（例如 #ff0000 或 rgb(255,0,0)）：', cfg.formatValue || '#000000', '添加格式');
+            if (color === null) return null;
+            if (!String(color).trim()) return null;
+            cfg.formatValue = String(color).trim();
+        } else if (cmd === 'background-color') {
+            const color = await customPrompt('输入背景颜色（例如 #ffff00）：', cfg.formatValue || '#ffff00', '添加格式');
+            if (color === null) return null;
+            if (!String(color).trim()) return null;
+            cfg.formatValue = String(color).trim();
+        } else if (cmd === 'link') {
+            const href = await customPrompt('输入链接地址（支持 #锚点、dir:目录ID#锚点、name:目录名#锚点、http/https）：', cfg.formatValue || 'https://', '添加格式');
+            if (href === null) return null;
+            if (!String(href).trim()) return null;
+            cfg.formatValue = String(href).trim();
+        } else if (cmd === 'method') {
+            const methods = [];
+            while (true) {
+                const m = await promptMethodConfig(null);
+                if (!m) return null;
+                methods.push(m);
+                const more = await customConfirm('是否继续添加一个嵌套方法？', '继续', '结束', '添加格式');
+                if (!more) break;
+            }
+            cfg.formatMethods = methods;
+            const fallback = await customPrompt('当锚点范围内没有内容时，方法显示文本：', cfg.formatFallbackText || '方法', '添加格式');
+            if (fallback === null) return null;
+            cfg.formatFallbackText = String(fallback || '').trim();
+        }
+    }
+    if (cfg.methodType === '目录右键动作') {
+        const actionOptions = [
+            { value: '复制目录ID', label: '复制目录ID' },
+            { value: '删除目录', label: '删除目录' },
+            { value: '复制目录（含子目录）', label: '复制目录（含子目录）' },
+            { value: '复制目录（不含子目录）', label: '复制目录（不含子目录）' },
+            { value: '粘贴目录', label: '粘贴目录' },
+            { value: '快速复制目录（含子目录）', label: '快速复制目录（含子目录）' },
+            { value: '快速复制目录（不含子目录）', label: '快速复制目录（不含子目录）' },
+            { value: '展开此目录', label: '展开此目录' },
+            { value: '收起此目录', label: '收起此目录' }
+        ];
+        const act = await customSelect('选择目录动作：', actionOptions, cfg.dirAction || '复制目录ID', '目录右键动作');
+        if (act === null) return null;
+        cfg.dirAction = act;
+    }
+    return cfg;
+}
+
+async function editMethodElement(a) {
+    const methods = readMethodsFromElement(a);
+    const options = [];
+    for (let i = 0; i < methods.length; i++) {
+        options.push({ value: 'edit_' + i, label: '编辑：' + buildMethodLabel(methods[i]) });
+    }
+    options.push({ value: 'add', label: '添加方法' });
+    if (methods.length > 0) {
+        options.push({ value: 'delete', label: '删除方法' });
+        options.push({ value: 'clear', label: '清空所有方法' });
+    }
+    const action = await customSelect('选择操作：', options, methods.length > 0 ? 'edit_0' : 'add', '方法');
+    if (action === null) return;
+    if (action === 'add') {
+        const cfg = await promptMethodConfig(null);
+        if (!cfg) return;
+        methods.push(cfg);
+        writeMethodsToElement(a, methods);
+        syncPreviewToTextarea();
+        return;
+    }
+    if (action === 'clear') {
+        const ok = await customConfirm('确定清空所有方法？', '确定', '取消', '方法');
+        if (!ok) return;
+        writeMethodsToElement(a, []);
+        a.removeAttribute('data-sora-methods-executed');
+        syncPreviewToTextarea();
+        return;
+    }
+    if (action === 'delete') {
+        const delOptions = methods.map((m, idx) => ({ value: String(idx), label: buildMethodLabel(m) }));
+        const idxStr = await customSelect('选择要删除的方法：', delOptions, '0', '方法');
+        if (idxStr === null) return;
+        const idx = parseInt(idxStr, 10);
+        if (isNaN(idx) || idx < 0 || idx >= methods.length) return;
+        const ok = await customConfirm('确定删除此方法？', '确定', '取消', '方法');
+        if (!ok) return;
+        methods.splice(idx, 1);
+        writeMethodsToElement(a, methods);
+        syncPreviewToTextarea();
+        return;
+    }
+    if (String(action).startsWith('edit_')) {
+        const idx = parseInt(String(action).substring('edit_'.length), 10);
+        if (isNaN(idx) || idx < 0 || idx >= methods.length) return;
+        const updated = await promptMethodConfig(methods[idx]);
+        if (!updated) return;
+        methods[idx] = updated;
+        writeMethodsToElement(a, methods);
+        syncPreviewToTextarea();
+        return;
+    }
 }
 
 if (markdownPreview) {
@@ -290,6 +807,18 @@ if (markdownPreview) {
         if (!a) return;
         const href = a.getAttribute('href') || '';
         const soraType = a.getAttribute('data-sora-link') || '';
+        if (soraType === 'method') {
+            e.preventDefault();
+            e.stopPropagation();
+            if (e.altKey) {
+                await editMethodElement(a);
+                return;
+            }
+            if (typeof showToast === 'function') {
+                showToast('方法仅在导出网页后生效，请使用 Alt+单击进行编辑', 'info', 2500);
+            }
+            return;
+        }
         if (!href) return;
 
         if (e.ctrlKey || e.metaKey) {
@@ -358,11 +887,13 @@ if (markdownPreview) {
         e.stopPropagation();
         await editLinkElement(a);
     });
+
 }
 
 /**
  * 应用格式化命令
  * 在预览区域直接应用 HTML 格式，支持切换（再次点击取消格式）
+ *
  * 
  * 支持的命令：
  * - 标题：h1, h2, h3, h4, h5, h6
@@ -822,6 +1353,31 @@ async function applyFormat(command) {
                 } else {
                     formattedHtml = '<a href="' + escapeHtml(trimmed) + '" target="_blank">' + escapeHtml(trimmed) + '</a>';
                 }
+            }
+            break;
+        case 'method':
+            {
+                const startNode = range.startContainer && range.startContainer.nodeType === Node.ELEMENT_NODE
+                    ? range.startContainer
+                    : (range.startContainer ? range.startContainer.parentNode : null);
+                const existingMethodLink = startNode && startNode.closest ? startNode.closest('a[data-sora-link="method"]') : null;
+
+                if (existingMethodLink) {
+                    const cfg = await promptMethodConfig(null);
+                    if (!cfg) return;
+                    const methods = readMethodsFromElement(existingMethodLink);
+                    methods.push(cfg);
+                    writeMethodsToElement(existingMethodLink, methods);
+                    syncPreviewToTextarea();
+                    return;
+                }
+
+                const cfg = await promptMethodConfig(null);
+                if (!cfg) return;
+                const methods = [cfg];
+
+                const displayHtml = selectedText ? selectedHtml : escapeHtml('方法');
+                formattedHtml = '<a href="#" data-sora-link="method" data-sora-methods="' + escapeHtml(JSON.stringify(methods)) + '">' + displayHtml + '</a>';
             }
             break;
         // 文本颜色

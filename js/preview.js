@@ -416,6 +416,7 @@ async function updateMarkdownPreview() {
                 setTimeout(processDeferred, 0);
             }
         };
+
         if (typeof batchDOMUpdate === 'function') {
             batchDOMUpdate(() => {
                 isUpdating = true;
