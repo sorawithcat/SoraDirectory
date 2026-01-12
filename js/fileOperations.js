@@ -2308,6 +2308,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
         let mediaDataMap = {};
         let currentSelected = null;
         let currentDirId = null;
+        let soraMethodContextDirId = null;
         const nameMap = {};
         const nameIndex = {};
         const soraExecutedMethodIds = new Set();
@@ -2409,8 +2410,6 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                 loadLazyMedia();
             }, 100);
 
-            console.log('[Sora方法] 开始执行open触发');
-            handleSoraMethodTriggersCascade('open');
             console.log('[Sora方法] 开始执行enter_dir触发');
             handleSoraMethodTriggersCascade('enter_dir');
         }
@@ -2546,7 +2545,78 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
             console.log('[Sora方法] 开始级联触发:', reason);
             const maxPasses = 20;
             const executedInRun = new Set();
+            
+            // 对于open触发，直接从所有目录数据中提取并执行
+            if (reason === 'open') {
+                let totalMethods = 0;
+                let openMethods = 0;
+                
+                // 遍历所有.mulu元素获取目录ID
+                const allDirElements = document.querySelectorAll('.mulu');
+                console.log('[Sora方法] 开始遍历目录, 总数:', allDirElements.length);
+                
+                allDirElements.forEach(function(el) {
+                    const dirId = el.dataset.dirId;
+                    if (!dirId) return;
+                    
+                    const dirName = nameMap[dirId] || '未命名';
+                    const content = getContent(dirId);
+                    if (!content) return;
+                    
+                    const regex = /<a[^>]*data-sora-methods="([^"]*)"[^>]*>/g;
+                    let match;
+                    let dirMethodCount = 0;
+                    
+                    while ((match = regex.exec(content)) !== null) {
+                        const fullTag = match[0];
+                        if (!fullTag.includes('data-sora-link="method"')) {
+                            continue;
+                        }
+                        
+                        dirMethodCount++;
+                        const methodsJson = match[1]
+                            .replace(/&quot;/g, '"')
+                            .replace(/&amp;/g, '&')
+                            .replace(/&lt;/g, '<')
+                            .replace(/&gt;/g, '>');
+                        const methods = safeParseJson(methodsJson, []);
+                        if (Array.isArray(methods)) {
+                            totalMethods += methods.length;
+                            for (let m = 0; m < methods.length; m++) {
+                                const cfg = methods[m];
+                                if (!cfg || typeof cfg !== 'object') continue;
+                                if ((cfg.trigger || 'click') !== 'open') continue;
+                                openMethods++;
+                                ensureMethodId(cfg, m, '');
+                                const id = cfg.methodId;
+                                if (cfg.once && id && soraExecutedMethodIds.has(id)) {
+                                    continue;
+                                }
+                                console.log('[Sora方法] 执行open方法:', cfg.methodType, cfg.frontAnchor, '所在目录:', dirId);
+                                
+                                soraMethodContextDirId = dirId;
+                                const ok = executeSingleMethod(cfg);
+                                soraMethodContextDirId = null;
+                                
+                                if (ok && cfg.once && id) {
+                                    soraExecutedMethodIds.add(id);
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (dirMethodCount > 0) {
+                        console.log('[Sora方法] 目录', dirName, '找到方法链接:', dirMethodCount);
+                    }
+                });
+                
+                console.log('[Sora方法] open触发执行完成, 总方法数:', totalMethods, 'open方法数:', openMethods);
+                return;
+            }
+            
+            // 其他触发方式使用级联循环
             for (let pass = 0; pass < maxPasses; pass++) {
+                // 在当前显示的目录中查找
                 const contentBody = document.getElementById('contentBody');
                 if (!contentBody) {
                     console.log('[Sora方法] contentBody不存在');
@@ -2554,6 +2624,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                 }
                 const links = Array.from(contentBody.querySelectorAll('a[data-sora-link="method"]'));
                 console.log('[Sora方法] 找到方法链接数量:', links.length);
+                
                 let anyOk = false;
                 for (let i = 0; i < links.length; i++) {
                     const a = links[i];
@@ -2712,6 +2783,69 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
             }
         }
 
+        function updateHasChildrenClass(dirId) {
+            const el = document.querySelector('[data-dir-id="' + escapeCssSelectorValue(dirId) + '"]');
+            if (!el) return;
+            
+            const allMulu = getMuluList();
+            const idx = allMulu.indexOf(el);
+            if (idx < 0) return;
+            
+            const level = getMuluLevel(el);
+            let hasVisibleChildren = false;
+            
+            for (let i = idx + 1; i < allMulu.length; i++) {
+                const child = allMulu[i];
+                const childLevel = getMuluLevel(child);
+                
+                if (childLevel <= level) break;
+                
+                if (childLevel === level + 1 && child.dataset.soraHidden !== 'true') {
+                    hasVisibleChildren = true;
+                    break;
+                }
+            }
+            
+            if (hasVisibleChildren) {
+                if (!el.classList.contains('has-children')) {
+                    el.classList.add('has-children');
+                    const toggleIcon = el.querySelector('.toggle-icon');
+                    if (!toggleIcon) {
+                        const icon = document.createElement('span');
+                        icon.className = 'toggle-icon';
+                        el.insertBefore(icon, el.firstChild);
+                    }
+                }
+            } else {
+                el.classList.remove('has-children', 'expanded');
+                const toggleIcon = el.querySelector('.toggle-icon');
+                if (toggleIcon) {
+                    toggleIcon.remove();
+                }
+            }
+        }
+
+        function updateParentHasChildrenClass(dirId) {
+            const el = document.querySelector('[data-dir-id="' + escapeCssSelectorValue(dirId) + '"]');
+            if (!el) return;
+            
+            const allMulu = getMuluList();
+            const idx = allMulu.indexOf(el);
+            if (idx < 0) return;
+            
+            const level = getMuluLevel(el);
+            
+            for (let i = idx - 1; i >= 0; i--) {
+                const parent = allMulu[i];
+                const parentLevel = getMuluLevel(parent);
+                
+                if (parentLevel < level) {
+                    updateHasChildrenClass(parent.dataset.dirId);
+                    if (parentLevel === 0) break;
+                }
+            }
+        }
+
         function hideDirectoryTree(dirId) {
             const allMulu = getMuluList();
             const el = document.querySelector('[data-dir-id="' + escapeCssSelectorValue(dirId) + '"]');
@@ -2723,6 +2857,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                 allMulu[i].dataset.soraHidden = 'true';
             }
             refreshMuluVisibility();
+            updateParentHasChildrenClass(dirId);
             if (currentDirId && currentDirId === dirId) {
                 const contentBody = document.getElementById('contentBody');
                 if (contentBody) {
@@ -2754,6 +2889,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                 }
             }
             refreshMuluVisibility();
+            updateParentHasChildrenClass(dirId);
             return true;
         }
 
@@ -3518,7 +3654,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
             if (ref.dirName) {
                 return resolveDirIdFromName(ref.dirName);
             }
-            return currentDirId;
+            return soraMethodContextDirId || currentDirId;
         }
 
         function getDirHtmlById(dirId) {
@@ -3714,6 +3850,12 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                 if (childLevel <= parentLevel) {
                     break;
                 }
+                
+                if (child.dataset.soraHidden === 'true') {
+                    child.style.display = 'none';
+                    continue;
+                }
+                
                 if (show) {
                     if (childLevel === parentLevel + 1) {
                         child.style.display = '';
@@ -4242,10 +4384,16 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
         });
         window.selectDirectory = selectDirectory;
         window.toggleDirectory = toggleDirectory;
+        
         const defaultDirId = ${JSON.stringify(firstDirId || '').replace(/<\/script>/gi, '<\\/script')};
         if (defaultDirId) {
+            console.log('[Sora方法] 即将调用selectDirectory, dirId:', defaultDirId);
             selectDirectory(defaultDirId, false);
+            console.log('[Sora方法] selectDirectory调用完成');
         }
+        
+        console.log('[Sora方法] 网页加载完成，开始执行open触发');
+        handleSoraMethodTriggersCascade('open');
     </script>
 </body>
 </html>`;

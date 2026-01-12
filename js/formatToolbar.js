@@ -380,6 +380,7 @@ function buildMethodLabel(cfg) {
     const rangeLabel = back ? (front + ' ~ ' + back) : (front || '未设置');
     return type + ' / ' + triggerLabel + ' / ' + onceLabel + ' / ' + rangeLabel;
 }
+window.buildMethodLabel = buildMethodLabel;
 
 function parseAnchorRef(input) {
     const trimmed = String(input || '').trim();
@@ -562,17 +563,11 @@ function replaceHtmlBetweenAnchors(root, frontId, backId, replacementHtml) {
 }
 
 async function promptMethodConfig(existing) {
-    const triggerOptions = [
-        { value: 'open', label: '打开时' },
-        { value: 'enter_dir', label: '进入此目录时' },
-        { value: 'click', label: '点击时' },
-        { value: 'hover', label: '悬浮时' }
-    ];
-    const cfg = existing && typeof existing === 'object' ? JSON.parse(JSON.stringify(existing)) : {};
-    ensureMethodId(cfg);
-    const trigger = await customSelect('选择触发方式：', triggerOptions, cfg.trigger || 'click', '方法');
-    if (trigger === null) return null;
-    cfg.trigger = trigger;
+    // 使用统一表单弹窗
+    return await showMethodConfigDialog(existing);
+}
+
+async function editMethodElement(a) {
     const front = await customPrompt('输入前锚点（可写 dir:目录ID#锚点 或 name:目录名#锚点 或 #锚点）：', cfg.frontAnchor || '', '方法');
     if (front === null) return null;
     if (!String(front).trim()) return null;

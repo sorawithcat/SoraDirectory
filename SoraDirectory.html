@@ -1058,6 +1058,56 @@
             background-color: #c82333;
         }
         
+        /* 方法表单样式 */
+        .method-form {
+            max-height: 60vh;
+            overflow-y: auto;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+            color: #333;
+            font-size: 14px;
+        }
+        
+        .form-group small {
+            display: block;
+            margin-top: 4px;
+            color: #666;
+            font-size: 12px;
+        }
+        
+        .form-control {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            box-sizing: border-box;
+            font-family: inherit;
+        }
+        
+        .form-control:focus {
+            outline: none;
+            border-color: #0066cc;
+        }
+        
+        .form-control[type="checkbox"] {
+            width: auto;
+            margin-right: 5px;
+        }
+        
+        textarea.form-control {
+            resize: vertical;
+            min-height: 80px;
+        }
+        
         /* Toast 悬浮提示样式 */
         .toast-container {
             position: fixed;
@@ -1648,6 +1698,7 @@
             // 功能脚本（可以并行加载）
             const featureScripts = [
                 'js/dialog.js',
+                'js/methodConfigDialog.js',
                 'js/directoryUtils.js',
                 'js/preview.js',
                 'js/formatToolbar.js',
