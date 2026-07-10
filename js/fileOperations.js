@@ -463,6 +463,11 @@ function startSoraPackageMediaImport(file, manifest, mediaStart) {
             showToast('.sora 媒体导入失败：' + err.message, 'error', 4000);
         });
     window.__soraMediaImportPromise = importTask;
+    importTask.finally(() => {
+        if (window.__soraMediaImportPromise === importTask) {
+            window.__soraMediaImportPromise = null;
+        }
+    });
 }
 
 async function openSoraPackageFile(file, fileHandle = null) {
@@ -2324,6 +2329,14 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             return;
         }
     }
+    const pendingMediaImport = window.__soraMediaImportPromise;
+    if (pendingMediaImport) {
+        showToast('正在等待媒体导入完成...', 'info', 2000);
+        await pendingMediaImport;
+        if (window.__soraMediaImportPromise === pendingMediaImport) {
+            window.__soraMediaImportPromise = null;
+        }
+    }
     // 从输入框获取文件名
     let baseName = (fileNameInput && fileNameInput.value.trim()) || "soralist";
     // 移除可能的扩展名
@@ -2505,6 +2518,9 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
     async function generateContentScripts(muluData) {
         const contentScriptParts = [];
         const mediaDataMap = {};
+        const mediaChunkScriptParts = [];
+        const videoAssetCache = new Map();
+        let videoAssetCounter = 0;
 
         const escapeHtmlAttribute = (value) => {
             return String(value)
@@ -2528,6 +2544,82 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         const emptyPixel = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
         let placeholderCounter = 0;
 
+        const detectVideoMimeType = (base64, fallback) => {
+            if (fallback && fallback !== 'application/octet-stream') return fallback;
+            try {
+                const sample = atob(String(base64 || '').slice(0, 44));
+                const bytes = Uint8Array.from(sample, char => char.charCodeAt(0));
+                const ascii = (start, length) => String.fromCharCode(...bytes.subarray(start, start + length));
+                if (bytes.length >= 12 && ascii(4, 4) === 'ftyp') return 'video/mp4';
+                if (bytes.length >= 4 && bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) return 'video/webm';
+                if (bytes.length >= 4 && ascii(0, 4) === 'OggS') return 'video/ogg';
+                if (bytes.length >= 12 && ascii(0, 4) === 'RIFF' && ascii(8, 4) === 'AVI ') return 'video/x-msvideo';
+            } catch (e) {
+            }
+            return fallback || 'application/octet-stream';
+        };
+
+        const addVideoChunk = (assetId, base64, index, chunkIds) => {
+            const chunkId = 'media_chunk_' + assetId + '_' + index.toString(36);
+            chunkIds.push(chunkId);
+            mediaChunkScriptParts.push('<script type="application/octet-stream" id="' + chunkId + '">' + base64 + '</script>\n');
+        };
+
+        const exportDataUrlVideo = (dataUrl, assetId) => {
+            const commaIndex = String(dataUrl || '').indexOf(',');
+            if (commaIndex < 0 || !/;base64/i.test(dataUrl.slice(0, commaIndex))) return null;
+            const header = dataUrl.slice(0, commaIndex);
+            const mimeMatch = header.match(/^data:([^;,]+)/i);
+            const base64 = dataUrl.slice(commaIndex + 1).replace(/\s+/g, '');
+            const chunkIds = [];
+            const chunkChars = Math.floor(((1024 * 1024 * 4 / 3) / 4)) * 4;
+            for (let offset = 0, index = 0; offset < base64.length; offset += chunkChars, index++) {
+                addVideoChunk(assetId, base64.slice(offset, offset + chunkChars), index, chunkIds);
+            }
+            const padding = base64.endsWith('==') ? 2 : (base64.endsWith('=') ? 1 : 0);
+            return {
+                storage: 'chunks',
+                mimeType: detectVideoMimeType(base64, mimeMatch ? mimeMatch[1] : ''),
+                size: Math.max(0, Math.floor(base64.length * 3 / 4) - padding),
+                chunks: chunkIds
+            };
+        };
+
+        const exportVideoAsset = async (videoEl) => {
+            const mediaId = videoEl.getAttribute('data-media-storage-id') || '';
+            let dataUrl = videoEl.getAttribute('src') || '';
+            if ((!dataUrl || !dataUrl.startsWith('data:')) && videoEl.querySelector) {
+                const source = videoEl.querySelector('source[src^="data:"]');
+                if (source) dataUrl = source.getAttribute('src') || '';
+            }
+            const cacheKey = mediaId ? 'stored:' + mediaId : '';
+            if (cacheKey && videoAssetCache.has(cacheKey)) return videoAssetCache.get(cacheKey);
+
+            const assetId = 'video_' + (++videoAssetCounter).toString(36);
+            let asset = null;
+            if (mediaId && typeof MediaStorage !== 'undefined' && MediaStorage && typeof MediaStorage.exportMediaChunks === 'function') {
+                const chunkIds = [];
+                try {
+                    const info = await MediaStorage.exportMediaChunks(mediaId, (base64, index) => {
+                        addVideoChunk(assetId, base64, index, chunkIds);
+                    });
+                    asset = {
+                        storage: 'chunks',
+                        mimeType: info.mimeType || 'application/octet-stream',
+                        size: info.size || 0,
+                        chunks: chunkIds
+                    };
+                } catch (err) {
+                    console.error('分块导出视频失败:', mediaId, err);
+                }
+            }
+            if (!asset && dataUrl.startsWith('data:')) {
+                asset = exportDataUrlVideo(dataUrl, assetId);
+            }
+            if (cacheKey && asset) videoAssetCache.set(cacheKey, asset);
+            return asset;
+        };
+
         for (let i = 0; i < muluData.length; i++) {
             const item = muluData[i];
             if (!item || item.length !== 4) continue;
@@ -2535,7 +2627,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             let content = item[3] || '';
 
             if (content && content.includes('data-media-storage-id') && typeof MediaStorage !== 'undefined' && MediaStorage && typeof MediaStorage.processHtmlForExport === 'function') {
-                content = await MediaStorage.processHtmlForExport(content);
+                content = await MediaStorage.processHtmlForExport(content, { skipVideo: true });
             }
 
             try {
@@ -2553,8 +2645,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                     const placeholderId = 'media_' + generatePlaceholderKeyPart(dirId) + '_' + placeholderCounter.toString(36);
                     mediaDataMap[placeholderId] = {
                         type: 'image',
-                        data: src,
-                        originalTag: img.outerHTML
+                        data: src
                     };
                     img.setAttribute('data-placeholder-id', placeholderId);
                     img.setAttribute('data-loading', 'true');
@@ -2565,30 +2656,26 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                 const videos = Array.from(temp.querySelectorAll('video'));
                 for (let j = 0; j < videos.length; j++) {
                     const videoEl = videos[j];
-                    let dataUrl = videoEl.getAttribute('src') || '';
-                    if ((!dataUrl || !dataUrl.startsWith('data:') || dataUrl.includes('about:blank')) && videoEl.querySelector) {
-                        const source = videoEl.querySelector('source[src^="data:"]');
-                        if (source) {
-                            dataUrl = source.getAttribute('src') || '';
-                        }
-                    }
-                    if (!dataUrl || !dataUrl.startsWith('data:') || dataUrl.includes('about:blank')) {
-                        continue;
-                    }
                     placeholderCounter++;
                     const placeholderId = 'media_' + generatePlaceholderKeyPart(dirId) + '_' + placeholderCounter.toString(36);
-                    mediaDataMap[placeholderId] = {
+                    const asset = await exportVideoAsset(videoEl);
+                    mediaDataMap[placeholderId] = asset ? {
                         type: 'video',
-                        data: dataUrl,
-                        originalTag: videoEl.outerHTML
+                        storage: asset.storage,
+                        mimeType: asset.mimeType,
+                        size: asset.size,
+                        chunks: asset.chunks,
+                        title: videoEl.getAttribute('title') || ''
+                    } : {
+                        type: 'video',
+                        error: '视频数据未能导出'
                     };
 
                     const placeholder = document.createElement('div');
-                    placeholder.className = 'lazy-media';
+                    placeholder.className = 'lazy-media video-load-shell';
                     placeholder.setAttribute('data-loading', 'true');
                     placeholder.setAttribute('data-placeholder-id', placeholderId);
-                    placeholder.style.cssText = 'display: block; margin: 1em auto; max-width: 640px; max-height: 360px; width: 100%; height: auto; padding: 12px; background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 8px; text-align: center; color: #57606a;';
-                    placeholder.textContent = '视频加载中...';
+                    placeholder.innerHTML = '<div class="video-load-status">准备视频</div><div class="video-load-track"><span></span></div>';
 
                     if (videoEl.parentNode) {
                         videoEl.parentNode.replaceChild(placeholder, videoEl);
@@ -2614,6 +2701,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
 
                 content = temp.innerHTML;
             } catch (e) {
+                console.error('处理网页导出内容失败:', dirId, e);
             }
 
             const scriptId = 'content_' + String(dirId);
@@ -2622,15 +2710,16 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
 
         const contentScripts = contentScriptParts.join('\n');
         const mediaDataScripts = '<script type="application/json" id="mediaData">' + jsonSafeStringify(mediaDataMap) + '</script>';
-        return { contentScripts, mediaDataScripts };
+        return { contentScripts, mediaDataScripts, mediaChunkScriptParts };
     }
 
     // 生成完整的HTML页面
     const directoryTree = buildDirectoryTree(sourceData);
     const directoryHTML = generateDirectoryHTML(directoryTree);
-    const { contentScripts, mediaDataScripts } = await generateContentScripts(sourceData);
+    const { contentScripts, mediaDataScripts, mediaChunkScriptParts } = await generateContentScripts(sourceData);
     // 获取第一个目录的ID作为默认选中
     const firstDirId = sourceData.length > 0 && sourceData[0].length === 4 ? sourceData[0][2] : '';
+    const mediaChunkMarker = '<!--SORA_MEDIA_CHUNKS-->';
     // 生成完整的HTML页面
     const htmlContent = `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -2874,6 +2963,59 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             height: auto;
             border-radius: 5px;
         }
+        .video-load-shell {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 10px;
+            width: min(100%, 640px);
+            min-height: 180px;
+            margin: 1em auto;
+            padding: 20px;
+            color: #57606a;
+            text-align: center;
+            background: #f6f8fa;
+            border: 1px solid #d0d7de;
+            border-radius: 5px;
+        }
+        .video-load-shell.is-error {
+            color: #b42318;
+            background: #fff5f4;
+            border-color: #f2b8b5;
+        }
+        .video-load-track {
+            width: min(320px, 100%);
+            height: 4px;
+            margin: 0 auto;
+            overflow: hidden;
+            background: #d8dee4;
+            border-radius: 2px;
+        }
+        .video-load-track span {
+            display: block;
+            width: 0;
+            height: 100%;
+            background: #0969da;
+            transition: width 0.12s linear;
+        }
+        .video-load-button {
+            align-self: center;
+            min-height: 36px;
+            padding: 7px 14px;
+            color: #fff;
+            font: inherit;
+            cursor: pointer;
+            background: #0969da;
+            border: 0;
+            border-radius: 5px;
+        }
+        .video-load-button:hover {
+            background: #075bbd;
+        }
+        .video-load-button:disabled {
+            cursor: default;
+            opacity: 0.65;
+        }
         .image-viewer-overlay {
             display: none;
             position: fixed;
@@ -3115,10 +3257,11 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
     </div>
     <div class="image-viewer-overlay" id="imageViewer">
         <span class="image-viewer-close" id="imageViewerClose">&times;</span>
-        <img id="imageViewerImg" src="" alt="放大查看">
+        <img id="imageViewerImg" alt="放大查看">
     </div>
     ${contentScripts}
     ${mediaDataScripts}
+    ${mediaChunkMarker}
     <script>
         const contentCache = {};
         let mediaDataMap = {};
@@ -3204,6 +3347,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
 
         function selectDirectory(dirId, toggleExpand = false) {
             methodDebugLog('[Sora方法] selectDirectory被调用, dirId:', dirId);
+            releaseActiveMedia();
             if (currentSelected) {
                 currentSelected.classList.remove('selected');
             }
@@ -3685,6 +3829,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             refreshMuluVisibility();
             updateParentHasChildrenClass(dirId);
             if (currentDirId && currentDirId === dirId) {
+                releaseActiveMedia();
                 const contentBody = document.getElementById('contentBody');
                 if (contentBody) {
                     contentBody.innerHTML = '<div class="empty-state">此目录已隐藏</div>';
@@ -4196,6 +4341,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             }
             refreshMuluVisibility();
             if (currentDirId && removedIds.includes(currentDirId)) {
+                releaseActiveMedia();
                 const contentBody = document.getElementById('contentBody');
                 if (contentBody) {
                     contentBody.innerHTML = '<div class="empty-state">点击左侧目录查看内容</div>';
@@ -4494,12 +4640,14 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
 
         function setDirHtmlById(dirId, html, skipDomUpdate) {
             if (!dirId) return;
-            contentCache[dirId] = html;
+            const storedHtml = normalizeRuntimeMediaHtml(html);
+            contentCache[dirId] = storedHtml;
             if (skipDomUpdate) return;
             if (currentDirId && currentDirId === dirId) {
                 const contentBody = document.getElementById('contentBody');
                 if (contentBody) {
-                    contentBody.innerHTML = html || '<div class="empty-state">此目录暂无内容</div>';
+                    releaseActiveMedia();
+                    contentBody.innerHTML = storedHtml || '<div class="empty-state">此目录暂无内容</div>';
                     assignHeadingAutoIds(contentBody);
                     initCodeBlocks();
                     initImageViewer();
@@ -4737,173 +4885,239 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         }
 
         let mediaObserver = null;
-        function initMediaObserver() {
-            if (typeof IntersectionObserver === 'undefined') {
-                return;
-            }
+        let mediaLoadEpoch = 0;
+        let videoLoadQueue = Promise.resolve();
+        const activeMediaUrls = new Set();
+        const MANUAL_VIDEO_LOAD_SIZE = 64 * 1024 * 1024;
+
+        function createVideoPlaceholder(placeholderId, message = '准备视频', isError = false) {
+            const placeholder = document.createElement('div');
+            placeholder.className = 'lazy-media video-load-shell' + (isError ? ' is-error' : '');
+            placeholder.setAttribute('data-placeholder-id', placeholderId || '');
+            if (!isError) placeholder.setAttribute('data-loading', 'true');
+            placeholder.innerHTML = '<div class="video-load-status"></div><div class="video-load-track"><span></span></div>';
+            const status = placeholder.querySelector('.video-load-status');
+            if (status) status.textContent = message;
+            return placeholder;
+        }
+
+        function normalizeRuntimeMediaHtml(html) {
+            if (!html || !String(html).includes('data-media-runtime="video"')) return html || '';
+            const root = document.createElement('div');
+            root.innerHTML = String(html);
+            root.querySelectorAll('video[data-media-runtime="video"][data-placeholder-id]').forEach(video => {
+                const placeholderId = video.getAttribute('data-placeholder-id') || '';
+                video.replaceWith(createVideoPlaceholder(placeholderId));
+            });
+            return root.innerHTML;
+        }
+
+        function releaseActiveMedia() {
+            mediaLoadEpoch++;
             if (mediaObserver) {
                 mediaObserver.disconnect();
+                mediaObserver = null;
             }
-            mediaObserver = new IntersectionObserver((entries) => {
-                entries.forEach(entry => {
-                    if (entry.isIntersecting) {
-                        const media = entry.target;
-                        if (media.hasAttribute('data-loading') && media.getAttribute('data-loading') === 'true') {
-                            loadSingleMedia(media);
-                        }
-                        mediaObserver.unobserve(media);
+            activeMediaUrls.forEach(url => URL.revokeObjectURL(url));
+            activeMediaUrls.clear();
+        }
+
+        function updateVideoLoadProgress(media, current, total) {
+            const percent = total > 0 ? Math.round(current / total * 100) : 0;
+            const status = media.querySelector('.video-load-status');
+            const bar = media.querySelector('.video-load-track span');
+            if (status) status.textContent = '正在准备视频 ' + percent + '%';
+            if (bar) bar.style.width = percent + '%';
+        }
+
+        function formatMediaSize(bytes) {
+            const size = Number(bytes) || 0;
+            if (size < 1024) return size + ' B';
+            if (size < 1024 * 1024) return (size / 1024).toFixed(1) + ' KB';
+            if (size < 1024 * 1024 * 1024) return (size / (1024 * 1024)).toFixed(1) + ' MB';
+            return (size / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+        }
+
+        function initManualVideoLoad(media, mediaInfo) {
+            if (media.dataset.manualLoadInit === 'true') return;
+            media.dataset.manualLoadInit = 'true';
+            const status = media.querySelector('.video-load-status');
+            if (status) status.textContent = '视频 ' + formatMediaSize(mediaInfo.size);
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'video-load-button';
+            button.textContent = '加载视频';
+            button.addEventListener('click', () => {
+                button.disabled = true;
+                button.textContent = '准备中';
+                loadSingleMedia(media);
+            }, { once: true });
+            media.appendChild(button);
+        }
+
+        function showMediaError(media, placeholderId, message) {
+            const errorPlaceholder = createVideoPlaceholder(placeholderId, message || '视频加载失败', true);
+            if (media && media.parentNode) media.parentNode.replaceChild(errorPlaceholder, media);
+        }
+
+        function decodeBase64Chunk(base64) {
+            const binary = atob(String(base64 || '').replace(/\\s+/g, ''));
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            return new Blob([bytes.buffer]);
+        }
+
+        async function createChunkedVideoUrl(mediaInfo, media, epoch) {
+            const chunkIds = Array.isArray(mediaInfo.chunks) ? mediaInfo.chunks : [];
+            if (chunkIds.length === 0) throw new Error('视频分块缺失');
+            const blobParts = [];
+            for (let i = 0; i < chunkIds.length; i++) {
+                if (epoch !== mediaLoadEpoch || !media.isConnected) {
+                    const abortError = new Error('视频加载已取消');
+                    abortError.name = 'AbortError';
+                    throw abortError;
+                }
+                const chunkElement = document.getElementById(chunkIds[i]);
+                if (!chunkElement) throw new Error('视频分块不完整');
+                blobParts.push(decodeBase64Chunk(chunkElement.textContent));
+                updateVideoLoadProgress(media, i + 1, chunkIds.length);
+                await new Promise(resolve => setTimeout(resolve, 0));
+            }
+            const blob = new Blob(blobParts, { type: mediaInfo.mimeType || 'application/octet-stream' });
+            const objectUrl = URL.createObjectURL(blob);
+            activeMediaUrls.add(objectUrl);
+            return objectUrl;
+        }
+
+        function normalizeLegacyVideoDataUrl(dataUrl, mimeType) {
+            if (!dataUrl || !dataUrl.startsWith('data:')) return dataUrl;
+            if (mimeType && mimeType !== 'application/octet-stream') {
+                return dataUrl.replace(/^data:[^;,]+/i, 'data:' + mimeType);
+            }
+            if (!/^data:application\\/octet-stream/i.test(dataUrl)) return dataUrl;
+            try {
+                const commaIndex = dataUrl.indexOf(',');
+                const sample = atob(dataUrl.slice(commaIndex + 1, commaIndex + 45));
+                if (sample.length >= 8 && sample.slice(4, 8) === 'ftyp') {
+                    return dataUrl.replace(/^data:application\\/octet-stream/i, 'data:video/mp4');
+                }
+            } catch (e) {
+            }
+            return dataUrl;
+        }
+
+        async function loadVideoMedia(media, mediaInfo, placeholderId) {
+            const epoch = mediaLoadEpoch;
+            let sourceUrl = '';
+            try {
+                if (mediaInfo.error) throw new Error(mediaInfo.error);
+                if (mediaInfo.storage === 'chunks' || Array.isArray(mediaInfo.chunks)) {
+                    sourceUrl = await createChunkedVideoUrl(mediaInfo, media, epoch);
+                } else {
+                    sourceUrl = normalizeLegacyVideoDataUrl(mediaInfo.data || '', mediaInfo.mimeType || '');
+                }
+                if (epoch !== mediaLoadEpoch || !media.isConnected) {
+                    if (sourceUrl.startsWith('blob:')) {
+                        URL.revokeObjectURL(sourceUrl);
+                        activeMediaUrls.delete(sourceUrl);
                     }
-                });
-            }, {
-                rootMargin: '50px'
-            });
-            const contentBody = document.getElementById('contentBody');
-            if (contentBody) {
-                const lazyMedias = contentBody.querySelectorAll('.lazy-media[data-loading="true"]');
-                lazyMedias.forEach(media => {
-                    mediaObserver.observe(media);
-                });
+                    return;
+                }
+                if (!sourceUrl) throw new Error('视频数据不可用');
+
+                const video = document.createElement('video');
+                video.controls = true;
+                video.preload = 'metadata';
+                video.playsInline = true;
+                video.setAttribute('data-media-runtime', 'video');
+                video.setAttribute('data-placeholder-id', placeholderId);
+                if (mediaInfo.title) video.title = mediaInfo.title;
+                else if (mediaInfo.originalTag) {
+                    const titleMatch = mediaInfo.originalTag.match(/\\stitle=["']([^"']*)["']/);
+                    if (titleMatch) video.title = titleMatch[1];
+                }
+                video.addEventListener('error', () => {
+                    if (sourceUrl.startsWith('blob:')) {
+                        URL.revokeObjectURL(sourceUrl);
+                        activeMediaUrls.delete(sourceUrl);
+                    }
+                    showMediaError(video, placeholderId, '视频格式不受浏览器支持');
+                }, { once: true });
+                video.src = sourceUrl;
+                if (media.parentNode) media.parentNode.replaceChild(video, media);
+                video.load();
+            } catch (err) {
+                if (err && err.name === 'AbortError') return;
+                console.error('加载视频失败:', err);
+                showMediaError(media, placeholderId, err && err.message ? err.message : '视频加载失败');
             }
         }
 
-        async function loadSingleMedia(media) {
-            if (media.hasAttribute('data-loading-media')) {
-                return;
-            }
-            media.setAttribute('data-loading-media', 'true');
-            const placeholderId = media.getAttribute('data-placeholder-id');
-            if (!placeholderId || !mediaDataMap[placeholderId]) {
-                media.removeAttribute('data-loading-media');
-                return;
-            }
-            const mediaInfo = mediaDataMap[placeholderId];
-            let dataUrl = mediaInfo.data;
-            if (!dataUrl && mediaInfo.mediaId) {
-                try {
-                    const dbName = 'SoraDirectoryMediaDB';
-                    const dbVersion = 1;
-                    const storeName = 'media';
-                    const db = await new Promise((resolve, reject) => {
-                        const request = indexedDB.open(dbName, dbVersion);
-                        request.onsuccess = () => resolve(request.result);
-                        request.onerror = () => reject(request.error);
-                        request.onupgradeneeded = () => {
-                            const db = request.result;
-                            if (!db.objectStoreNames.contains(storeName)) {
-                                db.createObjectStore(storeName, { keyPath: 'id' });
-                            }
-                        };
-                    });
-                    const record = await new Promise((resolve, reject) => {
-                        const transaction = db.transaction([storeName], 'readonly');
-                        const store = transaction.objectStore(storeName);
-                        const request = store.get(mediaInfo.mediaId);
-                        request.onsuccess = () => resolve(request.result);
-                        request.onerror = () => reject(request.error);
-                    });
-                    if (record) {
-                        if (record.chunked && record.chunks) {
-                            const blobParts = [];
-                            const mimeType = record.mimeType || 'application/octet-stream';
-                            if (record.blobChunked) {
-                                for (const chunkId of record.chunks) {
-                                    const chunkRecord = await new Promise((resolve, reject) => {
-                                        const transaction = db.transaction([storeName], 'readonly');
-                                        const store = transaction.objectStore(storeName);
-                                        const request = store.get(chunkId);
-                                        request.onsuccess = () => resolve(request.result);
-                                        request.onerror = () => reject(request.error);
-                                    });
-                                    if (chunkRecord && chunkRecord.data) {
-                                        blobParts.push(chunkRecord.data);
-                                    }
-                                }
-                            } else {
-                                for (const chunkId of record.chunks) {
-                                    const chunkRecord = await new Promise((resolve, reject) => {
-                                        const transaction = db.transaction([storeName], 'readonly');
-                                        const store = transaction.objectStore(storeName);
-                                        const request = store.get(chunkId);
-                                        request.onsuccess = () => resolve(request.result);
-                                        request.onerror = () => reject(request.error);
-                                    });
-                                    if (chunkRecord && chunkRecord.data) {
-                                        try {
-                                            const binaryString = atob(chunkRecord.data);
-                                            const bytes = new Uint8Array(binaryString.length);
-                                            for (let j = 0; j < binaryString.length; j++) {
-                                                bytes[j] = binaryString.charCodeAt(j);
-                                            }
-                                            blobParts.push(bytes);
-                                        } catch (e) {
-                                            console.error('解码分块失败:', e);
-                                        }
-                                    }
-                                }
-                            }
-                            const blob = new Blob(blobParts, { type: mimeType });
-                            dataUrl = await new Promise((resolve) => {
-                                const reader = new FileReader();
-                                reader.onloadend = () => resolve(reader.result);
-                                reader.readAsDataURL(blob);
-                            });
-                        } else {
-                            dataUrl = record.data;
-                        }
-                    }
-                } catch (err) {
-                    console.error('从 IndexedDB 加载媒体失败:', err);
-                    media.removeAttribute('data-loading-media');
+        function queueVideoLoad(media, mediaInfo, placeholderId) {
+            const task = videoLoadQueue
+                .catch(() => {})
+                .then(() => loadVideoMedia(media, mediaInfo, placeholderId));
+            videoLoadQueue = task;
+            return task;
+        }
+
+        function initMediaObserver() {
+            if (typeof IntersectionObserver === 'undefined') return;
+            if (mediaObserver) mediaObserver.disconnect();
+            mediaObserver = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (!entry.isIntersecting) return;
+                    const media = entry.target;
+                    if (media.getAttribute('data-loading') === 'true') loadSingleMedia(media);
+                    mediaObserver.unobserve(media);
+                });
+            }, { rootMargin: '100px' });
+            const contentBody = document.getElementById('contentBody');
+            if (!contentBody) return;
+            contentBody.querySelectorAll('.lazy-media[data-loading="true"]').forEach(media => {
+                const placeholderId = media.getAttribute('data-placeholder-id');
+                const mediaInfo = placeholderId ? mediaDataMap[placeholderId] : null;
+                if (mediaInfo && mediaInfo.type === 'video' && Number(mediaInfo.size) >= MANUAL_VIDEO_LOAD_SIZE) {
+                    initManualVideoLoad(media, mediaInfo);
                     return;
                 }
-            }
-            if (!dataUrl) {
+                mediaObserver.observe(media);
+            });
+        }
+
+        async function loadSingleMedia(media) {
+            if (media.hasAttribute('data-loading-media')) return;
+            media.setAttribute('data-loading-media', 'true');
+            const placeholderId = media.getAttribute('data-placeholder-id');
+            const mediaInfo = placeholderId ? mediaDataMap[placeholderId] : null;
+            if (!mediaInfo) {
                 media.removeAttribute('data-loading-media');
                 return;
             }
-            if (mediaInfo.type === 'image') {
-                return new Promise((resolve) => {
-                    const img = new Image();
-                    img.onload = () => {
-                        media.src = dataUrl;
-                        media.removeAttribute('data-loading');
-                        media.removeAttribute('data-loading-media');
-                        media.classList.remove('lazy-media');
-                        resolve();
-                    };
-                    img.onerror = () => {
-                        media.removeAttribute('data-loading-media');
-                        resolve();
-                    };
-                    img.src = dataUrl;
-                });
-            } else if (mediaInfo.type === 'video') {
-                return new Promise((resolve) => {
-                    const video = document.createElement('video');
-                    video.controls = true;
-                    video.preload = 'none';
-                    video.style.cssText = 'display: block; margin: 1em auto; max-width: 640px; max-height: 360px; width: auto; height: auto; border-radius: 5px;';
-                    const originalTag = mediaInfo.originalTag;
-                    if (originalTag && originalTag.includes('title=')) {
-                        const titleMatch = originalTag.match(/\\stitle=["']([^"']*)["']/);
-                        if (titleMatch) video.title = titleMatch[1];
-                    }
-                    video.onloadedmetadata = () => {
-                        if (media.parentNode) {
-                            media.parentNode.replaceChild(video, media);
-                        }
-                        if (video.offsetParent !== null) {
-                            video.load();
-                        }
-                        resolve();
-                    };
-                    video.onerror = () => {
-                        media.removeAttribute('data-loading-media');
-                        resolve();
-                    };
-                    video.src = dataUrl;
-                });
+            if (mediaInfo.type === 'video') {
+                await queueVideoLoad(media, mediaInfo, placeholderId);
+                return;
             }
+            const dataUrl = mediaInfo.data;
+            if (mediaInfo.type !== 'image' || !dataUrl) {
+                media.removeAttribute('data-loading-media');
+                return;
+            }
+            await new Promise(resolve => {
+                const img = new Image();
+                img.onload = () => {
+                    media.src = dataUrl;
+                    media.removeAttribute('data-loading');
+                    media.removeAttribute('data-loading-media');
+                    media.classList.remove('lazy-media');
+                    resolve();
+                };
+                img.onerror = () => {
+                    media.removeAttribute('data-loading-media');
+                    resolve();
+                };
+                img.src = dataUrl;
+            });
         }
 
         async function loadLazyMedia() {
@@ -4914,8 +5128,16 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                 return;
             }
             const lazyMedias = contentBody.querySelectorAll('.lazy-media[data-loading="true"]');
-            const loadPromises = Array.from(lazyMedias).map(media => loadSingleMedia(media));
-            Promise.all(loadPromises).catch(err => {
+            const automaticMedia = Array.from(lazyMedias).filter(media => {
+                const placeholderId = media.getAttribute('data-placeholder-id');
+                const mediaInfo = placeholderId ? mediaDataMap[placeholderId] : null;
+                if (mediaInfo && mediaInfo.type === 'video' && Number(mediaInfo.size) >= MANUAL_VIDEO_LOAD_SIZE) {
+                    initManualVideoLoad(media, mediaInfo);
+                    return false;
+                }
+                return true;
+            });
+            Promise.all(automaticMedia.map(media => loadSingleMedia(media))).catch(err => {
                 console.error('加载媒体时出错:', err);
             });
         }
@@ -5195,19 +5417,22 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                 });
             });
         }
-        imageViewerClose.addEventListener('click', () => {
+        function closeImageViewer() {
             imageViewer.classList.remove('active');
-        });
+            imageViewerImg.removeAttribute('src');
+        }
+        imageViewerClose.addEventListener('click', closeImageViewer);
         imageViewer.addEventListener('click', (e) => {
             if (e.target === imageViewer) {
-                imageViewer.classList.remove('active');
+                closeImageViewer();
             }
         });
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape' && imageViewer.classList.contains('active')) {
-                imageViewer.classList.remove('active');
+                closeImageViewer();
             }
         });
+        window.addEventListener('beforeunload', releaseActiveMedia);
         window.selectDirectory = selectDirectory;
         window.toggleDirectory = toggleDirectory;
         
@@ -5224,21 +5449,31 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
 </body>
 </html>`;
 
+    const markerIndex = htmlContent.indexOf(mediaChunkMarker);
+    if (markerIndex < 0) {
+        throw new Error('网页媒体分块插入点缺失');
+    }
+    const htmlParts = [
+        htmlContent.slice(0, markerIndex),
+        ...mediaChunkScriptParts,
+        htmlContent.slice(markerIndex + mediaChunkMarker.length)
+    ];
+
     // 如果加密，包装 HTML
-    let finalContent = htmlContent;
+    let outputParts = htmlParts;
     if (encrypt && password) {
-        const encryptedHtml = await encryptData(htmlContent, password);
-        finalContent = generateEncryptedHtmlWrapper(baseName, encryptedHtml);
+        const encryptedHtml = await encryptData(htmlParts.join(''), password);
+        outputParts = [generateEncryptedHtmlWrapper(baseName, encryptedHtml)];
     }
 
     // 创建并下载文件
-    const blob = new Blob([finalContent], { type: 'text/html;charset=utf-8' });
+    const blob = new Blob(outputParts, { type: 'text/html;charset=utf-8' });
     const objectURL = URL.createObjectURL(blob);
     const aTag = document.createElement('a');
     aTag.href = objectURL;
     aTag.download = filename;
     aTag.click();
-    URL.revokeObjectURL(objectURL);
+    setTimeout(() => URL.revokeObjectURL(objectURL), 1000);
     showToast(`已导出${encrypt ? '加密' : ''}网页：${filename}`, 'success', 2500);
 }
 /**

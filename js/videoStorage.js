@@ -155,6 +155,108 @@ function generateMediaId(type = 'media') {
         return `${type}_` + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
     }
     const CHUNK_SIZE = 10 * 1024 * 1024;
+    const HTML_EXPORT_CHUNK_SIZE = 1024 * 1024;
+
+    function bytesToBase64(bytes) {
+        const parts = [];
+        const batchSize = 0x8000;
+        for (let i = 0; i < bytes.length; i += batchSize) {
+            parts.push(String.fromCharCode(...bytes.subarray(i, i + batchSize)));
+        }
+        return btoa(parts.join(''));
+    }
+
+    function getRecordMimeType(record) {
+        let mimeType = record && record.mimeType ? record.mimeType : 'application/octet-stream';
+        const source = record && (record.header || (typeof record.data === 'string' ? record.data : ''));
+        const mimeMatch = source && source.match(/^data:([^;,]+)/i);
+        if (mimeMatch) mimeType = mimeMatch[1];
+        return mimeType;
+    }
+
+    function detectMediaMimeType(bytes, fallback, mediaType) {
+        if (fallback && fallback !== 'application/octet-stream') return fallback;
+        if (bytes && bytes.length >= 12) {
+            const ascii = (start, length) => String.fromCharCode(...bytes.subarray(start, start + length));
+            if (ascii(4, 4) === 'ftyp') return 'video/mp4';
+            if (bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) return 'video/webm';
+            if (ascii(0, 4) === 'OggS') return mediaType === 'audio' ? 'audio/ogg' : 'video/ogg';
+            if (ascii(0, 4) === 'RIFF' && ascii(8, 4) === 'AVI ') return 'video/x-msvideo';
+        }
+        return fallback || 'application/octet-stream';
+    }
+
+    async function exportMediaChunks(mediaId, onChunk, chunkSize = HTML_EXPORT_CHUNK_SIZE) {
+        if (typeof onChunk !== 'function') {
+            throw new Error('缺少媒体分块处理函数');
+        }
+        const database = await initDB();
+        const record = await getRecord(database, mediaId);
+        if (!record) throw new Error(`媒体不存在: ${mediaId}`);
+
+        const safeChunkSize = Math.max(256 * 1024, Number(chunkSize) || HTML_EXPORT_CHUNK_SIZE);
+        const base64ChunkSize = Math.max(4, Math.floor((safeChunkSize * 4 / 3) / 4) * 4);
+        let mimeType = getRecordMimeType(record);
+        let firstBytes = null;
+        let chunkCount = 0;
+        let rawSize = 0;
+
+        const emitBytes = async (value) => {
+            const bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
+            if (!firstBytes && bytes.length) firstBytes = bytes.subarray(0, Math.min(bytes.length, 32));
+            for (let offset = 0; offset < bytes.length; offset += safeChunkSize) {
+                const part = bytes.subarray(offset, Math.min(offset + safeChunkSize, bytes.length));
+                rawSize += part.byteLength;
+                await onChunk(bytesToBase64(part), chunkCount++);
+                await new Promise(resolve => setTimeout(resolve, 0));
+            }
+        };
+
+        const emitBase64 = async (value) => {
+            const base64 = String(value || '').replace(/\s+/g, '');
+            for (let offset = 0; offset < base64.length; offset += base64ChunkSize) {
+                const part = base64.slice(offset, Math.min(offset + base64ChunkSize, base64.length));
+                if (!part) continue;
+                if (!firstBytes) {
+                    const sample = atob(part.slice(0, Math.min(part.length, 44)));
+                    firstBytes = Uint8Array.from(sample, char => char.charCodeAt(0));
+                }
+                rawSize += Math.floor(part.length * 3 / 4) - ((part.endsWith('==')) ? 2 : (part.endsWith('=') ? 1 : 0));
+                await onChunk(part, chunkCount++);
+                await new Promise(resolve => setTimeout(resolve, 0));
+            }
+        };
+
+        if (record.chunked && Array.isArray(record.chunks)) {
+            for (let i = 0; i < record.chunks.length; i++) {
+                const chunkRecord = await getRecord(database, record.chunks[i]);
+                if (!chunkRecord || chunkRecord.data == null) {
+                    throw new Error(`媒体分块 ${i} 数据丢失`);
+                }
+                if (record.blobChunked) {
+                    await emitBytes(chunkRecord.data);
+                } else {
+                    await emitBase64(chunkRecord.data);
+                }
+            }
+        } else if (typeof record.data === 'string') {
+            const commaIndex = record.data.indexOf(',');
+            await emitBase64(commaIndex >= 0 ? record.data.slice(commaIndex + 1) : record.data);
+        } else if (record.data instanceof ArrayBuffer || record.data instanceof Uint8Array) {
+            await emitBytes(record.data);
+        } else {
+            throw new Error(`媒体格式不支持: ${mediaId}`);
+        }
+
+        mimeType = detectMediaMimeType(firstBytes, mimeType, record.type);
+        return {
+            id: mediaId,
+            type: record.type || 'media',
+            mimeType,
+            size: Number.isFinite(record.totalSize) && record.blobChunked ? record.totalSize : rawSize,
+            chunkCount
+        };
+    }
     /**
      * 保存媒体数据到 IndexedDB（支持分块存储大文件）
      * @param {string|Blob|File} mediaData - 媒体数据（base64 字符串、Blob 或 File）
@@ -398,7 +500,7 @@ function reportProgress(current, total, action) {
                 }
             }
             const stream = createChunkedStream(database, record);
-            const response = new Response(stream);
+            const response = new Response(stream, { headers: { 'Content-Type': mimeType } });
             return await response.blob();
         }
         if (record.data) {
@@ -838,7 +940,7 @@ function reportProgress(current, total, action) {
             reader.readAsDataURL(blob);
         });
     }
-    async function processHtmlForExport(html) {
+    async function processHtmlForExport(html, options = {}) {
         if (!html) return html;
         let result = html;
         let totalMediaCount = 0;
@@ -847,7 +949,7 @@ function reportProgress(current, total, action) {
             const allMatches = result.match(/data-media-storage-id=["']([^"']+)["']/gi);
             totalMediaCount = allMatches ? allMatches.length : 0;
         }
-        if (result.includes('data-media-storage-id')) {
+        if (!options.skipVideo && result.includes('data-media-storage-id')) {
             const videoRegex = /<video([^>]*)data-media-storage-id=["']([^"']+)["']([^>]*)>/gi;
             let match;
             const videoReplacements = [];
@@ -958,6 +1060,7 @@ function reportProgress(current, total, action) {
         deleteMedia,
         mediaExists,
         getMediaInfo,
+        exportMediaChunks,
         writeMediaToWritable,
         cleanupOrphanedData,  
         getAllMediaIds,
