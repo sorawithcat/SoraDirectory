@@ -222,6 +222,9 @@ function markUnsavedChanges() {
         hasUnsavedChanges = true;
         updateSaveButtonState();
     }
+    if (typeof DraftManager !== 'undefined') {
+        DraftManager.schedule();
+    }
 }
 /**
  * 清除未保存更改标记
@@ -234,6 +237,9 @@ function clearUnsavedChanges(options = {}) {
         calculateAllHashes();
     }
     updateSaveButtonState();
+    if (!options.keepDraft && typeof DraftManager !== 'undefined') {
+        DraftManager.clear();
+    }
 }
 /**
  * 更新保存按钮状态（显示是否有未保存更改）
@@ -654,6 +660,8 @@ async function openSoraPackageFile(file, fileHandle = null) {
     }
     hasUnsavedChanges = false;
     updateSaveButtonState();
+    if (typeof DraftManager !== 'undefined') DraftManager.resetAfterLoad();
+    if (typeof DirectoryHistory !== 'undefined') DirectoryHistory.clear();
     setTimeout(() => {
         if (typeof expandAllDirectories === 'function') expandAllDirectories();
         if (typeof selectFirstRootDirectory === 'function') selectFirstRootDirectory();
@@ -815,6 +823,8 @@ async function openFileWithFSAPI() {
         }
         hasUnsavedChanges = false;
         updateSaveButtonState();
+        if (typeof DraftManager !== 'undefined') DraftManager.resetAfterLoad();
+        if (typeof DirectoryHistory !== 'undefined') DirectoryHistory.clear();
         // 大文件优先保证打开速度；媒体数据保持延迟加载。
         if (mulufile.length <= 120 && typeof MediaStorage !== 'undefined' && typeof MediaStorage.preloadAllDirectoryContent === 'function') {
             const preloadSmallFile = () => {
@@ -2099,6 +2109,150 @@ function buildPartialExportData(selectedIds, data = mulufile) {
         exportRows.push([parentId, row[1], row[2], row[3]]);
     }
     return exportRows;
+}
+
+async function collectExportPreflightIssues(data = mulufile) {
+    const rows = Array.isArray(data) ? data.filter(row => row && row.length === 4) : [];
+    const rowById = new Map();
+    const rowsByName = new Map();
+    const issues = {
+        duplicateDirectoryIds: [],
+        missingParents: [],
+        brokenLinks: [],
+        missingAnchors: [],
+        duplicateAnchors: [],
+        missingMedia: [],
+        emptyDirectories: []
+    };
+    rows.forEach(row => {
+        if (rowById.has(row[2])) issues.duplicateDirectoryIds.push(row[2]);
+        rowById.set(row[2], row);
+        if (!rowsByName.has(row[1])) rowsByName.set(row[1], []);
+        rowsByName.get(row[1]).push(row);
+    });
+    rows.forEach(row => {
+        if (row[0] && row[0] !== 'mulu' && !rowById.has(row[0])) {
+            issues.missingParents.push(`${row[1]} → ${row[0]}`);
+        }
+    });
+
+    const parsedById = new Map();
+    const anchorsById = new Map();
+    const mediaIds = new Set();
+    rows.forEach(row => {
+        const template = document.createElement('template');
+        template.innerHTML = String(row[3] || '');
+        if (typeof ensureAnchorElements === 'function') ensureAnchorElements(template.content);
+        if (typeof assignHeadingAutoIds === 'function') assignHeadingAutoIds(template.content);
+        parsedById.set(row[2], template);
+        const anchorCounts = new Map();
+        template.content.querySelectorAll('[id]').forEach(element => {
+            const id = element.getAttribute('id');
+            if (!id) return;
+            anchorCounts.set(id, (anchorCounts.get(id) || 0) + 1);
+        });
+        const anchors = new Set(anchorCounts.keys());
+        anchorsById.set(row[2], anchors);
+        anchorCounts.forEach((count, anchor) => {
+            if (count > 1) issues.duplicateAnchors.push(`${row[1]}：#${anchor}（${count} 个）`);
+        });
+        template.content.querySelectorAll('[data-media-storage-id]').forEach(element => {
+            const mediaId = element.getAttribute('data-media-storage-id');
+            if (mediaId) mediaIds.add(mediaId);
+        });
+        const text = (template.content.textContent || '').replace(/\s+/g, '').trim();
+        const hasContentElement = !!template.content.querySelector('img, video, audio, table, pre, blockquote, hr, .archive-attachment');
+        if (!text && !hasContentElement) issues.emptyDirectories.push(row[1] || row[2]);
+    });
+
+    rows.forEach(row => {
+        const template = parsedById.get(row[2]);
+        template.content.querySelectorAll('a[href]').forEach(link => {
+            const href = link.getAttribute('href') || '';
+            const soraType = link.getAttribute('data-sora-link') || '';
+            if (href.startsWith('#') || soraType === 'anchor') {
+                const anchor = link.getAttribute('data-anchor-id') || href.slice(1);
+                if (anchor && !anchorsById.get(row[2])?.has(anchor)) {
+                    issues.missingAnchors.push(`${row[1]}：#${anchor}`);
+                }
+                return;
+            }
+            if (!href.toLowerCase().startsWith('sora-dir:') && soraType !== 'dir') return;
+            const raw = href.toLowerCase().startsWith('sora-dir:') ? href.slice('sora-dir:'.length) : '';
+            const hashIndex = raw.indexOf('#');
+            const rawTarget = (hashIndex >= 0 ? raw.slice(0, hashIndex) : raw).trim();
+            const anchor = link.getAttribute('data-anchor-id') || (hashIndex >= 0 ? raw.slice(hashIndex + 1) : '');
+            const targetId = link.getAttribute('data-dir-id') || '';
+            const targetName = link.getAttribute('data-dir-name') || '';
+            let targetRow = targetId ? rowById.get(targetId) : null;
+            if (!targetRow && targetName) {
+                const matches = rowsByName.get(targetName) || [];
+                if (matches.length === 1) targetRow = matches[0];
+            }
+            if (!targetRow && rawTarget) {
+                targetRow = rowById.get(rawTarget);
+                if (!targetRow) {
+                    const matches = rowsByName.get(rawTarget) || [];
+                    if (matches.length === 1) targetRow = matches[0];
+                }
+            }
+            if (!targetRow) {
+                issues.brokenLinks.push(`${row[1]} → ${targetId || targetName || rawTarget || href}`);
+                return;
+            }
+            if (anchor && !anchorsById.get(targetRow[2])?.has(anchor)) {
+                issues.missingAnchors.push(`${row[1]} → ${targetRow[1]}#${anchor}`);
+            }
+        });
+    });
+
+    if (typeof MediaStorage !== 'undefined') {
+        await Promise.all(Array.from(mediaIds).map(async mediaId => {
+            if (!await MediaStorage.mediaExists(mediaId)) issues.missingMedia.push(mediaId);
+        }));
+    }
+    return issues;
+}
+
+function buildExportPreflightHtml(issues) {
+    const sections = [
+        ['重复目录ID', issues.duplicateDirectoryIds],
+        ['父目录缺失', issues.missingParents],
+        ['目录链接失效', issues.brokenLinks],
+        ['锚点缺失', issues.missingAnchors],
+        ['重复锚点', issues.duplicateAnchors],
+        ['媒体缺失', issues.missingMedia],
+        ['空目录', issues.emptyDirectories]
+    ];
+    const total = sections.reduce((sum, section) => sum + section[1].length, 0);
+    if (total === 0) return { total, html: '<p>预检通过，未发现断链、重复锚点或缺失媒体。</p>' };
+    const html = sections.filter(section => section[1].length > 0).map(([title, values]) => {
+        const shown = values.slice(0, 12).map(value => `<li>${escapeHtml(String(value))}</li>`).join('');
+        const more = values.length > 12 ? `<li>另有 ${values.length - 12} 项…</li>` : '';
+        return `<section style="margin-bottom:10px"><strong>${title}（${values.length}）</strong><ul>${shown}${more}</ul></section>`;
+    }).join('');
+    return { total, html: `<p>发现 <strong>${total}</strong> 个需要关注的问题：</p>${html}` };
+}
+
+async function showExportPreflight(data = mulufile) {
+    const issues = await collectExportPreflightIssues(data);
+    const report = buildExportPreflightHtml(issues);
+    if (report.total === 0) {
+        await customAlert('导出预检通过，未发现问题。', '导出预检');
+    } else {
+        await customConfirm(report.html, '关闭', '返回编辑', '导出预检详情', true);
+    }
+    return issues;
+}
+
+async function confirmExportPreflight(data = mulufile) {
+    const issues = await collectExportPreflightIssues(data);
+    const report = buildExportPreflightHtml(issues);
+    if (report.total === 0) {
+        showToast('导出预检通过', 'success', 1400);
+        return true;
+    }
+    return customConfirm(report.html, '继续导出', '返回修正', '导出预检', true);
 }
 
 async function chooseSaveAsExportScope() {

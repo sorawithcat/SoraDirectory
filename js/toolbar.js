@@ -10,7 +10,11 @@ function updateToolbarHeight() {
             wordsbox.style.top = `${toolbarHeight}px`;
             wordsbox.style.height = `${availableHeight}px`;
             const markdownContainer = wordsbox.querySelector('.markdown-editor-container');
-            if (markdownContainer) markdownContainer.style.height = '100%';
+            if (markdownContainer) {
+                markdownContainer.style.height = 'auto';
+                markdownContainer.style.flex = '1 1 auto';
+                markdownContainer.style.minHeight = '0';
+            }
             const preview = wordsbox.querySelector('.markdown-preview');
             if (preview) preview.style.height = '100%';
         }
@@ -190,6 +194,8 @@ if (topLoadBtn) {
                     if (typeof updateSaveButtonState === 'function') {
                         updateSaveButtonState();
                     }
+                    if (typeof DraftManager !== 'undefined') DraftManager.resetAfterLoad();
+                    if (typeof DirectoryHistory !== 'undefined') DirectoryHistory.clear();
                     const cacheMsg = fromCache ? '（从缓存快速加载）' : '';
                     showToast(`已加载：${fileName}${cacheMsg}`, 'success', 2500);
                 }
@@ -316,6 +322,8 @@ if (newBtn) {
                 }
             }
             mulufile = [];
+            if (typeof DraftManager !== 'undefined') DraftManager.clear();
+            if (typeof DirectoryHistory !== 'undefined') DirectoryHistory.clear();
             if (typeof loadDirectoryLevelColors === 'function') {
                 loadDirectoryLevelColors(null);
             }
@@ -348,6 +356,10 @@ if (saveAsBtn) {
             : { data: mulufile, mode: 'all', count: Array.isArray(mulufile) ? mulufile.length : 0, label: '全部目录' };
         if (!exportScope) {
             return;
+        }
+        if (typeof confirmExportPreflight === 'function') {
+            const continueExport = await confirmExportPreflight(exportScope.data);
+            if (!continueExport) return;
         }
         if (saveType === 'sora') {
             await handleSaveAsSoraPackage(null, exportScope.data, exportScope);

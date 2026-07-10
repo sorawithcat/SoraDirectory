@@ -159,6 +159,9 @@ function LoadMulu() {
     }
     rebuildMulufileIndex();
     DuplicateMuluHints();
+    if (typeof DirectoryNavigation !== 'undefined') {
+        DirectoryNavigation.refresh();
+    }
     if (error === 0 && warning === 0) {
         console.log(`加载完成 - 错误: ${error}, 警告: ${warning}`);
     } else {

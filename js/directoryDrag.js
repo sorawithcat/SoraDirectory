@@ -236,6 +236,9 @@ function handleDrop(e) {
     }
     let draggedDirId = draggedMulu.getAttribute("data-dir-id");
     let oldParentId = draggedMulu.getAttribute("data-parent-id");
+    if (typeof DirectoryHistory !== 'undefined') {
+        DirectoryHistory.record('移动目录');
+    }
     updateMulufileParent(draggedDirId, newParentId);
     draggedMulu.setAttribute("data-parent-id", newParentId);
     updateLevelRecursively(draggedMulu, newLevel);
@@ -290,6 +293,7 @@ function handleDrop(e) {
             }
         }
     }
+    if (typeof markUnsavedChanges === 'function') markUnsavedChanges();
     showToast("目录已移动", "success", 1500);
     handleDragEnd(e);
 }

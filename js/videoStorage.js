@@ -561,10 +561,15 @@ function reportProgress(current, total, action) {
             if (mimeMatch) mimeType = mimeMatch[1];
         }
         let size = null;
-        if (record.blobChunked && Number.isFinite(record.totalSize)) {
-            size = record.totalSize;
+        if (Number.isFinite(record.totalSize)) {
+            size = record.blobChunked ? record.totalSize : Math.max(0, Math.floor(record.totalSize * 3 / 4));
         } else if (record.data instanceof ArrayBuffer) {
             size = record.data.byteLength;
+        } else if (typeof record.data === 'string') {
+            const commaIndex = record.data.indexOf(',');
+            const payloadLength = commaIndex >= 0 ? record.data.length - commaIndex - 1 : record.data.length;
+            const padding = record.data.endsWith('==') ? 2 : (record.data.endsWith('=') ? 1 : 0);
+            size = Math.max(0, Math.floor(payloadLength * 3 / 4) - padding);
         }
         return {
             id: mediaId,

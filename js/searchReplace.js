@@ -9,6 +9,8 @@ const searchCaseSensitive = document.getElementById('searchCaseSensitive');
 const searchWholeWord = document.getElementById('searchWholeWord');
 const searchRegex = document.getElementById('searchRegex');
 const searchScope = document.getElementById('searchScope');
+const searchTarget = document.getElementById('searchTarget');
+const searchHistorySelect = document.getElementById('searchHistorySelect');
 const searchResults = document.getElementById('searchResults');
 const searchInfo = document.getElementById('searchInfo');
 const searchPrevBtn = document.getElementById('searchPrevBtn');
@@ -25,6 +27,36 @@ let searchState = {
     searchText: '',
     lastSearchText: ''
 };
+const SEARCH_HISTORY_KEY = 'sora_search_history';
+
+function loadSearchHistory() {
+    try {
+        const history = JSON.parse(localStorage.getItem(SEARCH_HISTORY_KEY) || '[]');
+        return Array.isArray(history) ? history : [];
+    } catch (_) {
+        return [];
+    }
+}
+
+function renderSearchHistory() {
+    if (!searchHistorySelect) return;
+    const history = loadSearchHistory();
+    searchHistorySelect.innerHTML = '<option value="">选择历史记录</option>';
+    history.forEach(text => {
+        const option = document.createElement('option');
+        option.value = text;
+        option.textContent = text;
+        searchHistorySelect.appendChild(option);
+    });
+}
+
+function rememberSearchHistory() {
+    const text = searchInput.value.trim();
+    if (!text) return;
+    const history = [text, ...loadSearchHistory().filter(item => item !== text)].slice(0, 12);
+    localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(history));
+    renderSearchHistory();
+}
 /**
  * 打开查找对话框
  * @param {boolean} replaceMode - 是否为替换模式
@@ -36,6 +68,7 @@ function openSearchDialog(replaceMode = false) {
     replaceOneBtn.style.display = replaceMode ? 'inline-block' : 'none';
     replaceAllBtn.style.display = replaceMode ? 'inline-block' : 'none';
     searchDialogOverlay.classList.add('active');
+    renderSearchHistory();
     const selection = window.getSelection();
     if (selection.toString().trim()) {
         searchInput.value = selection.toString().trim();
@@ -52,6 +85,7 @@ function openSearchDialog(replaceMode = false) {
  * 关闭查找对话框
  */
 function closeSearchDialog() {
+    rememberSearchHistory();
     searchDialogOverlay.classList.remove('active');
     clearHighlights();
     searchState.results = [];
@@ -82,6 +116,7 @@ function performSearch() {
     const wholeWord = searchWholeWord.checked;
     const useRegex = searchRegex.checked;
     const scope = searchScope.value;
+    const targetType = searchTarget ? searchTarget.value : 'content';
     let regex;
     try {
         let pattern = searchText;
@@ -96,47 +131,36 @@ function performSearch() {
         searchInfo.textContent = '正则表达式无效';
         return;
     }
-    if (scope === 'current') {
-        if (currentMuluName) {
-            const currentMulu = document.getElementById(currentMuluName);
-            if (currentMulu) {
-                const dirId = currentMulu.getAttribute('data-dir-id');
-                const dirName = currentMulu.textContent;
-                const content = jiedianwords.value;
-                const matches = findMatches(content, regex);
-                if (matches.length > 0) {
-                    searchState.results.push({
-                        dirId,
-                        dirName,
-                        domId: currentMuluName,
-                        content,
-                        matches
-                    });
-                }
-            }
-        }
-    } else {
-        const allMulus = document.querySelectorAll('.mulu');
-        allMulus.forEach(mulu => {
-            const dirId = mulu.getAttribute('data-dir-id');
-            const dirName = mulu.textContent;
-            let content = '';
-            for (let i = 0; i < mulufile.length; i++) {
-                if (mulufile[i].length === 4 && mulufile[i][2] === dirId) {
-                    content = mulufile[i][3];
-                    break;
-                }
-            }
-            const matches = findMatches(content, regex);
-            if (matches.length > 0) {
+    const addDirectoryResults = (mulu, content) => {
+        if (!mulu) return;
+        const dirId = mulu.getAttribute('data-dir-id');
+        const dirName = mulu.textContent;
+        if (targetType === 'name' || targetType === 'both') {
+            const nameMatches = findMatches(dirName, regex, false);
+            if (nameMatches.length > 0) {
                 searchState.results.push({
-                    dirId,
-                    dirName,
-                    domId: mulu.id,
-                    content,
-                    matches
+                    kind: 'name', dirId, dirName, domId: mulu.id, content,
+                    searchableText: dirName, matches: nameMatches
                 });
             }
+        }
+        if (targetType === 'content' || targetType === 'both') {
+            const contentMatches = findMatches(content, regex, true);
+            if (contentMatches.length > 0) {
+                searchState.results.push({
+                    kind: 'content', dirId, dirName, domId: mulu.id, content,
+                    searchableText: content.replace(/<[^>]*>/g, ' '), matches: contentMatches
+                });
+            }
+        }
+    };
+    if (scope === 'current') {
+        const currentMulu = currentMuluName ? document.getElementById(currentMuluName) : null;
+        if (currentMulu) addDirectoryResults(currentMulu, jiedianwords.value);
+    } else {
+        document.querySelectorAll('.mulu').forEach(mulu => {
+            const row = getMulufileByDirId(mulu.getAttribute('data-dir-id'));
+            addDirectoryResults(mulu, row ? row[3] : '');
         });
     }
     updateSearchInfo();
@@ -151,9 +175,9 @@ function performSearch() {
  * @param {RegExp} regex - 正则表达式
  * @returns {Array} - 匹配项数组
  */
-function findMatches(content, regex) {
+function findMatches(content, regex, stripHtml = true) {
     const matches = [];
-    const textContent = content.replace(/<[^>]*>/g, ' ');
+    const textContent = stripHtml ? content.replace(/<[^>]*>/g, ' ') : content;
     let match;
     regex.lastIndex = 0;
     while ((match = regex.exec(textContent)) !== null) {
@@ -187,7 +211,8 @@ function updateSearchInfo() {
         replaceAllBtn.disabled = true;
     } else {
         const currentPos = getCurrentPosition();
-        searchInfo.textContent = `${currentPos} / ${totalMatches} 个结果（${searchState.results.length} 个目录）`;
+        const directoryCount = new Set(searchState.results.map(result => result.dirId)).size;
+        searchInfo.textContent = `${currentPos} / ${totalMatches} 个结果（${directoryCount} 个目录）`;
         searchPrevBtn.disabled = false;
         searchNextBtn.disabled = false;
         replaceOneBtn.disabled = false;
@@ -216,13 +241,25 @@ function renderSearchResults() {
     }
     searchResults.style.display = 'block';
     searchResults.innerHTML = '';
+    const groups = new Map();
     searchState.results.forEach((result, resultIndex) => {
-        result.matches.forEach((match, matchIndex) => {
+        if (!groups.has(result.dirId)) groups.set(result.dirId, []);
+        groups.get(result.dirId).push({ result, resultIndex });
+    });
+    groups.forEach(entries => {
+        const group = document.createElement('section');
+        group.className = 'search-result-group';
+        const header = document.createElement('div');
+        header.className = 'search-result-group-header';
+        const matchTotal = entries.reduce((sum, entry) => sum + entry.result.matches.length, 0);
+        header.textContent = `${entries[0].result.dirName}（${matchTotal}）`;
+        group.appendChild(header);
+        entries.forEach(({ result, resultIndex }) => result.matches.forEach((match, matchIndex) => {
             const item = document.createElement('div');
             item.className = 'search-result-item';
             item.setAttribute('data-result-index', resultIndex);
             item.setAttribute('data-match-index', matchIndex);
-            const textContent = result.content.replace(/<[^>]*>/g, ' ');
+            const textContent = result.searchableText || '';
             const contextStart = Math.max(0, match.start - 30);
             const contextEnd = Math.min(textContent.length, match.end + 30);
             let context = textContent.substring(contextStart, contextEnd);
@@ -234,14 +271,16 @@ function renderSearchResults() {
             if (contextStart > 0) context = '...' + context;
             if (contextEnd < textContent.length) context += '...';
             item.innerHTML = `
-                <div class="search-result-dir">${escapeHtml(result.dirName)}</div>
+                <div class="search-result-dir">${result.kind === 'name' ? '目录名称' : '正文'}</div>
                 <div class="search-result-context">${context}</div>
             `;
             item.addEventListener('click', () => {
+                rememberSearchHistory();
                 navigateToResult(resultIndex, matchIndex);
             });
-            searchResults.appendChild(item);
-        });
+            group.appendChild(item);
+        }));
+        searchResults.appendChild(group);
     });
 }
 /**
@@ -362,6 +401,7 @@ function highlightCurrentMatch() {
     clearHighlights();
     const result = searchState.results[searchState.currentResultIndex];
     if (!result) return;
+    if (result.kind === 'name') return;
     const searchText = searchState.searchText;
     const caseSensitive = searchCaseSensitive.checked;
     const wholeWord = searchWholeWord.checked;
@@ -515,7 +555,8 @@ function replaceOne() {
     }
     const regex = new RegExp(pattern, caseSensitive ? 'g' : 'gi');
     let matchCount = 0;
-    const newContent = result.content.replace(regex, (match) => {
+    const source = result.kind === 'name' ? result.dirName : result.content;
+    const newValue = source.replace(regex, (match) => {
         if (matchCount === searchState.currentMatchIndex) {
             matchCount++;
             return replaceText;
@@ -523,14 +564,22 @@ function replaceOne() {
         matchCount++;
         return match;
     });
-    setSearchResultContent(result, newContent);
+    if (result.kind === 'name') {
+        if (ChangeChildName(result.domId, newValue)) {
+            const target = document.getElementById(result.domId);
+            if (target) target.textContent = newValue;
+        }
+    } else {
+        setSearchResultContent(result, newValue);
+    }
+    rememberSearchHistory();
     showToast('已替换 1 处', 'success', 2000);
     performSearch();
 }
 /**
  * 替换所有匹配项
  */
-function replaceAll() {
+async function replaceAll() {
     if (searchState.results.length === 0) return;
     const replaceText = replaceInput.value;
     const caseSensitive = searchCaseSensitive.checked;
@@ -543,17 +592,45 @@ function replaceAll() {
     if (wholeWord) {
         pattern = `\\b${pattern}\\b`;
     }
-    const regex = new RegExp(pattern, caseSensitive ? 'g' : 'gi');
+    const changes = [];
     let totalReplaced = 0;
     searchState.results.forEach(result => {
-        const originalContent = result.content;
-        const newContent = originalContent.replace(regex, replaceText);
-        if (newContent !== originalContent) {
-            const matchCount = (originalContent.match(regex) || []).length;
+        const originalValue = result.kind === 'name' ? result.dirName : result.content;
+        const countRegex = new RegExp(pattern, caseSensitive ? 'g' : 'gi');
+        const matchCount = (originalValue.match(countRegex) || []).length;
+        if (matchCount === 0) return;
+        const replaceRegex = new RegExp(pattern, caseSensitive ? 'g' : 'gi');
+        const newValue = originalValue.replace(replaceRegex, replaceText);
+        if (newValue !== originalValue) {
             totalReplaced += matchCount;
-            setSearchResultContent(result, newContent);
+            changes.push({ result, originalValue, newValue, matchCount });
         }
     });
+    if (changes.length === 0) return;
+    const previewItems = changes.slice(0, 8).map(change => {
+        const before = change.result.kind === 'name' ? change.originalValue : change.originalValue.replace(/<[^>]*>/g, ' ');
+        const after = change.result.kind === 'name' ? change.newValue : change.newValue.replace(/<[^>]*>/g, ' ');
+        return `<li><strong>${escapeHtml(change.result.dirName)}</strong>（${change.result.kind === 'name' ? '目录名称' : '正文'}，${change.matchCount} 处）<br>` +
+            `<span style="color:#64748b">${escapeHtml(before.slice(0, 80))} → ${escapeHtml(after.slice(0, 80))}</span></li>`;
+    }).join('');
+    const more = changes.length > 8 ? `<p>另有 ${changes.length - 8} 项未展开。</p>` : '';
+    const confirmed = await customConfirm(
+        `<p>即将替换 <strong>${totalReplaced}</strong> 处：</p><ul>${previewItems}</ul>${more}`,
+        '确认替换', '取消', '替换预览', true
+    );
+    if (!confirmed) return;
+    if (typeof DirectoryHistory !== 'undefined') DirectoryHistory.record('批量替换');
+    changes.forEach(change => {
+        if (change.result.kind === 'name') {
+            if (ChangeChildName(change.result.domId, change.newValue, { recordHistory: false })) {
+                const target = document.getElementById(change.result.domId);
+                if (target) target.textContent = change.newValue;
+            }
+        } else {
+            setSearchResultContent(change.result, change.newValue);
+        }
+    });
+    rememberSearchHistory();
     showToast(`已替换 ${totalReplaced} 处`, 'success', 2000);
     performSearch();
 }
@@ -612,6 +689,7 @@ if (searchInput) {
     searchInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') {
             e.preventDefault();
+            rememberSearchHistory();
             if (e.shiftKey) {
                 prevMatch();
             } else {
@@ -632,7 +710,7 @@ if (replaceInput) {
         }
     });
 }
-[searchCaseSensitive, searchWholeWord, searchRegex, searchScope].forEach(el => {
+[searchCaseSensitive, searchWholeWord, searchRegex, searchScope, searchTarget].forEach(el => {
     if (el) {
         el.addEventListener('change', performSearch);
     }
@@ -641,6 +719,15 @@ if (searchPrevBtn) searchPrevBtn.addEventListener('click', prevMatch);
 if (searchNextBtn) searchNextBtn.addEventListener('click', nextMatch);
 if (replaceOneBtn) replaceOneBtn.addEventListener('click', replaceOne);
 if (replaceAllBtn) replaceAllBtn.addEventListener('click', replaceAll);
+if (searchHistorySelect) {
+    searchHistorySelect.addEventListener('change', () => {
+        if (!searchHistorySelect.value) return;
+        searchInput.value = searchHistorySelect.value;
+        performSearch();
+        searchInput.focus();
+    });
+}
+renderSearchHistory();
 document.addEventListener('keydown', (e) => {
     const isCtrl = e.ctrlKey || e.metaKey;
     if (isCtrl && e.key.toLowerCase() === 'f') {

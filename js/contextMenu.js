@@ -178,6 +178,9 @@ deleteMulu.addEventListener("click", function () {
         }
         let currentDirId = nowchild.getAttribute("data-dir-id");
         let oldParentId = nowchild.getAttribute("data-parent-id") || "mulu";
+        if (typeof DirectoryHistory !== 'undefined') {
+            DirectoryHistory.record('删除目录');
+        }
         /**
          * 递归删除所有子目录
          * @param {string} parentId - 父目录ID
@@ -508,6 +511,9 @@ pasteMulu.addEventListener("click", function() {
         return;
     }
     const parentDirId = currentMulu.getAttribute("data-dir-id") || "mulu";
+    if (typeof DirectoryHistory !== 'undefined') {
+        DirectoryHistory.record('粘贴目录');
+    }
     const newMulu = pasteDirectoryData(directoryClipboard.data, parentDirId);
     if (parentDirId !== "mulu") {
         currentMulu.classList.add("has-children", "expanded");
@@ -538,6 +544,9 @@ quickDuplicateWithChildren.addEventListener("click", function() {
     }
     const copiedData = copyDirectoryData(dirId, true);
     const parentDirId = currentMulu.getAttribute("data-parent-id") || "mulu";
+    if (typeof DirectoryHistory !== 'undefined') {
+        DirectoryHistory.record('快速复制目录');
+    }
     const newMulu = pasteDirectoryData(copiedData, parentDirId, currentMulu);
     rebuildMulufileIndex();
     markDirectoryStructureChanged();
@@ -562,6 +571,9 @@ quickDuplicateWithoutChildren.addEventListener("click", function() {
     }
     const copiedData = copyDirectoryData(dirId, false);
     const parentDirId = currentMulu.getAttribute("data-parent-id") || "mulu";
+    if (typeof DirectoryHistory !== 'undefined') {
+        DirectoryHistory.record('快速复制目录');
+    }
     const newMulu = pasteDirectoryData(copiedData, parentDirId, currentMulu);
     rebuildMulufileIndex();
     markDirectoryStructureChanged();

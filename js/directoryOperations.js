@@ -5,6 +5,9 @@
  * @returns {HTMLElement|null} - 新创建的目录元素，失败返回 null
  */
 function createNewDirectory(name, asChild = false) {
+    if (typeof DirectoryHistory !== 'undefined') {
+        DirectoryHistory.record(asChild ? '添加节点' : '添加目录');
+    }
     const hasDuplicate = isDuplicateName(name);
     const newMuLuName = `mulu_${getOneId(8, 2)}`;
     const allMulus = document.querySelectorAll(".mulu");
@@ -79,6 +82,7 @@ function createNewDirectory(name, asChild = false) {
         }
     }
     bindMuluEvents(newMulu);
+    if (typeof markUnsavedChanges === 'function') markUnsavedChanges();
     if (hasDuplicate) {
         showToast("已存在同名目录", "warning", 2500);
     }

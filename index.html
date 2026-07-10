@@ -1398,6 +1398,21 @@
             cursor: pointer;
             font-size: 13px;
         }
+
+        .search-result-group + .search-result-group {
+            border-top: 1px solid #dbe3ec;
+        }
+
+        .search-result-group-header {
+            position: sticky;
+            top: 0;
+            z-index: 1;
+            padding: 6px 10px;
+            background: #f1f5f9;
+            color: #334155;
+            font-size: 12px;
+            font-weight: 700;
+        }
         
         .search-result-item:last-child {
             border-bottom: none;
@@ -1797,6 +1812,7 @@
             <button class="top-toolbar-btn" id="saveBtn" title="保存 (Ctrl+S)">保存</button>
             <button class="top-toolbar-btn" id="saveAsBtn" title="另存为">另存为</button>
             <button class="top-toolbar-btn" id="loadBtn" title="加载">加载</button>
+            <button class="top-toolbar-btn" id="preflightBtn" title="检查断链、锚点和媒体">导出预检</button>
         </div>
 
         <div class="top-toolbar-group format-toolbar-group">
@@ -1839,16 +1855,19 @@
 
         <div class="top-toolbar-group">
             <span class="top-toolbar-label">目录</span>
-            <button class="top-toolbar-btn addNewMuluButton" title="添加目录">添加目录</button>
-            <button class="top-toolbar-btn addNewPotsButton" title="添加节点">添加节点</button>
+            <button class="top-toolbar-btn addNewMuluButton" id="addDirectoryBtn" title="添加目录">添加目录</button>
+            <button class="top-toolbar-btn addNewPotsButton" id="addNodeBtn" title="添加节点">添加节点</button>
             <button class="top-toolbar-btn" id="expandAllBtn" title="展开全部">展开全部</button>
             <button class="top-toolbar-btn" id="collapseAllBtn" title="收起全部">收起全部</button>
         </div>
 
         <div class="top-toolbar-group">
             <span class="top-toolbar-label">编辑</span>
+            <button class="top-toolbar-btn" id="undoDirectoryBtn" title="撤销目录操作 (Ctrl+Z)">撤销目录</button>
+            <button class="top-toolbar-btn" id="redoDirectoryBtn" title="重做目录操作 (Ctrl+Y)">重做目录</button>
             <button class="top-toolbar-btn" id="searchBtn" title="查找 (Ctrl+F)">查找</button>
             <button class="top-toolbar-btn" id="replaceBtn" title="替换 (Ctrl+H)">替换</button>
+            <button class="top-toolbar-btn" id="mediaManagerBtn" title="查看媒体引用和孤立资源">媒体库</button>
             <button class="top-toolbar-btn" id="helpBtn" title="打开内置使用说明">使用说明</button>
         </div>
 
@@ -1861,6 +1880,12 @@
         <div class="top-toolbar-group storage-info-group">
             <span class="top-toolbar-label">存储</span>
             <span id="storageInfo" class="storage-info" title="点击刷新存储信息">计算中...</span>
+            <span id="draftStatus" class="draft-status" title="自动草稿状态"></span>
+        </div>
+
+        <div class="top-toolbar-group mobile-toolbar-group" id="mobileToolbarGroup">
+            <div id="mobileQuickActions"></div>
+            <button class="top-toolbar-btn" id="mobileMoreBtn" title="更多功能和快捷按钮设置">更多</button>
         </div>
     </div>
     
@@ -1877,6 +1902,16 @@
     </div>
     <div class="sidebar-resizer" id="sidebarResizer" title="拖拽调整目录宽度"></div>
     <div class="wordsbox">
+        <div class="workspace-navigation" id="workspaceNavigation">
+            <div class="workspace-breadcrumb" id="workspaceBreadcrumb"></div>
+            <button class="workspace-nav-btn" id="favoriteDirectoryBtn" title="收藏当前目录">☆</button>
+            <select class="workspace-nav-select" id="recentDirectorySelect" title="最近访问">
+                <option value="">最近访问</option>
+            </select>
+            <select class="workspace-nav-select" id="favoriteDirectorySelect" title="收藏目录">
+                <option value="">收藏目录</option>
+            </select>
+        </div>
         <div class="markdown-editor-container">
             <textarea class="jiedianwords" placeholder="在此输入 Markdown 内容..."></textarea>
             <div class="markdown-preview" contenteditable="true"></div>
@@ -1969,6 +2004,20 @@
                         <option value="all" selected>所有目录</option>
                     </select>
                 </div>
+                <div class="search-scope">
+                    <label>搜索内容</label>
+                    <select id="searchTarget">
+                        <option value="content" selected>正文</option>
+                        <option value="name">目录名称</option>
+                        <option value="both">目录名称和正文</option>
+                    </select>
+                </div>
+                <div class="search-scope">
+                    <label>搜索历史</label>
+                    <select id="searchHistorySelect">
+                        <option value="">选择历史记录</option>
+                    </select>
+                </div>
                 <div class="search-results" id="searchResults" style="display: none;"></div>
             </div>
             <div class="search-dialog-footer">
@@ -2004,7 +2053,7 @@
     <script>
         (async function() {
             const bootStatus = document.getElementById('bootStatus');
-            const assetVersion = '20260710-safe-sync-cache-2';
+            const assetVersion = '20260710-p0-p1-features-2';
             const versionScript = src => src + (src.includes('?') ? '&' : '?') + 'v=' + assetVersion;
             function setBootStatus(message, isError) {
                 if (!bootStatus) return;
@@ -2039,7 +2088,8 @@
                 'js/contextMenu.js',
                 'js/fileOperations.js',
                 'js/toolbar.js',
-                'js/searchReplace.js'
+                'js/searchReplace.js',
+                'js/workspaceFeatures.js'
             ];
             
             // 主初始化脚本（必须最后加载）

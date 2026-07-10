@@ -314,6 +314,10 @@ async function switchToDirectoryElement(target, options = {}) {
     } finally {
         isUpdating = false;
     }
+    if (typeof DirectoryNavigation !== 'undefined') {
+        const dirId = target.getAttribute('data-dir-id');
+        if (dirId) DirectoryNavigation.track(dirId);
+    }
     return true;
 }
 
@@ -480,6 +484,7 @@ async function updateMarkdownPreview(options = {}) {
             // 只在用户真正需要时（滚动到可见区域、点击播放等）才从IndexedDB加载
             // 使用 requestIdleCallback 或 setTimeout 分批处理后续操作，避免阻塞主线程
             const processDeferred = () => {
+                initializeStoredImages();
                 // 初始化视频元素，确保视频正确显示和播放
                 initializeVideos();
                 // 初始化压缩文件下载按钮
@@ -554,6 +559,28 @@ function initializeArchiveDownloadButtons() {
                 }
             });
         }
+    });
+}
+
+function initializeStoredImages() {
+    if (!markdownPreview || typeof MediaStorage === 'undefined') return;
+    markdownPreview.querySelectorAll('img[data-media-storage-id]').forEach(img => {
+        const src = img.getAttribute('src');
+        const hasValidSrc = src && src !== 'about:blank' && !/^\s*$/.test(src);
+        if (hasValidSrc || img.hasAttribute('data-loading-media')) return;
+        const mediaId = img.getAttribute('data-media-storage-id');
+        if (!mediaId) return;
+        img.setAttribute('data-loading-media', 'true');
+        MediaStorage.getMediaAsUrl(mediaId).then(url => {
+            if (url) {
+                img.setAttribute('src', url);
+                if (typeof limitImageSize === 'function') limitImageSize(img);
+            }
+        }).catch(err => {
+            console.warn('加载图片失败:', mediaId, err);
+        }).finally(() => {
+            img.removeAttribute('data-loading-media');
+        });
     });
 }
 /**

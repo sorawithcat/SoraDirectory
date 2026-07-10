@@ -293,11 +293,14 @@ function isDuplicateName(name) {
  * @param {string} newName - 新的目录名
  * @returns {boolean} - 是否修改成功
  */
-function ChangeChildName(idname = "", newName = "") {
+function ChangeChildName(idname = "", newName = "", options = {}) {
     let currentMulu = document.getElementById(idname);
     if (!currentMulu) return false;
     if (currentMulu.textContent === newName) {
         return false;
+    }
+    if (options.recordHistory !== false && typeof DirectoryHistory !== 'undefined') {
+        DirectoryHistory.record('重命名目录');
     }
     let hasDuplicate = isDuplicateName(newName);
     let currentDirId = currentMulu.getAttribute("data-dir-id");
@@ -306,6 +309,7 @@ function ChangeChildName(idname = "", newName = "") {
         if (item.length === 4) {
             if (item[2] === currentDirId) {
                 mulufile[i][1] = newName;
+                if (typeof markUnsavedChanges === 'function') markUnsavedChanges();
                 break;
             }
         }

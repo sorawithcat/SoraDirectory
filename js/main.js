@@ -47,6 +47,7 @@ if (document.readyState === 'loading') {
     initOnDOMReady();
 }
 async function initializeApp() {
+    let restoredDraft = false;
     if (navigator.storage && navigator.storage.persist) {
         const requestPersistentStorage = async () => {
             try {
@@ -81,6 +82,9 @@ async function initializeApp() {
             await window.loadHelpManual({ silent: true, force: true });
         }
     }
+    if (typeof DraftManager !== 'undefined') {
+        restoredDraft = await DraftManager.offerRestore();
+    }
     if (typeof calculateAllHashes === 'function') {
         const calculateHashes = () => {
             calculateAllHashes();
@@ -101,7 +105,7 @@ async function initializeApp() {
             }
         }, 0);
     }
-    if (typeof mulufile !== 'undefined' && Array.isArray(mulufile) && mulufile.length > 0) {
+    if (!restoredDraft && typeof mulufile !== 'undefined' && Array.isArray(mulufile) && mulufile.length > 0) {
         requestAnimationFrame(() => {
             if (typeof expandAllDirectories === 'function') {
                 expandAllDirectories();
