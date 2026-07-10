@@ -169,6 +169,9 @@ if (topLoadBtn) {
                         return;
                     }
                     mulufile = parsedData;
+                    if (typeof loadDirectoryLevelColors === 'function') {
+                        loadDirectoryLevelColors(null);
+                    }
                     if (typeof currentFileHandle !== 'undefined') {
                         currentFileHandle = null;
                     }
@@ -313,6 +316,9 @@ if (newBtn) {
                 }
             }
             mulufile = [];
+            if (typeof loadDirectoryLevelColors === 'function') {
+                loadDirectoryLevelColors(null);
+            }
             currentMuluName = null;
             const firststep = document.querySelector(".firststep");
             if (firststep) firststep.innerHTML = "";
@@ -1089,6 +1095,9 @@ async function loadHelpManual(options = {}) {
             currentFileName = '使用说明';
         }
         mulufile = helpMulufile;
+        if (typeof loadDirectoryLevelColors === 'function') {
+            loadDirectoryLevelColors(null);
+        }
     } else {
         const existing = Array.isArray(mulufile) ? mulufile : [];
         const filtered = existing.filter(row => !helpDirIds.has(row && row[2]));

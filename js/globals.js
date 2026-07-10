@@ -96,6 +96,8 @@ function limitImageSize(img, maxWidth = MAX_IMAGE_WIDTH, maxHeight = MAX_IMAGE_H
 }
 /** 目录数据数组，格式：[[父ID, 名称, ID, 内容], ...] */
 let mulufile = [];
+/** 用户自定义的同级目录背景色，键为目录层级 */
+const directoryLevelColors = new Map();
 /** 目录数据索引缓存（通过 dirId 快速查找） */
 const mulufileIndex = new Map();
 /**
@@ -165,6 +167,8 @@ const archiveFileInput = document.getElementById("archiveFileInput");
 const wordsbox = document.querySelector(".wordsbox");                   
 const rightmousemenu = document.querySelector(".rightmousemenu");       
 const deleteMulu = document.querySelector(".deleteMulu");               
+const changeMuluColor = document.querySelector(".changeMuluColor");
+const resetMuluColor = document.querySelector(".resetMuluColor");
 const noneRightMouseMenu = document.querySelector(".noneRightMouseMenu"); 
 const expandThisMulu = document.querySelector(".expandThisMulu");       
 const collapseThisMulu = document.querySelector(".collapseThisMulu");   

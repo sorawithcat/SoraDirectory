@@ -1,134 +1,132 @@
-/** 根目录ID到颜色的映射缓存 */
-const rootColorMap = new Map();
-const rootColorPaletteMap = new Map();
-/**
- * 查找目录的根目录ID
- * @param {HTMLElement} element - 目录元素
- * @returns {string} - 根目录ID，如果本身是根目录则返回自己的ID
- */
-function findRootDirId(element) {
-    let parentId = element.getAttribute("data-parent-id");
-    if (!parentId || parentId === "mulu") {
-        return element.getAttribute("data-dir-id");
-    }
-    let currentParentId = parentId;
-    let visited = new Set();
-    while (currentParentId && currentParentId !== "mulu" && !visited.has(currentParentId)) {
-        visited.add(currentParentId);
-        let parentElement = document.querySelector(`[data-dir-id="${currentParentId}"]`);
-        if (parentElement) {
-            let grandParentId = parentElement.getAttribute("data-parent-id");
-            if (!grandParentId || grandParentId === "mulu") {
-                return currentParentId;
-            }
-            currentParentId = grandParentId;
-        } else {
-            break;
-        }
-    }
-    return currentParentId;
+const DEFAULT_DIRECTORY_LEVEL_COLORS = [
+    '#F9F9F9', '#F0D6DC', '#DBE8F5', '#DCEBD8',
+    '#F3E5C7', '#E7DCF2', '#D7ECE8', '#F1D9C9'
+];
+const directoryLevelPaletteCache = new Map();
+
+function normalizeDirectoryLevel(level) {
+    const parsed = Number.parseInt(level, 10);
+    return Number.isFinite(parsed) ? Math.max(0, Math.min(100, parsed)) : 0;
 }
 
-function findRootDirIdFromData(dirId, parentId) {
-    if (!parentId || parentId === 'mulu') {
-        return dirId;
+function normalizeDirectoryColor(color) {
+    const value = String(color || '').trim().toUpperCase();
+    if (/^#[0-9A-F]{6}$/.test(value)) return value;
+    if (/^#[0-9A-F]{3}$/.test(value)) {
+        return '#' + value.slice(1).split('').map(char => char + char).join('');
     }
-    if (typeof getMulufileByDirId !== 'function') {
-        return null;
-    }
-    let currentId = dirId;
-    let currentParentId = parentId;
-    const visited = new Set();
-    while (currentParentId && currentParentId !== 'mulu' && !visited.has(currentParentId)) {
-        visited.add(currentParentId);
-        const parentData = getMulufileByDirId(currentParentId);
-        if (!parentData || parentData.length !== 4) {
-            return null;
-        }
-        currentId = parentData[2];
-        currentParentId = parentData[0];
-    }
-    return currentId;
-}
-/**
- * 根据字符串生成哈希值
- * @param {string} str - 输入字符串
- * @returns {number} - 哈希值 (0-1之间的小数)
- */
-function stringToHash(str) {
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-        hash = ((hash << 5) - hash) + str.charCodeAt(i);
-        hash = hash & hash;
-    }
-    return Math.abs(hash);
-}
-/**
- * 根据根目录ID生成同组子目录共用的浅色背景
- * @param {string} rootId - 根目录ID
- * @returns {string} - HSL颜色值
- */
-function getRootColor(rootId) {
-    if (!rootId) {
-        return '#f9f9f9';
-    }
-    if (rootColorMap.has(rootId)) {
-        return rootColorMap.get(rootId);
-    }
-    let hash = stringToHash(rootId);
-    let hue = hash % 360;
-    let saturation = 40 + (hash % 20);
-    let lightness = 88 + (hash % 5);
-    let color = `hsl(${hue}, ${saturation}%, ${lightness}%)`;
-    rootColorMap.set(rootId, color);
-    return color;
+    return null;
 }
 
-function getRootColorPalette(rootId) {
-    if (rootColorPaletteMap.has(rootId)) {
-        return rootColorPaletteMap.get(rootId);
+function darkenDirectoryColor(color, ratio) {
+    const normalized = normalizeDirectoryColor(color) || '#F9F9F9';
+    const factor = Math.max(0, Math.min(1, 1 - ratio));
+    const channels = [1, 3, 5].map(index => Math.round(parseInt(normalized.slice(index, index + 2), 16) * factor));
+    return '#' + channels.map(channel => channel.toString(16).padStart(2, '0')).join('').toUpperCase();
+}
+
+function getDirectoryTextColor(background) {
+    const color = normalizeDirectoryColor(background) || '#F9F9F9';
+    const channels = [1, 3, 5].map(index => parseInt(color.slice(index, index + 2), 16) / 255);
+    const linear = channels.map(channel => channel <= 0.03928
+        ? channel / 12.92
+        : Math.pow((channel + 0.055) / 1.055, 2.4));
+    const luminance = (0.2126 * linear[0]) + (0.7152 * linear[1]) + (0.0722 * linear[2]);
+    return luminance > 0.36 ? '#1F2933' : '#FFFFFF';
+}
+
+function getDirectoryLevelBackground(level) {
+    const normalizedLevel = normalizeDirectoryLevel(level);
+    const customColor = directoryLevelColors.get(normalizedLevel);
+    return normalizeDirectoryColor(customColor)
+        || DEFAULT_DIRECTORY_LEVEL_COLORS[normalizedLevel % DEFAULT_DIRECTORY_LEVEL_COLORS.length];
+}
+
+function getDirectoryLevelPalette(level) {
+    const normalizedLevel = normalizeDirectoryLevel(level);
+    const background = getDirectoryLevelBackground(normalizedLevel);
+    const cacheKey = `${normalizedLevel}:${background}`;
+    if (directoryLevelPaletteCache.has(cacheKey)) {
+        return directoryLevelPaletteCache.get(cacheKey);
     }
-    const background = getRootColor(rootId);
-    const match = background.match(/hsl\((\d+),\s*(\d+)%,\s*(\d+)%\)/);
-    let palette;
-    if (match) {
-        const hue = Number(match[1]);
-        const saturation = Number(match[2]);
-        const lightness = Number(match[3]);
-        palette = {
-            bg: background,
-            hover: `hsl(${hue}, ${saturation}%, ${Math.max(82, lightness - 4)}%)`,
-            selected: `hsl(${hue}, ${Math.min(70, saturation + 6)}%, ${Math.max(78, lightness - 8)}%)`
-        };
-    } else {
-        palette = {
-            bg: '#f9f9f9',
-            hover: '#eef1f4',
-            selected: '#dfe8f4'
-        };
-    }
-    rootColorPaletteMap.set(rootId, palette);
+    const selected = darkenDirectoryColor(background, 0.16);
+    const palette = {
+        bg: background,
+        hover: darkenDirectoryColor(background, 0.08),
+        selected,
+        text: getDirectoryTextColor(selected)
+    };
+    directoryLevelPaletteCache.set(cacheKey, palette);
     return palette;
 }
+
+function refreshDirectoryLevelColors(level = null) {
+    const targetLevel = level === null ? null : normalizeDirectoryLevel(level);
+    document.querySelectorAll('.mulu').forEach(element => {
+        const elementLevel = normalizeDirectoryLevel(element.getAttribute('data-level'));
+        if (targetLevel === null || elementLevel === targetLevel) {
+            setParentColorBall(element);
+        }
+    });
+}
+
+function setDirectoryLevelColor(level, color) {
+    const normalizedLevel = normalizeDirectoryLevel(level);
+    const normalizedColor = normalizeDirectoryColor(color);
+    if (!normalizedColor || directoryLevelColors.get(normalizedLevel) === normalizedColor) return false;
+    directoryLevelColors.set(normalizedLevel, normalizedColor);
+    directoryLevelPaletteCache.clear();
+    refreshDirectoryLevelColors(normalizedLevel);
+    return true;
+}
+
+function resetDirectoryLevelColor(level) {
+    const normalizedLevel = normalizeDirectoryLevel(level);
+    if (!directoryLevelColors.delete(normalizedLevel)) return false;
+    directoryLevelPaletteCache.clear();
+    refreshDirectoryLevelColors(normalizedLevel);
+    return true;
+}
+
+function serializeDirectoryLevelColors() {
+    const result = {};
+    Array.from(directoryLevelColors.keys()).sort((a, b) => a - b).forEach(level => {
+        const color = normalizeDirectoryColor(directoryLevelColors.get(level));
+        if (color) result[level] = color;
+    });
+    return result;
+}
+
+function loadDirectoryLevelColors(data, options = {}) {
+    const merge = !!options.merge;
+    if (!merge) directoryLevelColors.clear();
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+        Object.entries(data).forEach(([level, color]) => {
+            if (!/^\d+$/.test(String(level))) return;
+            const parsedLevel = Number(level);
+            if (!Number.isInteger(parsedLevel) || parsedLevel < 0 || parsedLevel > 100) return;
+            const normalizedLevel = normalizeDirectoryLevel(parsedLevel);
+            const normalizedColor = normalizeDirectoryColor(color);
+            if (normalizedColor && (!merge || !directoryLevelColors.has(normalizedLevel))) {
+                directoryLevelColors.set(normalizedLevel, normalizedColor);
+            }
+        });
+    }
+    directoryLevelPaletteCache.clear();
+}
 /**
- * 为目录元素设置所属根目录的整行背景色
+ * 为目录元素设置所属层级的整行背景色
  * @param {HTMLElement} element - 目录元素
  */
 function setParentColorBall(element) {
-    let parentId = element.getAttribute("data-parent-id");
-    let dirId = element.getAttribute("data-dir-id");
-    const isRoot = !parentId || parentId === "mulu";
-    let rootId = isRoot
-        ? dirId
-        : (findRootDirIdFromData(dirId, parentId) || findRootDirId(element));
-    let palette = isRoot
-        ? { bg: '#f9f9f9', hover: '#eef1f4', selected: '#dfe8f4' }
-        : getRootColorPalette(rootId);
+    const level = normalizeDirectoryLevel(element.getAttribute('data-level'));
+    const palette = getDirectoryLevelPalette(level);
     element.style.removeProperty('background-color');
     element.style.removeProperty('--root-accent');
     element.style.setProperty('--dir-bg', palette.bg);
     element.style.setProperty('--dir-hover-bg', palette.hover);
     element.style.setProperty('--dir-selected-bg', palette.selected);
+    element.style.setProperty('--dir-text', palette.text);
 }
 /**
  * 更新目录数据（基于 data-dir-id 查找）
@@ -316,6 +314,13 @@ function ChangeChildName(idname = "", newName = "") {
     }
     return true;
 }
+
+function isDirectoryToggleHit(element, event) {
+    if (!element.classList.contains('has-children')) return false;
+    const rect = element.getBoundingClientRect();
+    const x = Number.isFinite(event.clientX) ? event.clientX - rect.left : event.offsetX;
+    return x >= 0 && x < 24;
+}
 /**
  * 为目录元素绑定标准事件
  * - 左键单击：选择目录 / 点击三角折叠展开
@@ -333,8 +338,7 @@ function bindMuluEvents(muluElement, mulufileIndex = -1) {
     }
     muluElement.addEventListener("mouseup", function(e) {
         if (e.button === 0) {
-            let clickX = e.offsetX || (e.clientX - muluElement.getBoundingClientRect().left);
-            let isClickOnTriangle = clickX < 20;
+            const isClickOnTriangle = isDirectoryToggleHit(muluElement, e);
             if (muluElement.classList.contains("has-children") && isClickOnTriangle) {
                 e.stopPropagation();
                 if (clickTimer) {
@@ -391,6 +395,9 @@ function bindMuluEvents(muluElement, mulufileIndex = -1) {
         if (clickTimer) {
             clearTimeout(clickTimer);
             clickTimer = null;
+        }
+        if (isDirectoryToggleHit(muluElement, e)) {
+            return;
         }
         if (currentMuluName === muluElement.id) {
             syncPreviewToTextarea();

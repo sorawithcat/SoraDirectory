@@ -280,6 +280,9 @@ function createSoraPackageManifest(directories, mediaEntries, exportScope = null
             label: exportScope.label || ''
         } : null,
         directories,
+        directoryLevelColors: typeof serializeDirectoryLevelColors === 'function'
+            ? serializeDirectoryLevelColors()
+            : {},
         media: mediaEntries
     };
 }
@@ -497,6 +500,9 @@ async function openSoraPackageFile(file, fileHandle = null) {
     if (loadMode === 'merge') {
         const mergeResult = mergeDirectoryData(mulufile, parsedData);
         mulufile = mergeResult.data;
+        if (typeof loadDirectoryLevelColors === 'function') {
+            loadDirectoryLevelColors(manifest.directoryLevelColors, { merge: true });
+        }
         rebuildMulufileIndex();
         LoadMulu();
         markUnsavedChanges();
@@ -519,6 +525,9 @@ async function openSoraPackageFile(file, fileHandle = null) {
     currentFileHandle = fileHandle;
     currentFileName = file.name;
     mulufile = parsedData;
+    if (typeof loadDirectoryLevelColors === 'function') {
+        loadDirectoryLevelColors(manifest.directoryLevelColors);
+    }
     LoadMulu();
     if (typeof scheduleHashBaselineUpdate === 'function') {
         scheduleHashBaselineUpdate();
@@ -676,6 +685,9 @@ async function openFileWithFSAPI() {
         currentFileName = file.name;
         // 更新数据
         mulufile = parsedData;
+        if (typeof loadDirectoryLevelColors === 'function') {
+            loadDirectoryLevelColors(null);
+        }
         // 加载目录
         LoadMulu();
         // 性能优化：将计算哈希改为延迟执行，不阻塞显示
@@ -2370,46 +2382,8 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         });
         return tree;
     }
-    // 根据字符串生成哈希值
-    function stringToHash(str) {
-        let hash = 0;
-        for (let i = 0; i < str.length; i++) {
-            hash = ((hash << 5) - hash) + str.charCodeAt(i);
-            hash = hash & hash;
-        }
-        return Math.abs(hash);
-    }
-    // 根据根目录ID生成子目录背景色
-    const rootColorCache = {};
-    function getRootColor(rootId) {
-        if (!rootId) return '#f9f9f9';
-        if (rootColorCache[rootId]) return rootColorCache[rootId];
-        const hash = stringToHash(rootId);
-        const hue = hash % 360;
-        const saturation = 40 + (hash % 20);
-        const lightness = 88 + (hash % 5);
-        const color = `hsl(${hue}, ${saturation}%, ${lightness}%)`;
-        rootColorCache[rootId] = color;
-        return color;
-    }
-
-    function getDirectoryPalette(rootId, isRoot) {
-        if (isRoot) {
-            return { bg: '#f9f9f9', hover: '#eef1f4', selected: '#dfe8f4' };
-        }
-        const hash = stringToHash(rootId || '');
-        const hue = hash % 360;
-        const saturation = 40 + (hash % 20);
-        const lightness = 88 + (hash % 5);
-        return {
-            bg: getRootColor(rootId),
-            hover: `hsl(${hue}, ${saturation}%, ${Math.max(82, lightness - 4)}%)`,
-            selected: `hsl(${hue}, ${Math.min(70, saturation + 6)}%, ${Math.max(78, lightness - 8)}%)`
-        };
-    }
-
-    // 递归生成目录HTML，rootId 用于设置同组子目录背景色
-    function generateDirectoryHTML(items, level = 0, rootId = null) {
+    // 递归生成目录HTML，同层级目录共享背景色
+    function generateDirectoryHTML(items, level = 0) {
         let html = '';
         items.forEach((item, index) => {
             const safeDirId = String(item.id)
@@ -2425,18 +2399,16 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             const toggleIcon = hasChildren 
                 ? `<span class="toggle-icon"></span>` 
                 : `<span class="bullet-icon"></span>`;
-            // 计算当前目录的根目录ID和整行背景色
-            const currentRootId = level === 0 ? item.id : rootId;
-            const palette = getDirectoryPalette(currentRootId, level === 0);
+            const palette = getDirectoryLevelPalette(level);
             html += `<div class="mulu${hasChildren ? ' has-children expanded' : ''}" 
                          data-dir-id="${escapeHtml(item.id)}" 
                          data-level="${level}"
-                         style="padding-left: ${indent}px; --dir-bg: ${palette.bg}; --dir-hover-bg: ${palette.hover}; --dir-selected-bg: ${palette.selected};"
+                         style="padding-left: ${indent}px; --dir-bg: ${palette.bg}; --dir-hover-bg: ${palette.hover}; --dir-selected-bg: ${palette.selected}; --dir-text: ${palette.text};"
                          >
                         ${toggleIcon}<span class="mulu-text">${escapeHtml(item.name)}</span>
                     </div>`;
             if (hasChildren) {
-                html += generateDirectoryHTML(item.children, level + 1, currentRootId);
+                html += generateDirectoryHTML(item.children, level + 1);
             }
         });
         return html;
@@ -2487,8 +2459,8 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         return tree;
     }
 
-    // 递归生成目录HTML，rootId 用于设置同组子目录背景色
-    function generateDirectoryHTML(items, level = 0, rootId = null) {
+    // 递归生成目录HTML，同层级目录共享背景色
+    function generateDirectoryHTML(items, level = 0) {
         let html = '';
         items.forEach((item, index) => {
             const safeDirId = String(item.id)
@@ -2504,18 +2476,16 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             const toggleIcon = hasChildren 
                 ? `<span class="toggle-icon"></span>` 
                 : `<span class="bullet-icon"></span>`;
-            // 计算当前目录的根目录ID和整行背景色
-            const currentRootId = level === 0 ? item.id : rootId;
-            const palette = getDirectoryPalette(currentRootId, level === 0);
+            const palette = getDirectoryLevelPalette(level);
             html += `<div class="mulu${hasChildren ? ' has-children expanded' : ''}" 
                          data-dir-id="${escapeHtml(item.id)}" 
                          data-level="${level}"
-                         style="padding-left: ${indent}px; --dir-bg: ${palette.bg}; --dir-hover-bg: ${palette.hover}; --dir-selected-bg: ${palette.selected};"
+                         style="padding-left: ${indent}px; --dir-bg: ${palette.bg}; --dir-hover-bg: ${palette.hover}; --dir-selected-bg: ${palette.selected}; --dir-text: ${palette.text};"
                          >
                         ${toggleIcon}<span class="mulu-text">${escapeHtml(item.name)}</span>
                     </div>`;
             if (hasChildren) {
-                html += generateDirectoryHTML(item.children, level + 1, currentRootId);
+                html += generateDirectoryHTML(item.children, level + 1);
             }
         });
         return html;
@@ -2723,6 +2693,9 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
     const directoryTree = buildDirectoryTree(sourceData);
     const directoryHTML = generateDirectoryHTML(directoryTree);
     const { contentScripts, mediaDataScripts, mediaChunkScriptParts } = await generateContentScripts(sourceData);
+    const directoryLevelColorsJson = JSON.stringify(
+        typeof serializeDirectoryLevelColors === 'function' ? serializeDirectoryLevelColors() : {}
+    ).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
     // 获取第一个目录的ID作为默认选中
     const firstDirId = sourceData.length > 0 && sourceData[0].length === 4 ? sourceData[0][2] : '';
     const mediaChunkMarker = '<!--SORA_MEDIA_CHUNKS-->';
@@ -2775,6 +2748,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             position: relative;
             cursor: pointer;
             background-color: var(--dir-bg, #f9f9f9);
+            color: var(--dir-text, #1f2933);
             transition: background-color 0.16s ease, color 0.16s ease;
             padding-right: 10px;
         }
@@ -2783,7 +2757,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         }
         .mulu.selected {
             background-color: var(--dir-selected-bg, #dfe8f4);
-            color: #1f2933;
+            color: var(--dir-text, #1f2933);
             font-weight: bold;
         }
         .bullet-icon {
@@ -3269,6 +3243,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
     <script>
         const contentCache = {};
         let mediaDataMap = {};
+        const directoryLevelColors = ${directoryLevelColorsJson};
         let currentSelected = null;
         let currentDirId = null;
         let soraMethodContextDirId = null;
@@ -4209,32 +4184,53 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             return id;
         }
 
-        function getRootIdForIndex(allMulu, index) {
-            if (!allMulu || index < 0 || index >= allMulu.length) return null;
-            for (let i = index; i >= 0; i--) {
-                if (getMuluLevel(allMulu[i]) === 0) {
-                    return allMulu[i].dataset.dirId || null;
-                }
-            }
-            return null;
+        const DEFAULT_EXPORTED_DIRECTORY_LEVEL_COLORS = [
+            '#F9F9F9', '#F0D6DC', '#DBE8F5', '#DCEBD8',
+            '#F3E5C7', '#E7DCF2', '#D7ECE8', '#F1D9C9'
+        ];
+
+        function normalizeExportedDirectoryColor(color) {
+            const value = String(color || '').trim().toUpperCase();
+            return /^#[0-9A-F]{6}$/.test(value) ? value : null;
         }
 
-        function getDirectoryPaletteForRootId(rootId, isRoot) {
-            if (isRoot) {
-                return { bg: '#f9f9f9', hover: '#eef1f4', selected: '#dfe8f4' };
-            }
-            const hash = stringToHash(rootId || '');
-            const hue = hash % 360;
-            const saturation = 40 + (hash % 20);
-            const lightness = 88 + (hash % 5);
+        function darkenExportedDirectoryColor(color, ratio) {
+            const normalized = normalizeExportedDirectoryColor(color) || '#F9F9F9';
+            const factor = Math.max(0, Math.min(1, 1 - ratio));
+            const channels = [1, 3, 5].map(function(index) {
+                return Math.round(parseInt(normalized.slice(index, index + 2), 16) * factor);
+            });
+            return '#' + channels.map(function(channel) {
+                return channel.toString(16).padStart(2, '0');
+            }).join('').toUpperCase();
+        }
+
+        function getExportedDirectoryTextColor(background) {
+            const color = normalizeExportedDirectoryColor(background) || '#F9F9F9';
+            const channels = [1, 3, 5].map(function(index) {
+                return parseInt(color.slice(index, index + 2), 16) / 255;
+            });
+            const linear = channels.map(function(channel) {
+                return channel <= 0.03928 ? channel / 12.92 : Math.pow((channel + 0.055) / 1.055, 2.4);
+            });
+            const luminance = (0.2126 * linear[0]) + (0.7152 * linear[1]) + (0.0722 * linear[2]);
+            return luminance > 0.36 ? '#1F2933' : '#FFFFFF';
+        }
+
+        function getDirectoryPaletteForLevel(level) {
+            const normalizedLevel = Math.max(0, Math.min(100, parseInt(level, 10) || 0));
+            const background = normalizeExportedDirectoryColor(directoryLevelColors[normalizedLevel])
+                || DEFAULT_EXPORTED_DIRECTORY_LEVEL_COLORS[normalizedLevel % DEFAULT_EXPORTED_DIRECTORY_LEVEL_COLORS.length];
+            const selected = darkenExportedDirectoryColor(background, 0.16);
             return {
-                bg: 'hsl(' + hue + ', ' + saturation + '%, ' + lightness + '%)',
-                hover: 'hsl(' + hue + ', ' + saturation + '%, ' + Math.max(82, lightness - 4) + '%)',
-                selected: 'hsl(' + hue + ', ' + Math.min(70, saturation + 6) + '%, ' + Math.max(78, lightness - 8) + '%)'
+                bg: background,
+                hover: darkenExportedDirectoryColor(background, 0.08),
+                selected: selected,
+                text: getExportedDirectoryTextColor(selected)
             };
         }
 
-        function buildMuluElement(dirId, name, level, hasChildren, rootId) {
+        function buildMuluElement(dirId, name, level, hasChildren) {
             const el = document.createElement('div');
             el.classList.add('mulu');
             if (hasChildren) {
@@ -4243,11 +4239,12 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             el.dataset.dirId = dirId;
             el.dataset.level = String(level);
             const indent = 20 + (level * 20);
-            const palette = getDirectoryPaletteForRootId(level === 0 ? dirId : rootId, level === 0);
+            const palette = getDirectoryPaletteForLevel(level);
             el.style.paddingLeft = indent + 'px';
             el.style.setProperty('--dir-bg', palette.bg);
             el.style.setProperty('--dir-hover-bg', palette.hover);
             el.style.setProperty('--dir-selected-bg', palette.selected);
+            el.style.setProperty('--dir-text', palette.text);
 
             const toggleIcon = hasChildren
                 ? '<span class="toggle-icon"></span>'
@@ -4298,30 +4295,26 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             const container = refNode.parentNode;
             const nextSibling = refNode.nextSibling;
             const baseLevel = getMuluLevel(afterEl);
-            const rootId = getRootIdForIndex(allMulu, afterIndex);
-
             const created = [];
             const createdIds = [];
 
-            function createSubtree(node, level, rootIdForChild) {
+            function createSubtree(node, level) {
                 const newDirId = genNewDirId();
                 const children = Array.isArray(node.children) ? node.children : [];
-                const el = buildMuluElement(newDirId, String(node.name || '未命名'), level, children.length > 0, rootIdForChild);
+                const el = buildMuluElement(newDirId, String(node.name || '未命名'), level, children.length > 0);
                 created.push(el);
                 createdIds.push(newDirId);
                 nameMap[newDirId] = String(node.name || '未命名');
                 addDirToNameIndex(String(node.name || '未命名'), newDirId);
                 contentCache[newDirId] = String(node.content || '');
 
-                const nextRoot = (level === 0) ? newDirId : rootIdForChild;
                 for (let i = 0; i < children.length; i++) {
-                    createSubtree(children[i], level + 1, nextRoot);
+                    createSubtree(children[i], level + 1);
                 }
                 return newDirId;
             }
 
-            const topRootId = (baseLevel === 0) ? null : rootId;
-            const newTopId = createSubtree(dirData, baseLevel, topRootId);
+            const newTopId = createSubtree(dirData, baseLevel);
             for (let i = 0; i < created.length; i++) {
                 container.insertBefore(created[i], nextSibling);
             }

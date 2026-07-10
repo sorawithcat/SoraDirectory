@@ -84,6 +84,49 @@ function markDirectoryStructureChanged() {
     }
 }
 
+function getCurrentDirectoryLevelTarget() {
+    if (!currentMuluName) return null;
+    const element = document.getElementById(currentMuluName);
+    if (!element) return null;
+    return {
+        element,
+        level: normalizeDirectoryLevel(element.getAttribute('data-level'))
+    };
+}
+
+function getDirectoryLevelDisplayName(level) {
+    return level === 0 ? '根目录层级' : `第 ${level + 1} 级目录`;
+}
+
+if (changeMuluColor) {
+    changeMuluColor.addEventListener('click', async function() {
+        const target = getCurrentDirectoryLevelTarget();
+        hideRightMouseMenu();
+        if (!target) return;
+        const color = await colorPickerDialog(
+            getDirectoryLevelBackground(target.level),
+            `修改${getDirectoryLevelDisplayName(target.level)}背景色`
+        );
+        if (!color || !setDirectoryLevelColor(target.level, color)) return;
+        markDirectoryStructureChanged();
+        showToast(`已修改${getDirectoryLevelDisplayName(target.level)}颜色`, 'success', 2000);
+    });
+}
+
+if (resetMuluColor) {
+    resetMuluColor.addEventListener('click', function() {
+        const target = getCurrentDirectoryLevelTarget();
+        hideRightMouseMenu();
+        if (!target) return;
+        if (!resetDirectoryLevelColor(target.level)) {
+            showToast(`${getDirectoryLevelDisplayName(target.level)}已使用自动颜色`, 'info', 1800);
+            return;
+        }
+        markDirectoryStructureChanged();
+        showToast(`已恢复${getDirectoryLevelDisplayName(target.level)}自动颜色`, 'success', 2000);
+    });
+}
+
 function refreshParentChildState(parentDirId) {
     if (!parentDirId || parentDirId === "mulu") return;
     const parentElement = document.querySelector(`[data-dir-id="${parentDirId}"]`);
