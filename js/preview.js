@@ -72,7 +72,7 @@ function syncPreviewToTextarea() {
         if (currentMuluName) {
             let changedmulu = document.getElementById(currentMuluName);
             if (changedmulu) {
-                updateMulufileData(changedmulu, html);
+                updateMulufileData(changedmulu, html, { normalized: true });
             }
         }
     }
@@ -189,7 +189,12 @@ function assignHeadingAutoIds(root) {
 function normalizeEditorHtmlForStorage(html) {
     if (!html) return '';
     const template = document.createElement('template');
-    template.innerHTML = String(html);
+    const source = String(html);
+    template.innerHTML = source;
+    if (typeof sanitizeEditorFragment === 'function' &&
+        (typeof needsEditorHtmlSanitizing !== 'function' || needsEditorHtmlSanitizing(source))) {
+        sanitizeEditorFragment(template.content);
+    }
 
     template.content.querySelectorAll('[data-auto-heading-id="true"]').forEach(el => {
         el.removeAttribute('id');
@@ -281,7 +286,7 @@ async function switchToDirectoryElement(target, options = {}) {
     if (!target) return false;
     const syncCurrent = options.syncCurrent !== false;
     const scrollPreviewTop = options.scrollPreviewTop !== false;
-    const forceRender = options.forceRender !== false;
+    const forceRender = options.forceRender === true;
 
     if (syncCurrent && currentMuluName) {
         const current = document.getElementById(currentMuluName);
@@ -320,6 +325,15 @@ async function updateMarkdownPreview(options = {}) {
     if (markdownPreview && jiedianwords) {
         const forceRender = !!(options && options.force);
         let content = jiedianwords.value || '';
+        if (typeof sanitizeEditorHtml === 'function') {
+            const sanitizedContent = sanitizeEditorHtml(content);
+            if (sanitizedContent !== content) {
+                content = sanitizedContent;
+                jiedianwords.value = content;
+                const current = currentMuluName ? document.getElementById(currentMuluName) : null;
+                if (current) updateMulufileData(current, content);
+            }
+        }
         // 性能优化：如果内容没有变化，跳过更新
         if (!forceRender && content === lastPreviewContent && markdownPreview.innerHTML) {
             return;
@@ -890,6 +904,9 @@ if (markdownPreview) {
             let html = clipboardData.getData('text/html');
             const text = clipboardData.getData('text/plain');
             if (html && html.trim()) {
+                if (typeof sanitizeEditorHtml === 'function') {
+                    html = sanitizeEditorHtml(html);
+                }
                 range.deleteContents();
                 const tempDiv = document.createElement('div');
                 tempDiv.innerHTML = html;

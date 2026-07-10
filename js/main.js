@@ -1,11 +1,13 @@
-document.oncontextmenu = function (e) {
+document.addEventListener('contextmenu', function (e) {
     if (e.target === markdownPreview || markdownPreview.contains(e.target)) {
         e.preventDefault();
         showTextFormatToolbar(e);
-        return false;
+        return;
     }
-    return false;
-};
+    if (e.target.closest && e.target.closest('.mulu')) {
+        e.preventDefault();
+    }
+});
 window.addEventListener('beforeunload', function(e) {
     if (typeof hasUnsavedChanges !== 'undefined' && hasUnsavedChanges) {
         e.preventDefault();

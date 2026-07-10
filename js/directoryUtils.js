@@ -133,9 +133,10 @@ function setParentColorBall(element) {
  * 使用 Map 缓存加速查找
  * @param {HTMLElement} element - 目录 DOM 元素
  * @param {string} newContent - 新的内容
+ * @param {Object} options - 同步选项
  * @returns {boolean} - 是否更新成功
  */
-function updateMulufileData(element, newContent) {
+function updateMulufileData(element, newContent, options = {}) {
     const dirId = element.getAttribute("data-dir-id");
     if (!dirId) {
         console.warn('updateMulufileData: dirId 为空');
@@ -144,9 +145,9 @@ function updateMulufileData(element, newContent) {
     const data = getMulufileByDirId(dirId);
     if (data) {
         const oldContent = data[3];
-        const cleanedContent = typeof normalizeEditorHtmlForStorage === 'function'
-            ? normalizeEditorHtmlForStorage(newContent)
-            : newContent;
+        const cleanedContent = options.normalized || typeof normalizeEditorHtmlForStorage !== 'function'
+            ? newContent
+            : normalizeEditorHtmlForStorage(newContent);
         const comparableOldContent = typeof normalizeEditorHtmlForStorage === 'function'
             ? normalizeEditorHtmlForStorage(oldContent)
             : oldContent;
@@ -243,7 +244,7 @@ function DuplicateMuluHints() {
     let duplicateMuluID = [];
     let childs = firststep.children;
     for (let i = 0; i < childs.length; i++) {
-        allparentmulu.push(document.getElementById(childs[i].id).innerHTML);
+        allparentmulu.push(document.getElementById(childs[i].id).textContent);
         allparentmuluID.push(childs[i].id);
     }
     const elementCount = {};
@@ -282,7 +283,7 @@ function isDuplicateName(name) {
     let allNames = [];
     let mulus = document.querySelectorAll(".mulu");
     for (let i = 0; i < mulus.length; i++) {
-        allNames.push(mulus[i].innerHTML);
+        allNames.push(mulus[i].textContent);
     }
     return allNames.includes(name);
 }
@@ -295,7 +296,7 @@ function isDuplicateName(name) {
 function ChangeChildName(idname = "", newName = "") {
     let currentMulu = document.getElementById(idname);
     if (!currentMulu) return false;
-    if (currentMulu.innerHTML === newName) {
+    if (currentMulu.textContent === newName) {
         return false;
     }
     let hasDuplicate = isDuplicateName(newName);
@@ -359,7 +360,7 @@ function bindMuluEvents(muluElement, mulufileIndex = -1) {
             if (clickTimer) clearTimeout(clickTimer);
             clickTimer = setTimeout(function() {
                 const done = typeof switchToDirectoryElement === 'function'
-                    ? switchToDirectoryElement(muluElement, { syncCurrent: true, scrollPreviewTop: true, forceRender: true })
+                    ? switchToDirectoryElement(muluElement, { syncCurrent: true, scrollPreviewTop: true, forceRender: false })
                     : Promise.resolve(false);
                 Promise.resolve(done).catch(err => {
                     console.error('切换目录失败:', err);
@@ -375,7 +376,7 @@ function bindMuluEvents(muluElement, mulufileIndex = -1) {
                 clickTimer = null;
             }
             const done = typeof switchToDirectoryElement === 'function'
-                ? switchToDirectoryElement(muluElement, { syncCurrent: true, scrollPreviewTop: true, forceRender: true })
+                ? switchToDirectoryElement(muluElement, { syncCurrent: true, scrollPreviewTop: true, forceRender: false })
                 : Promise.resolve(false);
             Promise.resolve(done)
                 .catch(err => {
@@ -402,17 +403,17 @@ function bindMuluEvents(muluElement, mulufileIndex = -1) {
         if (currentMuluName === muluElement.id) {
             syncPreviewToTextarea();
         }
-        let oldName = muluElement.innerHTML;
+        let oldName = muluElement.textContent;
         customPrompt("新的名字", oldName).then(newName => {
             if (!newName || newName.length === 0) {
-                muluElement.innerHTML = oldName;
+                muluElement.textContent = oldName;
                 return;
             }
             if (!ChangeChildName(muluElement.id, newName)) {
-                muluElement.innerHTML = oldName;
+                muluElement.textContent = oldName;
                 return;
             }
-            muluElement.innerHTML = newName;
+            muluElement.textContent = newName;
         });
     });
 }

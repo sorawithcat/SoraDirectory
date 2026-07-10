@@ -101,7 +101,7 @@ function performSearch() {
             const currentMulu = document.getElementById(currentMuluName);
             if (currentMulu) {
                 const dirId = currentMulu.getAttribute('data-dir-id');
-                const dirName = currentMulu.innerHTML;
+                const dirName = currentMulu.textContent;
                 const content = jiedianwords.value;
                 const matches = findMatches(content, regex);
                 if (matches.length > 0) {
@@ -119,7 +119,7 @@ function performSearch() {
         const allMulus = document.querySelectorAll('.mulu');
         allMulus.forEach(mulu => {
             const dirId = mulu.getAttribute('data-dir-id');
-            const dirName = mulu.innerHTML;
+            const dirName = mulu.textContent;
             let content = '';
             for (let i = 0; i < mulufile.length; i++) {
                 if (mulufile[i].length === 4 && mulufile[i][2] === dirId) {

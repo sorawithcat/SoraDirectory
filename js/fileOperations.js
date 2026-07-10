@@ -695,14 +695,10 @@ async function openFileWithFSAPI() {
         if (isSoraPackageFile(file)) {
             return await openSoraPackageFile(file, fileHandle);
         }
-        // 先检查缓存（仅对非加密文件使用缓存）
+        // 先检查缓存，命中时避免读取和解析整个文件
         let parsedData = null;
         let fromCache = false;
-        // 检查是否是加密文件（需要先读取内容判断）
-        const content = await file.text();
-        const isEncrypted = isEncryptedContent(content);
-        if (!isEncrypted && typeof FileCache !== 'undefined') {
-            // 尝试从缓存获取
+        if (typeof FileCache !== 'undefined') {
             parsedData = await FileCache.get(file);
             if (parsedData) {
                 fromCache = true;
@@ -711,6 +707,8 @@ async function openFileWithFSAPI() {
         }
         // 如果缓存中没有，则解析文件内容
         if (!parsedData) {
+            const content = await file.text();
+            const isEncrypted = isEncryptedContent(content);
             // 解析文件内容（可能是 Promise，处理加密文件）
             parsedData = parseFileContent(content, file.name);
             if (parsedData instanceof Promise) {
@@ -1484,6 +1482,9 @@ function formatDataByExtension(data, filename) {
  * 始终先询问保存选项（范围、是否加密），然后选择最佳保存方式
  */
 async function handleSave() {
+    if (typeof syncPreviewToTextarea === 'function') {
+        syncPreviewToTextarea();
+    }
     const modifiedDirs = getModifiedDirectories();
     const hasModifications = modifiedDirs.length > 0;
     // 1. 如果有修改，询问保存范围
@@ -2101,6 +2102,9 @@ function buildPartialExportData(selectedIds, data = mulufile) {
 }
 
 async function chooseSaveAsExportScope() {
+    if (typeof syncPreviewToTextarea === 'function') {
+        syncPreviewToTextarea();
+    }
     if (!Array.isArray(mulufile) || mulufile.length === 0) {
         customAlert('当前没有可导出的目录');
         return null;

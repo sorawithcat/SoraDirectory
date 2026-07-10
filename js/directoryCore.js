@@ -60,12 +60,16 @@ function LoadMulu() {
     const levelCache = new Map(); 
     for (let i = 0; i < mulufile.length; i++) {
         if (mulufile[i].length === 4) {
+            const sanitizedContent = typeof sanitizeEditorHtml === 'function'
+                ? sanitizeEditorHtml(mulufile[i][3])
+                : mulufile[i][3];
+            mulufile[i][3] = sanitizedContent;
             const dirData = {
                 index: i,
                 parentId: mulufile[i][0],
                 name: mulufile[i][1],
                 dirId: mulufile[i][2],
-                content: mulufile[i][3]
+                content: sanitizedContent
             };
             dirMap.set(mulufile[i][2], dirData);
             if (!childrenMap.has(mulufile[i][0])) {

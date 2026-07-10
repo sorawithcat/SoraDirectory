@@ -2,9 +2,10 @@
   "name": "sora-directory",
   "version": "1.0.0",
   "description": "SoraDirectory - Markdown 目录编辑器",
-  "main": "SoraDirectory.html",
+  "private": true,
   "scripts": {
-    "install-deps": "npm install"
+    "start": "python -m http.server 8080",
+    "check": "node scripts/check-js.js"
   },
   "devDependencies": {
   },

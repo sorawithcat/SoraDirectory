@@ -3,6 +3,7 @@
 <html lang="zh-CN" xmlns="http://www.w3.org/1999/xhtml">
 <head>
     <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SoraList</title>
     <style>
         :root {
@@ -2003,7 +2004,7 @@
     <script>
         (async function() {
             const bootStatus = document.getElementById('bootStatus');
-            const assetVersion = '20260710-mobile-stream-export';
+            const assetVersion = '20260710-safe-sync-cache-2';
             const versionScript = src => src + (src.includes('?') ? '&' : '?') + 'v=' + assetVersion;
             function setBootStatus(message, isError) {
                 if (!bootStatus) return;

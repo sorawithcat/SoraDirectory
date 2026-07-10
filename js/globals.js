@@ -11,6 +11,40 @@ function escapeHtml(text) {
     div.textContent = text;
     return div.innerHTML;
 }
+
+function sanitizeEditorFragment(root) {
+    if (!root || !root.querySelectorAll) return;
+    root.querySelectorAll('script, iframe, object, embed, meta, base, link').forEach(el => el.remove());
+    const urlAttributes = new Set(['href', 'src', 'xlink:href', 'action', 'formaction', 'data', 'poster', 'background']);
+    root.querySelectorAll('*').forEach(el => {
+        Array.from(el.attributes).forEach(attr => {
+            const name = attr.name.toLowerCase();
+            if (name.startsWith('on') || name === 'srcdoc') {
+                el.removeAttribute(attr.name);
+                return;
+            }
+            if (!urlAttributes.has(name)) return;
+            const value = attr.value.replace(/[\u0000-\u0020]+/g, '').toLowerCase();
+            if (/^(javascript|vbscript):/.test(value) ||
+                /^data:(text\/html|application\/xhtml\+xml|image\/svg\+xml)/.test(value)) {
+                el.removeAttribute(attr.name);
+            }
+        });
+    });
+}
+
+function needsEditorHtmlSanitizing(html) {
+    return /<\s*(script|iframe|object|embed|meta|base|link)\b|\son[a-z][\w:-]*\s*=|\ssrcdoc\s*=|\s(?:href|src|xlink:href|action|formaction|data|poster|background)\s*=\s*["']?\s*(?:j|v|&#|data\s*:\s*(?:text\/html|application\/xhtml\+xml|image\/svg\+xml))/i.test(String(html || ''));
+}
+
+function sanitizeEditorHtml(html) {
+    const source = String(html || '');
+    if (!needsEditorHtmlSanitizing(source)) return source;
+    const template = document.createElement('template');
+    template.innerHTML = source;
+    sanitizeEditorFragment(template.content);
+    return template.innerHTML;
+}
 /**
  * 防抖函数 - 延迟执行，多次调用只执行最后一次
  * @param {Function} func - 要执行的函数

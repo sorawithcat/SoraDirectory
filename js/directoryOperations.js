@@ -45,10 +45,10 @@ function createNewDirectory(name, asChild = false) {
     } else {
         idName = creatDivByClass("firststep", getOneId(10, 0), "mulu");
     }
-    mulufile.push([parentIdForFile, name, newMuLuName, name]);
+    mulufile.push([parentIdForFile, name, newMuLuName, escapeHtml(name)]);
     mulufileIndex.set(newMuLuName, mulufile.length - 1);
     const newMulu = document.querySelector(`#${idName}`);
-    newMulu.innerHTML = name;
+    newMulu.textContent = name;
     newMulu.setAttribute("data-level", newLevel);
     setLevelPadding(newMulu, newLevel);
     newMulu.setAttribute("data-dir-id", newMuLuName);
