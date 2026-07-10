@@ -362,7 +362,16 @@ if (saveAsBtn) {
             if (!continueExport) return;
         }
         if (saveType === 'sora') {
-            await handleSaveAsSoraPackage(null, exportScope.data, exportScope);
+            const encryptOptions = [
+                { value: 'no', label: '不加密' },
+                { value: 'yes', label: '加密 .sora（需要密码才能加载）' }
+            ];
+            const encrypt = await customSelect('是否加密？', encryptOptions, 'no', '导出 .sora');
+            if (encrypt === null) {
+                showToast('已取消', 'info', 2000);
+                return;
+            }
+            await handleSaveAsSoraPackage(null, exportScope.data, exportScope, { encrypt: encrypt === 'yes' });
         } else if (saveType === 'webpage') {
             const encryptOptions = [
                 { value: 'no', label: '不加密' },
@@ -948,7 +957,7 @@ function buildHelpPageContents() {
         '<h2 id="另存为">另存为</h2>',
         '<p>点击顶部工具栏 <strong>另存为</strong> 后会先选择保存格式：</p>',
         '<ul>',
-        '<li><strong>Sora 单文件包 (.sora)</strong>：导出为可重新导入的单文件包，媒体按二进制保存。</li>',
+        '<li><strong>Sora 单文件包 (.sora)</strong>：导出为可重新导入的单文件包，媒体按二进制保存；可选择整包加密。</li>',
         '<li><strong>网页 (.html)</strong>：导出为独立可浏览的网页。</li>',
         '</ul>',
         '<p>选择格式后会询问导出范围：可导出全部目录、当前目录及其子目录，或手动勾选部分目录。</p>',

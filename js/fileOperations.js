@@ -8,7 +8,51 @@ const directoryHashes = new Map();
 let hasUnsavedChanges = false;
 let hashBaselineTimer = null;
 const SORA_PACKAGE_MAGIC = 'SORA_DIRECTORY_PACKAGE_V1';
+const SORA_ENCRYPTED_PACKAGE_MAGIC = 'SORA_DIRECTORY_ENCRYPTED_PACKAGE_V1';
 const SORA_PACKAGE_MIME = 'application/x-sora-directory';
+const SORA_ENCRYPTED_CHUNK_SIZE = 8 * 1024 * 1024;
+let soraLoadProgressHideTimer = null;
+
+function formatSoraProgressBytes(bytes) {
+    const value = Math.max(0, Number(bytes) || 0);
+    if (typeof formatFileSize === 'function') return formatFileSize(value);
+    if (value < 1024) return `${value} B`;
+    if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+    if (value < 1024 * 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
+    return `${(value / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
+function updateSoraLoadProgress(title, current, total, detail = '') {
+    const container = document.getElementById('soraLoadProgress');
+    if (!container) return;
+    if (soraLoadProgressHideTimer) {
+        clearTimeout(soraLoadProgressHideTimer);
+        soraLoadProgressHideTimer = null;
+    }
+    const safeTotal = Math.max(0, Number(total) || 0);
+    const safeCurrent = Math.min(safeTotal, Math.max(0, Number(current) || 0));
+    const percent = safeTotal > 0 ? Math.round(safeCurrent / safeTotal * 100) : 0;
+    document.getElementById('soraLoadProgressTitle').textContent = title;
+    document.getElementById('soraLoadProgressPercent').textContent = `${percent}%`;
+    document.getElementById('soraLoadProgressDetail').textContent = detail ||
+        `${formatSoraProgressBytes(safeCurrent)} / ${formatSoraProgressBytes(safeTotal)}`;
+    document.getElementById('soraLoadProgressFill').style.width = `${percent}%`;
+    container.classList.add('active');
+}
+
+function hideSoraLoadProgress(delay = 0) {
+    if (soraLoadProgressHideTimer) clearTimeout(soraLoadProgressHideTimer);
+    soraLoadProgressHideTimer = setTimeout(() => {
+        const container = document.getElementById('soraLoadProgress');
+        if (container) container.classList.remove('active');
+        soraLoadProgressHideTimer = null;
+    }, Math.max(0, delay));
+}
+
+function finishSoraLoadProgress(message = '.sora 加载完成') {
+    updateSoraLoadProgress(message, 1, 1, '可以继续编辑');
+    hideSoraLoadProgress(1200);
+}
 /**
  * 检查浏览器是否支持 File System Access API
  * @returns {boolean}
@@ -451,11 +495,156 @@ async function writeSoraPackageToFileHandle(fileHandle, data, exportScope = null
     }
 }
 
+function soraBytesToBase64(bytes) {
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    return btoa(binary);
+}
+
+function soraBase64ToBytes(value) {
+    return Uint8Array.from(atob(String(value || '')), char => char.charCodeAt(0));
+}
+
+function buildSoraChunkIv(prefix, index) {
+    const iv = new Uint8Array(12);
+    iv.set(prefix, 0);
+    new DataView(iv.buffer).setUint32(8, index, false);
+    return iv;
+}
+
+function buildSoraChunkAdditionalData(index, plainLength) {
+    return new TextEncoder().encode(`${SORA_ENCRYPTED_PACKAGE_MAGIC}:${index}:${plainLength}`);
+}
+
+function assertSoraEncryptionSupported() {
+    if (!globalThis.crypto || !globalThis.crypto.subtle) {
+        throw new Error('当前环境不支持安全加密，请使用 HTTPS、localhost 或桌面 App。');
+    }
+}
+
+async function createPlainSoraSourceFile(data, exportScope = null) {
+    const tempName = `.sora-plain-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`;
+    const prepared = await createTemporaryExport(tempName, fileHandle =>
+        writeSoraPackageToFileHandle(fileHandle, data, exportScope)
+    );
+    if (prepared) return prepared;
+    const blob = await buildSoraPackageBlob(data, exportScope);
+    return {
+        file: new File([blob], tempName, { type: SORA_PACKAGE_MIME }),
+        cleanup: null
+    };
+}
+
+async function encryptSoraSourceFile(sourceFile, password, writePart) {
+    assertSoraEncryptionSupported();
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const ivPrefix = crypto.getRandomValues(new Uint8Array(8));
+    const key = await deriveKey(password, salt);
+    const chunkCount = Math.ceil(sourceFile.size / SORA_ENCRYPTED_CHUNK_SIZE);
+    const metadata = {
+        type: 'SoraDirectoryEncryptedPackage',
+        version: 1,
+        algorithm: 'AES-GCM-256',
+        kdf: 'PBKDF2-SHA256',
+        iterations: 100000,
+        salt: soraBytesToBase64(salt),
+        ivPrefix: soraBytesToBase64(ivPrefix),
+        chunkSize: SORA_ENCRYPTED_CHUNK_SIZE,
+        chunkCount,
+        plainSize: sourceFile.size
+    };
+    const metadataBytes = new TextEncoder().encode(JSON.stringify(metadata));
+    await writePart(`${SORA_ENCRYPTED_PACKAGE_MAGIC}\n${metadataBytes.byteLength}\n`);
+    await writePart(metadataBytes);
+
+    for (let index = 0; index < chunkCount; index++) {
+        const start = index * SORA_ENCRYPTED_CHUNK_SIZE;
+        const end = Math.min(sourceFile.size, start + SORA_ENCRYPTED_CHUNK_SIZE);
+        const plainBytes = await sourceFile.slice(start, end).arrayBuffer();
+        const encrypted = await crypto.subtle.encrypt({
+            name: 'AES-GCM',
+            iv: buildSoraChunkIv(ivPrefix, index),
+            additionalData: buildSoraChunkAdditionalData(index, end - start)
+        }, key, plainBytes);
+        await writePart(encrypted);
+        if (chunkCount > 1) {
+            showToast(`正在加密 .sora ${index + 1}/${chunkCount}`, 'info', 1000);
+        }
+        await new Promise(resolve => setTimeout(resolve, 0));
+    }
+}
+
+async function writeEncryptedSoraSourceToHandle(fileHandle, sourceFile, password) {
+    const writable = await fileHandle.createWritable();
+    try {
+        await encryptSoraSourceFile(sourceFile, password, part => writable.write(part));
+        await writable.close();
+    } catch (err) {
+        if (typeof writable.abort === 'function') {
+            try {
+                await writable.abort();
+            } catch (abortErr) {
+                console.warn('加密 .sora 写入回滚失败:', abortErr);
+            }
+        }
+        throw err;
+    }
+}
+
+async function writeEncryptedSoraPackageToFileHandle(fileHandle, data, exportScope, password) {
+    const plain = await createPlainSoraSourceFile(data, exportScope);
+    try {
+        await writeEncryptedSoraSourceToHandle(fileHandle, plain.file, password);
+    } finally {
+        if (plain.cleanup) await plain.cleanup();
+    }
+}
+
+async function createEncryptedSoraExport(filename, data, exportScope, password) {
+    const plain = await createPlainSoraSourceFile(data, exportScope);
+    try {
+        const prepared = await createTemporaryExport(filename, fileHandle =>
+            writeEncryptedSoraSourceToHandle(fileHandle, plain.file, password)
+        );
+        if (prepared) return prepared;
+        const parts = [];
+        await encryptSoraSourceFile(plain.file, password, part => {
+            parts.push(part);
+            return Promise.resolve();
+        });
+        return {
+            file: new File(parts, filename, { type: SORA_PACKAGE_MIME }),
+            cleanup: null
+        };
+    } finally {
+        if (plain.cleanup) await plain.cleanup();
+    }
+}
+
 async function handleSaveAsSoraPackage(customName = null, exportData = null, exportScope = null, options = {}) {
     const sourceData = Array.isArray(exportData) ? exportData : mulufile;
     const baseName = getSoraBaseName(customName || (fileNameInput && fileNameInput.value.trim()) || currentFileName || 'soralist');
     const partialSuffix = exportScope && exportScope.mode === 'partial' ? '_partial' : '';
-    let filename = customName ? customName : `${baseName}${partialSuffix}.sora`;
+    const encrypt = !!options.encrypt;
+    let password = options.password || null;
+    if (encrypt) {
+        try {
+            assertSoraEncryptionSupported();
+        } catch (err) {
+            await customAlert(err.message, '无法加密');
+            return false;
+        }
+    }
+    if (encrypt && !password) {
+        password = await customPrompt('设置 .sora 加密密码：', '', '加密 .sora');
+        if (!password) return false;
+        const confirmedPassword = await customPrompt('确认密码：', '', '加密 .sora');
+        if (confirmedPassword !== password) {
+            await customAlert('两次输入的密码不一致', '加密 .sora');
+            return false;
+        }
+    }
+    let filename = customName ? customName : `${baseName}${partialSuffix}${encrypt ? '.encrypted' : ''}.sora`;
     if (!/\.sora$/i.test(filename)) {
         filename += '.sora';
     }
@@ -467,28 +656,46 @@ async function handleSaveAsSoraPackage(customName = null, exportData = null, exp
                 suggestedName: filename,
                 types: [{ description: 'Sora 单文件包', accept: { [SORA_PACKAGE_MIME]: ['.sora'] } }]
             });
-            await writeSoraPackageToFileHandle(fileHandle, sourceData, exportScope);
+            if (encrypt) {
+                await writeEncryptedSoraPackageToFileHandle(fileHandle, sourceData, exportScope, password);
+            } else {
+                await writeSoraPackageToFileHandle(fileHandle, sourceData, exportScope);
+            }
             if (setCurrent) {
-                currentFileHandle = fileHandle;
+                currentFileHandle = encrypt ? null : fileHandle;
                 currentFileName = fileHandle.name;
                 clearUnsavedChanges({ deferHashes: true });
                 if (fileNameInput) fileNameInput.value = getSoraBaseName(fileHandle.name);
             }
-            showToast(`已保存 .sora：${fileHandle.name}`, 'success', 3000);
+            showToast(`已保存${encrypt ? '加密 ' : ' '}.sora：${fileHandle.name}`, 'success', 3000);
             return true;
         } catch (err) {
             if (err.name === 'AbortError') return false;
             console.error('.sora 保存失败，降级为下载:', err);
+            if (encrypt) {
+                await customAlert(err.message || '加密 .sora 保存失败', '保存失败');
+                return false;
+            }
         }
     }
 
     let prepared = null;
-    try {
-        prepared = await createTemporaryExport(filename, fileHandle =>
-            writeSoraPackageToFileHandle(fileHandle, sourceData, exportScope)
-        );
-    } catch (err) {
-        console.warn('OPFS temporary export failed, using memory fallback:', err);
+    if (encrypt) {
+        try {
+            prepared = await createEncryptedSoraExport(filename, sourceData, exportScope, password);
+        } catch (err) {
+            console.error('加密 .sora 生成失败:', err);
+            await customAlert(err.message || '加密 .sora 生成失败', '保存失败');
+            return false;
+        }
+    } else {
+        try {
+            prepared = await createTemporaryExport(filename, fileHandle =>
+                writeSoraPackageToFileHandle(fileHandle, sourceData, exportScope)
+            );
+        } catch (err) {
+            console.warn('OPFS temporary export failed, using memory fallback:', err);
+        }
     }
     const file = prepared
         ? prepared.file
@@ -501,8 +708,153 @@ async function handleSaveAsSoraPackage(customName = null, exportData = null, exp
         clearUnsavedChanges({ deferHashes: true });
         if (fileNameInput) fileNameInput.value = getSoraBaseName(filename);
     }
-    showToast(`已保存 .sora：${filename}`, 'success', 3000);
+    showToast(`已保存${encrypt ? '加密 ' : ' '}.sora：${filename}`, 'success', 3000);
     return true;
+}
+
+async function readSoraPackageMagic(file) {
+    const text = await file.slice(0, Math.min(file.size, 256)).text();
+    const newline = text.indexOf('\n');
+    return (newline >= 0 ? text.slice(0, newline) : text).replace(/\r$/, '');
+}
+
+async function readEncryptedSoraPackageHeader(file) {
+    let probeSize = Math.min(file.size, 1024);
+    let headerText = '';
+    let firstNewline = -1;
+    let secondNewline = -1;
+    while (probeSize <= Math.min(file.size, 1024 * 1024)) {
+        headerText = await file.slice(0, probeSize).text();
+        firstNewline = headerText.indexOf('\n');
+        secondNewline = firstNewline >= 0 ? headerText.indexOf('\n', firstNewline + 1) : -1;
+        if (secondNewline >= 0 || probeSize >= file.size) break;
+        probeSize = Math.min(file.size, probeSize * 4);
+    }
+    if (firstNewline < 0 || secondNewline < 0) throw new Error('加密 .sora 包头损坏');
+    const magic = headerText.slice(0, firstNewline).replace(/\r$/, '');
+    if (magic !== SORA_ENCRYPTED_PACKAGE_MAGIC) throw new Error('加密 .sora 包头不匹配');
+    const metadataLength = Number(headerText.slice(firstNewline + 1, secondNewline).trim());
+    if (!Number.isInteger(metadataLength) || metadataLength <= 0 || metadataLength > 1024 * 1024) {
+        throw new Error('加密 .sora 元数据长度错误');
+    }
+    const encryptedStart = secondNewline + 1 + metadataLength;
+    if (encryptedStart > file.size) throw new Error('加密 .sora 元数据越界');
+    const metadataText = new TextDecoder().decode(
+        await file.slice(secondNewline + 1, encryptedStart).arrayBuffer()
+    );
+    const metadata = JSON.parse(metadataText);
+    if (!metadata || metadata.type !== 'SoraDirectoryEncryptedPackage' || metadata.version !== 1) {
+        throw new Error('加密 .sora 元数据格式错误');
+    }
+    if (metadata.algorithm !== 'AES-GCM-256' || metadata.kdf !== 'PBKDF2-SHA256' || metadata.iterations !== 100000) {
+        throw new Error('暂不支持该 .sora 加密算法');
+    }
+    if (!Number.isInteger(metadata.chunkSize) || metadata.chunkSize <= 0 || metadata.chunkSize > 64 * 1024 * 1024 ||
+        !Number.isInteger(metadata.chunkCount) || metadata.chunkCount <= 0 ||
+        !Number.isFinite(metadata.plainSize) || metadata.plainSize <= 0) {
+        throw new Error('加密 .sora 分块信息错误');
+    }
+    const expectedChunkCount = Math.ceil(metadata.plainSize / metadata.chunkSize);
+    const expectedSize = encryptedStart + metadata.plainSize + metadata.chunkCount * 16;
+    if (metadata.chunkCount !== expectedChunkCount || expectedSize !== file.size) {
+        throw new Error('加密 .sora 文件长度不匹配');
+    }
+    const salt = soraBase64ToBytes(metadata.salt);
+    const ivPrefix = soraBase64ToBytes(metadata.ivPrefix);
+    if (salt.length !== 16 || ivPrefix.length !== 8) throw new Error('加密 .sora 密钥参数错误');
+    return { metadata, encryptedStart, salt, ivPrefix };
+}
+
+async function decryptSoraSourceFile(sourceFile, password, writePart) {
+    assertSoraEncryptionSupported();
+    const { metadata, encryptedStart, salt, ivPrefix } = await readEncryptedSoraPackageHeader(sourceFile);
+    const key = await deriveKey(password, salt);
+    let offset = encryptedStart;
+    updateSoraLoadProgress('正在解密 .sora', 0, metadata.plainSize);
+    for (let index = 0; index < metadata.chunkCount; index++) {
+        const plainLength = Math.min(metadata.chunkSize, metadata.plainSize - index * metadata.chunkSize);
+        const encryptedLength = plainLength + 16;
+        const encrypted = await sourceFile.slice(offset, offset + encryptedLength).arrayBuffer();
+        let plain;
+        try {
+            plain = await crypto.subtle.decrypt({
+                name: 'AES-GCM',
+                iv: buildSoraChunkIv(ivPrefix, index),
+                additionalData: buildSoraChunkAdditionalData(index, plainLength)
+            }, key, encrypted);
+        } catch (err) {
+            err.soraPasswordOrCorrupt = true;
+            throw err;
+        }
+        await writePart(plain);
+        offset += encryptedLength;
+        const completedBytes = Math.min(metadata.plainSize, (index + 1) * metadata.chunkSize);
+        updateSoraLoadProgress('正在解密 .sora', completedBytes, metadata.plainSize);
+        await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    hideSoraLoadProgress(500);
+}
+
+async function writeDecryptedSoraToHandle(fileHandle, sourceFile, password) {
+    const writable = await fileHandle.createWritable();
+    try {
+        await decryptSoraSourceFile(sourceFile, password, part => writable.write(part));
+        await writable.close();
+    } catch (err) {
+        if (typeof writable.abort === 'function') {
+            try {
+                await writable.abort();
+            } catch (abortErr) {
+                console.warn('解密 .sora 写入回滚失败:', abortErr);
+            }
+        }
+        throw err;
+    }
+}
+
+async function decryptEncryptedSoraPackageFile(file, password) {
+    const tempName = `.sora-decrypted-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`;
+    const prepared = await createTemporaryExport(tempName, fileHandle =>
+        writeDecryptedSoraToHandle(fileHandle, file, password)
+    );
+    if (prepared) return prepared;
+    const parts = [];
+    await decryptSoraSourceFile(file, password, part => {
+        parts.push(part);
+        return Promise.resolve();
+    });
+    return {
+        file: new File(parts, tempName, { type: SORA_PACKAGE_MIME }),
+        cleanup: null
+    };
+}
+
+async function prepareSoraPackageForOpen(file) {
+    const magic = await readSoraPackageMagic(file);
+    if (magic !== SORA_ENCRYPTED_PACKAGE_MAGIC) {
+        return { file, cleanup: null, encrypted: false };
+    }
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        const password = await customPrompt('输入 .sora 解密密码：', '', '解密 .sora');
+        if (password === null) return null;
+        if (!password) {
+            showToast('请输入密码', 'warning', 1500);
+            attempt--;
+            continue;
+        }
+        try {
+            const prepared = await decryptEncryptedSoraPackageFile(file, password);
+            return { ...prepared, encrypted: true };
+        } catch (err) {
+            hideSoraLoadProgress();
+            if (!err.soraPasswordOrCorrupt) throw err;
+            if (attempt < 3) {
+                await customAlert(`密码错误或文件损坏，还可尝试 ${3 - attempt} 次。`, '解密失败');
+            }
+        }
+    }
+    await customAlert('密码错误次数过多，已取消加载。', '解密失败');
+    return null;
 }
 
 async function readSoraPackageManifest(file) {
@@ -548,12 +900,22 @@ async function importSoraPackageMedia(file, manifest, mediaStart) {
         throw new Error('媒体存储未初始化');
     }
     let imported = 0;
+    let completedBytes = 0;
+    const totalBytes = media.reduce((sum, entry) =>
+        sum + (entry && entry.id && Number.isFinite(entry.offset) && Number.isFinite(entry.length) && entry.length > 0
+            ? entry.length
+            : 0), 0);
+    updateSoraLoadProgress('正在导入媒体', 0, totalBytes,
+        `0 B / ${formatSoraProgressBytes(totalBytes)} · 0/${media.length}`);
     for (let i = 0; i < media.length; i++) {
         const entry = media[i];
         if (!entry || !entry.id || !Number.isFinite(entry.offset) || !Number.isFinite(entry.length)) {
             continue;
         }
         if (typeof MediaStorage.mediaExists === 'function' && await MediaStorage.mediaExists(entry.id)) {
+            completedBytes += entry.length;
+            updateSoraLoadProgress(`正在导入媒体 ${i + 1}/${media.length}`, completedBytes, totalBytes,
+                `${formatSoraProgressBytes(completedBytes)} / ${formatSoraProgressBytes(totalBytes)}`);
             continue;
         }
         const start = mediaStart + entry.offset;
@@ -563,47 +925,87 @@ async function importSoraPackageMedia(file, manifest, mediaStart) {
             continue;
         }
         const blob = file.slice(start, end, entry.mimeType || 'application/octet-stream');
-        await MediaStorage.save(blob, entry.type || inferMediaTypeFromId(entry.id), entry.id);
+        await MediaStorage.save(blob, entry.type || inferMediaTypeFromId(entry.id), entry.id, {
+            silentProgress: true,
+            onProgress: (current, total) => {
+                const mediaRatio = total > 0 ? current / total : 0;
+                const currentBytes = Math.min(totalBytes, completedBytes + entry.length * mediaRatio);
+                updateSoraLoadProgress(`正在导入媒体 ${i + 1}/${media.length}`, currentBytes, totalBytes,
+                    `${formatSoraProgressBytes(currentBytes)} / ${formatSoraProgressBytes(totalBytes)}`);
+            }
+        });
         if (typeof MediaStorage.hideProgressToast === 'function') {
             MediaStorage.hideProgressToast();
         }
+        completedBytes += entry.length;
+        updateSoraLoadProgress(`正在导入媒体 ${i + 1}/${media.length}`, completedBytes, totalBytes,
+            `${formatSoraProgressBytes(completedBytes)} / ${formatSoraProgressBytes(totalBytes)}`);
         imported++;
-        showToast(`正在导入媒体 ${i + 1}/${media.length}`, 'info', 1200);
-        if (i % 3 === 0) {
-            await new Promise(resolve => setTimeout(resolve, 0));
-        }
+        await new Promise(resolve => setTimeout(resolve, 0));
     }
     return imported;
 }
 
-function startSoraPackageMediaImport(file, manifest, mediaStart) {
+function startSoraPackageMediaImport(file, manifest, mediaStart, cleanup = null) {
     const mediaCount = Array.isArray(manifest.media) ? manifest.media.length : 0;
-    if (mediaCount === 0) return;
-    showToast(`目录已加载，正在后台导入 ${mediaCount} 个媒体文件`, 'info', 3000);
+    if (mediaCount === 0) {
+        if (cleanup) Promise.resolve(cleanup()).catch(err => console.warn('临时 .sora 清理失败:', err));
+        finishSoraLoadProgress();
+        return false;
+    }
     const importTask = importSoraPackageMedia(file, manifest, mediaStart)
         .then(count => {
             if (typeof updateMarkdownPreview === 'function') {
                 updateMarkdownPreview();
             }
+            finishSoraLoadProgress(`媒体导入完成 ${count}/${mediaCount}`);
             showToast(`.sora 媒体导入完成：${count}/${mediaCount}`, 'success', 3000);
         })
         .catch(err => {
+            hideSoraLoadProgress();
             console.error('.sora 媒体导入失败:', err);
             showToast('.sora 媒体导入失败：' + err.message, 'error', 4000);
         });
     window.__soraMediaImportPromise = importTask;
-    importTask.finally(() => {
+    importTask.finally(async () => {
         if (window.__soraMediaImportPromise === importTask) {
             window.__soraMediaImportPromise = null;
         }
+        if (cleanup) {
+            try {
+                await cleanup();
+            } catch (err) {
+                console.warn('临时 .sora 清理失败:', err);
+            }
+        }
     });
+    return true;
 }
 
 async function openSoraPackageFile(file, fileHandle = null) {
-    const { manifest, mediaStart } = await readSoraPackageManifest(file);
+    const originalFile = file;
+    const prepared = await prepareSoraPackageForOpen(file);
+    if (!prepared) return false;
+    file = prepared.file;
+    if (prepared.encrypted) fileHandle = null;
+    let cleaned = false;
+    const cleanupPrepared = async () => {
+        if (cleaned || !prepared.cleanup) return;
+        cleaned = true;
+        await prepared.cleanup();
+    };
+    let manifestData;
+    try {
+        manifestData = await readSoraPackageManifest(file);
+    } catch (err) {
+        await cleanupPrepared();
+        throw err;
+    }
+    const { manifest, mediaStart } = manifestData;
     const parsedData = manifest.directories;
     if (!Array.isArray(parsedData) || parsedData.length === 0) {
         customAlert("文件格式错误：无法解析为有效的目录数据");
+        await cleanupPrepared();
         return false;
     }
 
@@ -619,6 +1021,7 @@ async function openSoraPackageFile(file, fileHandle = null) {
         loadMode = await customSelect(`选择加载方式${hint}：`, modeOptions, defaultMode, '加载 .sora');
         if (loadMode === null) {
             showToast('已取消加载', 'info', 2000);
+            await cleanupPrepared();
             return false;
         }
     }
@@ -638,18 +1041,19 @@ async function openSoraPackageFile(file, fileHandle = null) {
         }, 10);
         bigbox.style.display = "block";
         wordsbox.style.display = "block";
-        startSoraPackageMediaImport(file, manifest, mediaStart);
-        showToast(`已合并 .sora：新增 ${mergeResult.added} 个，更新 ${mergeResult.updated} 个目录`, 'success', 3000);
+        startSoraPackageMediaImport(file, manifest, mediaStart, cleanupPrepared);
+        showToast(`已合并${prepared.encrypted ? '加密 ' : ' '}.sora：新增 ${mergeResult.added} 个，更新 ${mergeResult.updated} 个目录`, 'success', 3000);
         return true;
     }
 
     if (parsedData[0].length < 4 || parsedData[0][0] !== "mulu") {
         customAlert("文件格式错误：第一个目录必须以'mulu'开头\n\n如果这是增量文件，请选择【合并】模式加载");
+        await cleanupPrepared();
         return false;
     }
 
     currentFileHandle = fileHandle;
-    currentFileName = file.name;
+    currentFileName = originalFile.name;
     mulufile = parsedData;
     if (typeof loadDirectoryLevelColors === 'function') {
         loadDirectoryLevelColors(manifest.directoryLevelColors);
@@ -669,10 +1073,10 @@ async function openSoraPackageFile(file, fileHandle = null) {
     bigbox.style.display = "block";
     wordsbox.style.display = "block";
     if (fileNameInput) {
-        fileNameInput.value = getSoraBaseName(file.name);
+        fileNameInput.value = getSoraBaseName(originalFile.name);
     }
-    startSoraPackageMediaImport(file, manifest, mediaStart);
-    showToast(`已打开：${file.name}（.sora）`, 'success', 3000);
+    startSoraPackageMediaImport(file, manifest, mediaStart, cleanupPrepared);
+    showToast(`已打开：${originalFile.name}（${prepared.encrypted ? '加密 ' : ''}.sora）`, 'success', 3000);
     return true;
 }
 /**

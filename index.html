@@ -1199,6 +1199,62 @@
         .toast-error {
             background-color: #f44336;
         }
+
+        .sora-load-progress {
+            position: fixed;
+            top: calc(var(--toolbar-height, 80px) + 12px);
+            right: 20px;
+            z-index: 10002;
+            width: min(360px, calc(100vw - 40px));
+            padding: 14px 16px;
+            border: 1px solid var(--color-border, #d7dee8);
+            border-radius: 10px;
+            background: var(--color-panel, #fff);
+            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
+            color: var(--color-text, #1f2937);
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(-8px);
+            transition: opacity 0.18s ease, transform 0.18s ease, visibility 0.18s ease;
+            pointer-events: none;
+        }
+
+        .sora-load-progress.active {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+        }
+
+        .sora-load-progress-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            font-size: 14px;
+            font-weight: 700;
+        }
+
+        .sora-load-progress-detail {
+            margin-top: 6px;
+            color: var(--color-text-muted, #64748b);
+            font-size: 12px;
+        }
+
+        .sora-load-progress-track {
+            height: 8px;
+            margin-top: 10px;
+            overflow: hidden;
+            border-radius: 999px;
+            background: #e2e8f0;
+        }
+
+        .sora-load-progress-fill {
+            width: 0;
+            height: 100%;
+            border-radius: inherit;
+            background: var(--color-primary, #2563eb);
+            transition: width 0.16s ease;
+        }
         
         /* 查找/替换对话框样式 */
         .search-dialog-overlay {
@@ -1966,6 +2022,16 @@
     </div>
     
     <div class="toast-container" id="toastContainer"></div>
+    <div class="sora-load-progress" id="soraLoadProgress" role="status" aria-live="polite">
+        <div class="sora-load-progress-header">
+            <span id="soraLoadProgressTitle">正在加载 .sora</span>
+            <span id="soraLoadProgressPercent">0%</span>
+        </div>
+        <div class="sora-load-progress-detail" id="soraLoadProgressDetail"></div>
+        <div class="sora-load-progress-track">
+            <div class="sora-load-progress-fill" id="soraLoadProgressFill"></div>
+        </div>
+    </div>
     
     
     <div class="search-dialog-overlay" id="searchDialogOverlay">
@@ -2053,7 +2119,7 @@
     <script>
         (async function() {
             const bootStatus = document.getElementById('bootStatus');
-        const assetVersion = '20260710-p0-p1-media-flow-2';
+            const assetVersion = '20260710-p0-p1-sora-load-progress';
             const versionScript = src => src + (src.includes('?') ? '&' : '?') + 'v=' + assetVersion;
             function setBootStatus(message, isError) {
                 if (!bootStatus) return;

@@ -264,12 +264,12 @@ function generateMediaId(type = 'media') {
      * @param {string} [mediaId] - 可选的媒体 ID，不提供则自动生成
      * @returns {Promise<string>} - 返回媒体 ID
      */
-    async function saveMedia(mediaData, type = 'media', mediaId = null) {
+    async function saveMedia(mediaData, type = 'media', mediaId = null, options = {}) {
         const database = await initDB();
         const id = mediaId || generateMediaId(type);
         // 如果是 Blob 或 File，使用二进制分块存储
         if (mediaData instanceof Blob || mediaData instanceof File) {
-            return saveBlobChunked(database, mediaData, type, id);
+            return saveBlobChunked(database, mediaData, type, id, options);
         }
         // 字符串数据（base64）
         if (typeof mediaData === 'string') {
@@ -343,25 +343,31 @@ function hideProgressToast() {
      * @param {number} total - 总数
      * @param {string} action - 动作 ('saving' 或 'loading')
      */
-function reportProgress(current, total, action) {
+function reportProgress(current, total, action, options = {}) {
         const percent = Math.round(current / total * 100);
         const actionText = action === 'saving' ? '保存中' : '加载中';
-        showProgressToast(`${actionText}: ${current}/${total} (${percent}%)`);
+        if (!options.silentProgress) {
+            showProgressToast(`${actionText}: ${current}/${total} (${percent}%)`);
+        }
         if (progressCallback) {
             progressCallback(current, total, action);
         }
+        if (typeof options.onProgress === 'function') {
+            options.onProgress(current, total, action);
+        }
     }
-    async function saveBlobChunked(database, blob, type, id) {
+    async function saveBlobChunked(database, blob, type, id, options = {}) {
         const totalChunks = Math.ceil(blob.size / CHUNK_SIZE);
         const chunks = [];
         const mimeType = blob.type || 'application/octet-stream';
-        showProgressToast(`保存中: 0/${totalChunks} (0%)`);
+        if (!options.silentProgress) {
+            showProgressToast(`保存中: 0/${totalChunks} (0%)`);
+        }
         for (let i = 0; i < totalChunks; i++) {
             const start = i * CHUNK_SIZE;
             const end = Math.min(start + CHUNK_SIZE, blob.size);
             const chunkBlob = blob.slice(start, end);
             const chunkId = `${id}_chunk_${i}`;
-            reportProgress(i + 1, totalChunks, 'saving');
             const arrayBuffer = await chunkBlob.arrayBuffer();
             await new Promise((resolve, reject) => {
                 const transaction = database.transaction([STORE_NAME], 'readwrite');
@@ -383,6 +389,8 @@ function reportProgress(current, total, action) {
                     reject(request.error);
                 };
             });
+            reportProgress(i + 1, totalChunks, 'saving', options);
+            await new Promise(resolve => setTimeout(resolve, 0));
         }
         return new Promise((resolve, reject) => {
             const transaction = database.transaction([STORE_NAME], 'readwrite');
