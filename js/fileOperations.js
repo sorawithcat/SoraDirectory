@@ -391,7 +391,7 @@ async function collectSoraPackageMediaParts(source, preferStreaming = false) {
         }
         if (preferStreaming && typeof MediaStorage.getMediaInfo === 'function' && typeof MediaStorage.writeMediaToWritable === 'function') {
             const info = await MediaStorage.getMediaInfo(mediaId);
-            if (info && info.blobChunked && Number.isFinite(info.size)) {
+            if (info && (info.blobChunked || info.storage === 'opfs') && Number.isFinite(info.size)) {
                 const length = info.size;
                 mediaEntries.push({
                     id: mediaId,
@@ -1040,7 +1040,7 @@ async function openSoraPackageFile(file, fileHandle = null) {
             if (typeof selectFirstRootDirectory === 'function') selectFirstRootDirectory();
         }, 10);
         bigbox.style.display = "block";
-        wordsbox.style.display = "block";
+        wordsbox.style.display = "";
         startSoraPackageMediaImport(file, manifest, mediaStart, cleanupPrepared);
         showToast(`已合并${prepared.encrypted ? '加密 ' : ' '}.sora：新增 ${mergeResult.added} 个，更新 ${mergeResult.updated} 个目录`, 'success', 3000);
         return true;
@@ -1071,7 +1071,7 @@ async function openSoraPackageFile(file, fileHandle = null) {
         if (typeof selectFirstRootDirectory === 'function') selectFirstRootDirectory();
     }, 10);
     bigbox.style.display = "block";
-    wordsbox.style.display = "block";
+    wordsbox.style.display = "";
     if (fileNameInput) {
         fileNameInput.value = getSoraBaseName(originalFile.name);
     }
@@ -1154,7 +1154,7 @@ async function openFileWithFSAPI() {
                 selectFirstRootDirectory();
             }, 10);
             bigbox.style.display = "block";
-            wordsbox.style.display = "block";
+            wordsbox.style.display = "";
             let msg = `已应用差异补丁：${result.applied} 个目录`;
             if (result.notFound > 0) msg += `（新建 ${result.notFound} 个）`;
             if (result.failed > 0) msg += `，${result.failed} 个失败`;
@@ -1200,7 +1200,7 @@ async function openFileWithFSAPI() {
                 selectFirstRootDirectory();
             }, 10);
             bigbox.style.display = "block";
-            wordsbox.style.display = "block";
+            wordsbox.style.display = "";
             const cacheMsg = fromCache ? '（从缓存快速加载）' : '';
             showToast(`已合并：新增 ${mergeResult.added} 个，更新 ${mergeResult.updated} 个目录${cacheMsg}`, 'success', 3000);
             return true;
@@ -1251,7 +1251,7 @@ async function openFileWithFSAPI() {
             selectFirstRootDirectory();
         }, 10);
         bigbox.style.display = "block";
-        wordsbox.style.display = "block";
+        wordsbox.style.display = "";
         // 更新文件名输入框（移除各种后缀）
         if (fileNameInput) {
             let nameWithoutExt = file.name

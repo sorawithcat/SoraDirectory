@@ -132,7 +132,7 @@ if (topLoadBtn) {
                         if (typeof selectFirstRootDirectory === 'function') selectFirstRootDirectory();
                     }, 10);
                     bigbox.style.display = "block";
-                    wordsbox.style.display = "block";
+                    wordsbox.style.display = "";
                     return;
                 }
                 if (!Array.isArray(parsedData) || parsedData.length === 0) {
@@ -229,7 +229,7 @@ if (topLoadBtn) {
                     }
                 }, 10);
                 bigbox.style.display = "block";
-                wordsbox.style.display = "block";
+                wordsbox.style.display = "";
                 if (fileNameInput) {
                     let nameWithoutExt = fileName
                         .replace(/\s*\(\d+\)\s*\./g, '.')       
@@ -316,9 +316,9 @@ if (newBtn) {
             if (typeof MediaStorage !== 'undefined' && MediaStorage.clearAll) {
                 try {
                     await MediaStorage.clearAll();
-                    console.log('已清空 IndexedDB 媒体存储');
+                    console.log('已清空本地媒体存储');
                 } catch (err) {
-                    console.error('清空 IndexedDB 失败:', err);
+                    console.error('清空本地媒体存储失败:', err);
                 }
             }
             mulufile = [];

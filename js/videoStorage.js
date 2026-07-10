@@ -2,9 +2,75 @@ const MediaStorage = (function() {
     const DB_NAME = 'SoraDirectoryMediaDB';
     const DB_VERSION = 1;
     const STORE_NAME = 'media';
+    const OPFS_DIRECTORY_NAME = 'sora-media';
     let db = null;
+    let opfsDirectoryPromise = null;
     const processedContentCache = new Map();
     const mediaUrlCache = new Map();
+
+    function supportsOpfsMediaStorage() {
+        return !!(navigator.storage && typeof navigator.storage.getDirectory === 'function');
+    }
+
+    function getOpfsFileName(mediaId) {
+        return encodeURIComponent(String(mediaId || '')).replace(/\./g, '%2E');
+    }
+
+    function isOpfsRecord(record) {
+        return !!(record && record.storage === 'opfs' && record.opfsFileName);
+    }
+
+    async function getOpfsMediaDirectory(create = true) {
+        if (!supportsOpfsMediaStorage()) return null;
+        if (opfsDirectoryPromise) return opfsDirectoryPromise;
+        const load = async () => {
+            const root = await navigator.storage.getDirectory();
+            return root.getDirectoryHandle(OPFS_DIRECTORY_NAME, { create });
+        };
+        if (create) {
+            opfsDirectoryPromise = load().catch(err => {
+                opfsDirectoryPromise = null;
+                throw err;
+            });
+            return opfsDirectoryPromise;
+        }
+        try {
+            return await load();
+        } catch (err) {
+            if (err && err.name === 'NotFoundError') return null;
+            throw err;
+        }
+    }
+
+    async function getOpfsFile(record) {
+        if (!isOpfsRecord(record)) return null;
+        const directory = await getOpfsMediaDirectory(false);
+        if (!directory) return null;
+        try {
+            const handle = await directory.getFileHandle(record.opfsFileName);
+            return await handle.getFile();
+        } catch (err) {
+            if (err && err.name === 'NotFoundError') return null;
+            throw err;
+        }
+    }
+
+    async function removeOpfsFile(fileName) {
+        if (!fileName) return;
+        const directory = await getOpfsMediaDirectory(false);
+        if (!directory) return;
+        try {
+            await directory.removeEntry(fileName);
+        } catch (err) {
+            if (!err || err.name !== 'NotFoundError') throw err;
+        }
+    }
+
+    function revokeMediaUrl(mediaId) {
+        const url = mediaUrlCache.get(mediaId);
+        if (url && String(url).startsWith('blob:')) URL.revokeObjectURL(url);
+        mediaUrlCache.delete(mediaId);
+    }
     /**
      * 简单哈希函数，用于生成缓存键
      * @param {string} str - 要哈希的字符串
@@ -62,6 +128,24 @@ function initDB() {
         const transaction = database.transaction([STORE_NAME], 'readonly');
         const store = transaction.objectStore(STORE_NAME);
         return requestToPromise(store.get(id));
+    }
+
+    function putRecord(database, record) {
+        const transaction = database.transaction([STORE_NAME], 'readwrite');
+        return requestToPromise(transaction.objectStore(STORE_NAME).put(record));
+    }
+
+    function deleteRecordKeys(database, keys) {
+        const uniqueKeys = Array.from(new Set((keys || []).filter(Boolean)));
+        if (uniqueKeys.length === 0) return Promise.resolve();
+        return new Promise((resolve, reject) => {
+            const transaction = database.transaction([STORE_NAME], 'readwrite');
+            const store = transaction.objectStore(STORE_NAME);
+            uniqueKeys.forEach(key => store.delete(key));
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => reject(transaction.error);
+            transaction.onabort = () => reject(transaction.error);
+        });
     }
 
     function readChunkRecords(database, chunkIds, onChunk) {
@@ -227,6 +311,25 @@ function generateMediaId(type = 'media') {
             }
         };
 
+        if (isOpfsRecord(record)) {
+            const file = await getOpfsFile(record);
+            if (!file) throw new Error(`OPFS 媒体不存在: ${mediaId}`);
+            for (let offset = 0; offset < file.size; offset += safeChunkSize) {
+                const bytes = new Uint8Array(
+                    await file.slice(offset, Math.min(file.size, offset + safeChunkSize)).arrayBuffer()
+                );
+                await emitBytes(bytes);
+            }
+            mimeType = detectMediaMimeType(firstBytes, record.mimeType || file.type, record.type);
+            return {
+                id: mediaId,
+                type: record.type || 'media',
+                mimeType,
+                size: file.size,
+                chunkCount
+            };
+        }
+
         if (record.chunked && Array.isArray(record.chunks)) {
             for (let i = 0; i < record.chunks.length; i++) {
                 const chunkRecord = await getRecord(database, record.chunks[i]);
@@ -257,8 +360,74 @@ function generateMediaId(type = 'media') {
             chunkCount
         };
     }
+
+    async function saveBlobToOpfs(database, blob, type, id, options = {}) {
+        const directory = await getOpfsMediaDirectory(true);
+        if (!directory) throw new Error('当前环境不支持 OPFS');
+        const previousRecord = await getRecord(database, id);
+        const opfsFileName = `${getOpfsFileName(id)}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const handle = await directory.getFileHandle(opfsFileName, { create: true });
+        const writable = await handle.createWritable();
+        const totalChunks = Math.max(1, Math.ceil(blob.size / CHUNK_SIZE));
+        if (!options.silentProgress) showProgressToast(`保存中: 0/${totalChunks} (0%)`);
+        try {
+            if (blob.size === 0) {
+                await writable.write(new Uint8Array(0));
+                reportProgress(1, 1, 'saving', options);
+            } else {
+                for (let i = 0; i < totalChunks; i++) {
+                    const start = i * CHUNK_SIZE;
+                    const end = Math.min(blob.size, start + CHUNK_SIZE);
+                    await writable.write(blob.slice(start, end));
+                    reportProgress(i + 1, totalChunks, 'saving', options);
+                    await new Promise(resolve => setTimeout(resolve, 0));
+                }
+            }
+            await writable.close();
+            await putRecord(database, {
+                id,
+                type,
+                storage: 'opfs',
+                opfsFileName,
+                mimeType: blob.type || 'application/octet-stream',
+                totalSize: blob.size,
+                timestamp: Date.now()
+            });
+        } catch (err) {
+            if (typeof writable.abort === 'function') {
+                try {
+                    await writable.abort();
+                } catch (abortErr) {
+                    console.warn('MediaStorage: OPFS 写入回滚失败', abortErr);
+                }
+            }
+            try {
+                await removeOpfsFile(opfsFileName);
+            } catch (cleanupErr) {
+                console.warn('MediaStorage: OPFS 临时文件清理失败', cleanupErr);
+            }
+            throw err;
+        }
+
+        revokeMediaUrl(id);
+        if (previousRecord && previousRecord.chunked && Array.isArray(previousRecord.chunks)) {
+            try {
+                await deleteRecordKeys(database, previousRecord.chunks);
+            } catch (err) {
+                console.warn('MediaStorage: 旧 IndexedDB 分块清理失败', err);
+            }
+        }
+        if (isOpfsRecord(previousRecord) && previousRecord.opfsFileName !== opfsFileName) {
+            try {
+                await removeOpfsFile(previousRecord.opfsFileName);
+            } catch (err) {
+                console.warn('MediaStorage: 旧 OPFS 媒体清理失败', err);
+            }
+        }
+        return id;
+    }
     /**
-     * 保存媒体数据到 IndexedDB（支持分块存储大文件）
+     * 保存媒体数据（优先 OPFS，兼容 IndexedDB）
      * @param {string|Blob|File} mediaData - 媒体数据（base64 字符串、Blob 或 File）
      * @param {string} type - 媒体类型 ('video', 'image', 'archive')
      * @param {string} [mediaId] - 可选的媒体 ID，不提供则自动生成
@@ -267,8 +436,15 @@ function generateMediaId(type = 'media') {
     async function saveMedia(mediaData, type = 'media', mediaId = null, options = {}) {
         const database = await initDB();
         const id = mediaId || generateMediaId(type);
-        // 如果是 Blob 或 File，使用二进制分块存储
+        // Blob/File 优先写入 OPFS，失败时回退到 IndexedDB 分块存储
         if (mediaData instanceof Blob || mediaData instanceof File) {
+            if (supportsOpfsMediaStorage()) {
+                try {
+                    return await saveBlobToOpfs(database, mediaData, type, id, options);
+                } catch (err) {
+                    console.warn('MediaStorage: OPFS 保存失败，回退到 IndexedDB', err);
+                }
+            }
             return saveBlobChunked(database, mediaData, type, id, options);
         }
         // 字符串数据（base64）
@@ -459,11 +635,70 @@ function reportProgress(current, total, action, options = {}) {
             request.onerror = () => reject(request.error);
         });
     }
+
+    async function migrateLegacyBlobRecordToOpfs(database, record) {
+        if (!supportsOpfsMediaStorage() || !record || !record.blobChunked ||
+            !Array.isArray(record.chunks) || record.chunks.length === 0) {
+            return record;
+        }
+        const directory = await getOpfsMediaDirectory(true);
+        const opfsFileName = `${getOpfsFileName(record.id)}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const handle = await directory.getFileHandle(opfsFileName, { create: true });
+        const writable = await handle.createWritable();
+        showProgressToast(`正在迁移本地媒体: 0/${record.chunks.length} (0%)`);
+        try {
+            for (let i = 0; i < record.chunks.length; i++) {
+                const chunkRecord = await getRecord(database, record.chunks[i]);
+                if (!chunkRecord || chunkRecord.data == null) {
+                    throw new Error(`媒体分块 ${i} 数据丢失`);
+                }
+                await writable.write(chunkRecord.data);
+                reportProgress(i + 1, record.chunks.length, 'loading');
+                await new Promise(resolve => setTimeout(resolve, 0));
+            }
+            await writable.close();
+            const migrated = {
+                id: record.id,
+                type: record.type || 'media',
+                storage: 'opfs',
+                opfsFileName,
+                mimeType: getRecordMimeType(record),
+                totalSize: Number.isFinite(record.totalSize) ? record.totalSize : 0,
+                timestamp: Date.now()
+            };
+            await putRecord(database, migrated);
+            try {
+                await deleteRecordKeys(database, record.chunks);
+            } catch (err) {
+                console.warn('MediaStorage: 迁移后旧分块清理失败', err);
+            }
+            hideProgressToast();
+            return migrated;
+        } catch (err) {
+            if (typeof writable.abort === 'function') {
+                try {
+                    await writable.abort();
+                } catch (abortErr) {
+                    console.warn('MediaStorage: OPFS 迁移回滚失败', abortErr);
+                }
+            }
+            try {
+                await removeOpfsFile(opfsFileName);
+            } catch (cleanupErr) {
+                console.warn('MediaStorage: OPFS 迁移文件清理失败', cleanupErr);
+            }
+            hideProgressToast();
+            throw err;
+        }
+    }
     async function getMedia(mediaId) {
         const database = await initDB();
         const record = await getRecord(database, mediaId);
         if (!record) {
             return null;
+        }
+        if (isOpfsRecord(record)) {
+            return getOpfsFile(record);
         }
         if (record.chunked && record.chunks) {
             return getMediaChunked(database, record.chunks);
@@ -487,6 +722,10 @@ function reportProgress(current, total, action, options = {}) {
             console.error('MediaStorage: 记录不存在', mediaId);
             return null;
         }
+        if (isOpfsRecord(record)) {
+            const file = await getOpfsFile(record);
+            return file ? file.stream() : null;
+        }
         if (record.chunked && record.chunks) {
             return createChunkedStream(database, record);
         }
@@ -498,6 +737,11 @@ function reportProgress(current, total, action, options = {}) {
         if (!record) {
             console.error('MediaStorage: 记录不存在', mediaId);
             return null;
+        }
+        if (isOpfsRecord(record)) {
+            const file = await getOpfsFile(record);
+            if (!file) return null;
+            return file.slice(0, file.size, record.mimeType || file.type || 'application/octet-stream');
         }
         let mimeType = record.mimeType || 'application/octet-stream';
         if (record.chunked && record.chunks) {
@@ -540,21 +784,19 @@ function reportProgress(current, total, action, options = {}) {
     async function deleteMedia(mediaId) {
         const database = await initDB();
         const record = await getRecord(database, mediaId);
-        return new Promise((resolve, reject) => {
-            const transaction = database.transaction([STORE_NAME], 'readwrite');
-            const store = transaction.objectStore(STORE_NAME);
-            const keys = record && record.chunked && record.chunks
-                ? record.chunks.concat(mediaId)
-                : [mediaId];
-            transaction.oncomplete = () => resolve();
-            transaction.onerror = () => reject(transaction.error);
-            keys.forEach(key => store.delete(key));
-        });
+        revokeMediaUrl(mediaId);
+        if (isOpfsRecord(record)) await removeOpfsFile(record.opfsFileName);
+        const keys = record && record.chunked && record.chunks
+            ? record.chunks.concat(mediaId)
+            : [mediaId];
+        await deleteRecordKeys(database, keys);
     }
     async function mediaExists(mediaId) {
         const database = await initDB();
         const record = await getRecord(database, mediaId);
-        return !!record;
+        if (!record) return false;
+        if (isOpfsRecord(record)) return !!(await getOpfsFile(record));
+        return true;
     }
     async function getMediaInfo(mediaId) {
         const database = await initDB();
@@ -570,7 +812,9 @@ function reportProgress(current, total, action, options = {}) {
         }
         let size = null;
         if (Number.isFinite(record.totalSize)) {
-            size = record.blobChunked ? record.totalSize : Math.max(0, Math.floor(record.totalSize * 3 / 4));
+            size = (record.blobChunked || isOpfsRecord(record))
+                ? record.totalSize
+                : Math.max(0, Math.floor(record.totalSize * 3 / 4));
         } else if (record.data instanceof ArrayBuffer) {
             size = record.data.byteLength;
         } else if (typeof record.data === 'string') {
@@ -584,6 +828,7 @@ function reportProgress(current, total, action, options = {}) {
             type: record.type || 'media',
             mimeType,
             size,
+            storage: isOpfsRecord(record) ? 'opfs' : 'indexeddb',
             chunked: !!record.chunked,
             blobChunked: !!record.blobChunked
         };
@@ -593,6 +838,24 @@ function reportProgress(current, total, action, options = {}) {
         const record = await getRecord(database, mediaId);
         if (!record) {
             throw new Error(`媒体不存在: ${mediaId}`);
+        }
+        if (isOpfsRecord(record)) {
+            const file = await getOpfsFile(record);
+            if (!file) throw new Error(`OPFS 媒体不存在: ${mediaId}`);
+            const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
+            showProgressToast(`导出中: 0/${totalChunks} (0%)`);
+            if (file.size === 0) {
+                await writable.write(new Uint8Array(0));
+                reportProgress(1, 1, 'loading');
+            } else {
+                for (let i = 0; i < totalChunks; i++) {
+                    const start = i * CHUNK_SIZE;
+                    await writable.write(file.slice(start, Math.min(file.size, start + CHUNK_SIZE)));
+                    reportProgress(i + 1, totalChunks, 'loading');
+                    await new Promise(resolve => setTimeout(resolve, 0));
+                }
+            }
+            return file.size;
         }
         if (record.chunked && record.chunks && record.blobChunked) {
             showProgressToast(`导出中: 0/${record.chunks.length} (0%)`);
@@ -627,6 +890,36 @@ function reportProgress(current, total, action, options = {}) {
             };
         });
     }
+
+    async function cleanupOrphanedOpfsFiles(database, activeIds) {
+        const directory = await getOpfsMediaDirectory(false);
+        if (!directory || typeof directory.entries !== 'function') return 0;
+        const expectedFiles = new Set();
+        for (const id of activeIds) {
+            const record = await getRecord(database, id);
+            if (isOpfsRecord(record)) expectedFiles.add(record.opfsFileName);
+        }
+        let deleted = 0;
+        for await (const [fileName, handle] of directory.entries()) {
+            if (handle.kind !== 'file' || expectedFiles.has(fileName)) continue;
+            await directory.removeEntry(fileName);
+            deleted++;
+        }
+        return deleted;
+    }
+
+    async function clearOpfsMediaDirectory() {
+        if (!supportsOpfsMediaStorage()) return;
+        try {
+            const root = await navigator.storage.getDirectory();
+            await root.removeEntry(OPFS_DIRECTORY_NAME, { recursive: true });
+        } catch (err) {
+            if (!err || err.name !== 'NotFoundError') throw err;
+        } finally {
+            opfsDirectoryPromise = null;
+        }
+    }
+
     async function cleanupOrphanedData() {
         const allIds = await getAllMediaIds();
         const mainIds = allIds.filter(id => !id.includes('_chunk_'));
@@ -685,11 +978,25 @@ function reportProgress(current, total, action, options = {}) {
                 }
             }
         }
+        try {
+            const database = await initDB();
+            deletedCount += await cleanupOrphanedOpfsFiles(
+                database,
+                mainIds.filter(id => !orphanedIds.includes(id))
+            );
+        } catch (err) {
+            console.warn('清理孤立 OPFS 媒体失败:', err);
+        }
         return deletedCount;
     }
     async function clearAll() {
-        mediaUrlCache.clear();
+        Array.from(mediaUrlCache.keys()).forEach(revokeMediaUrl);
         processedContentCache.clear();
+        try {
+            await clearOpfsMediaDirectory();
+        } catch (err) {
+            console.warn('清空 OPFS 媒体失败:', err);
+        }
         const database = await initDB();
         const allKeys = await getAllMediaIds();
         try {
@@ -739,8 +1046,23 @@ function reportProgress(current, total, action, options = {}) {
             return cachedUrl;
         }
         const database = await initDB();
-        const record = await getRecord(database, mediaId);
+        let record = await getRecord(database, mediaId);
         if (!record) return null;
+        if (!isOpfsRecord(record) && record.blobChunked && supportsOpfsMediaStorage()) {
+            try {
+                record = await migrateLegacyBlobRecordToOpfs(database, record);
+            } catch (err) {
+                console.warn('MediaStorage: 旧媒体迁移失败，继续从 IndexedDB 读取', err);
+            }
+        }
+        if (isOpfsRecord(record)) {
+            const file = await getOpfsFile(record);
+            if (!file) return null;
+            const source = file.slice(0, file.size, record.mimeType || file.type || 'application/octet-stream');
+            const blobUrl = URL.createObjectURL(source);
+            mediaUrlCache.set(mediaId, blobUrl);
+            return blobUrl;
+        }
         if (record.chunked) {
             const blob = await getChunkedBlob(mediaId);
             if (blob) {
@@ -941,7 +1263,7 @@ function reportProgress(current, total, action, options = {}) {
         const database = await initDB();
         const record = await getRecord(database, mediaId);
         if (!record) return null;
-        if (!record.chunked) {
+        if (!record.chunked && !isOpfsRecord(record)) {
             return record.data || null;
         }
         const blob = await getChunkedBlob(mediaId);

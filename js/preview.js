@@ -660,6 +660,15 @@ function initializeVideos() {
                         loadStoredVideo(true);
                     }
                 }, { once: true });
+                if (typeof MediaStorage.getMediaInfo === 'function') {
+                    MediaStorage.getMediaInfo(mediaStorageId).then(info => {
+                        if (!info || info.storage !== 'opfs' || !video.isConnected) return;
+                        video.setAttribute('preload', 'metadata');
+                        loadStoredVideo(false);
+                    }).catch(err => {
+                        console.warn('读取视频存储信息失败:', mediaStorageId, err);
+                    });
+                }
             }
         }
         if (!video.hasAttribute('controls')) {
