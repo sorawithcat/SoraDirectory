@@ -75,64 +75,83 @@ function LoadMulu() {
             if (mulufile[i][2] === "mulufirststep" || mulufile[i][0] === "mulufirststep") {
                 warning++;
             }
-            const level = calculateLevel(mulufile[i][0], mulufile);
-            levelCache.set(mulufile[i][2], level);
         } else {
             error++;
         }
     }
-    const dirElementMap = new Map(); 
-    for (let i = 0; i < mulufile.length; i++) {
-        if (mulufile[i].length === 4) {
-            const dirData = dirMap.get(mulufile[i][2]);
-            if (!dirData) continue;
-            const idName = getOneId(10, 0);
-            const newMulu = document.createElement("div");
-            newMulu.id = idName;
-            newMulu.className = "mulu";
-            newMulu.innerHTML = mulufile[i][1];
-            const level = levelCache.get(mulufile[i][2]) || 0;
-            newMulu.setAttribute("data-level", level);
-            setLevelPadding(newMulu, level);
-            newMulu.setAttribute("data-dir-id", mulufile[i][2]);
-            newMulu.setAttribute("data-parent-id", mulufile[i][0]);
-            setParentColorBall(newMulu);
-            const hasChildren = childrenMap.has(mulufile[i][2]) && childrenMap.get(mulufile[i][2]).length > 0;
-            if (hasChildren) {
-                newMulu.classList.add("has-children");
-                newMulu.classList.add("expanded"); 
-            }
-            if (i === 0) {
-                if (firststep) {
-                    firststep.appendChild(newMulu);
-                }
-            } else {
-                const parentElement = dirElementMap.get(mulufile[i][0]);
-                if (parentElement) {
-                    const siblings = findChildElementsByParentId(mulufile[i][0]);
-                    if (siblings.length > 0) {
-                        const lastSibling = siblings[siblings.length - 1];
-                        if (lastSibling && lastSibling.nextSibling) {
-                            firststep.insertBefore(newMulu, lastSibling.nextSibling);
-                        } else {
-                            firststep.appendChild(newMulu);
-                        }
-                    } else {
-                        if (parentElement.nextSibling) {
-                            firststep.insertBefore(newMulu, parentElement.nextSibling);
-                        } else {
-                            firststep.appendChild(newMulu);
-                        }
-                    }
-                } else {
-                    if (firststep) {
-                        firststep.appendChild(newMulu);
-                    }
-                }
-            }
-            dirElementMap.set(mulufile[i][2], newMulu);
-            bindMuluEvents(newMulu, i);
+
+    const resolvingLevels = new Set();
+    function getLevelForDir(dirId) {
+        if (levelCache.has(dirId)) {
+            return levelCache.get(dirId);
         }
+        if (resolvingLevels.has(dirId)) {
+            console.warn('检测到目录父级循环:', dirId);
+            levelCache.set(dirId, 0);
+            return 0;
+        }
+        const dirData = dirMap.get(dirId);
+        if (!dirData || !dirData.parentId || dirData.parentId === 'mulu') {
+            levelCache.set(dirId, 0);
+            return 0;
+        }
+        resolvingLevels.add(dirId);
+        const level = getLevelForDir(dirData.parentId) + 1;
+        resolvingLevels.delete(dirId);
+        levelCache.set(dirId, Math.min(level, 20));
+        return levelCache.get(dirId);
+    }
+
+    dirMap.forEach((_, dirId) => getLevelForDir(dirId));
+
+    const orderedDirs = [];
+    const visited = new Set();
+    function appendChildren(parentId) {
+        const children = childrenMap.get(parentId) || [];
+        for (let i = 0; i < children.length; i++) {
+            const dirData = children[i];
+            if (!dirData || visited.has(dirData.dirId)) continue;
+            visited.add(dirData.dirId);
+            orderedDirs.push(dirData);
+            appendChildren(dirData.dirId);
+        }
+    }
+    appendChildren('mulu');
+    for (let i = 0; i < mulufile.length; i++) {
+        const row = mulufile[i];
+        if (row && row.length === 4 && !visited.has(row[2])) {
+            const dirData = dirMap.get(row[2]);
+            if (dirData) {
+                visited.add(row[2]);
+                orderedDirs.push(dirData);
+            }
+        }
+    }
+
+    const fragment = document.createDocumentFragment();
+    for (let i = 0; i < orderedDirs.length; i++) {
+        const dirData = orderedDirs[i];
+        const idName = getOneId(10, 0);
+        const newMulu = document.createElement("div");
+        newMulu.id = idName;
+        newMulu.className = "mulu";
+        newMulu.textContent = dirData.name;
+        const level = levelCache.get(dirData.dirId) || 0;
+        newMulu.setAttribute("data-level", level);
+        setLevelPadding(newMulu, level);
+        newMulu.setAttribute("data-dir-id", dirData.dirId);
+        newMulu.setAttribute("data-parent-id", dirData.parentId);
+        setParentColorBall(newMulu);
+        const hasChildren = childrenMap.has(dirData.dirId) && childrenMap.get(dirData.dirId).length > 0;
+        if (hasChildren) {
+            newMulu.classList.add("has-children");
+            newMulu.classList.add("expanded");
+        }
+        bindMuluEvents(newMulu, dirData.index);
+        fragment.appendChild(newMulu);
+    }
+    if (firststep) {
+        firststep.appendChild(fragment);
     }
     rebuildMulufileIndex();
     DuplicateMuluHints();

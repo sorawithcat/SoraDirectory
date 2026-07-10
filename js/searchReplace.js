@@ -276,7 +276,7 @@ function expandParentDirectories(targetMulu) {
 /**
  * 导航到指定结果
  */
-function navigateToResult(resultIndex, matchIndex) {
+async function navigateToResult(resultIndex, matchIndex) {
     if (resultIndex < 0 || resultIndex >= searchState.results.length) return;
     const result = searchState.results[resultIndex];
     if (matchIndex < 0 || matchIndex >= result.matches.length) return;
@@ -284,13 +284,17 @@ function navigateToResult(resultIndex, matchIndex) {
     const targetMulu = document.getElementById(result.domId);
     if (targetMulu) {
         expandParentDirectories(targetMulu);
-        RemoveOtherSelect();
-        targetMulu.classList.add('select');
-        currentMuluName = result.domId;
-        jiedianwords.value = result.content;
-        isUpdating = true;
-        updateMarkdownPreview();
-        isUpdating = false;
+        if (typeof switchToDirectoryElement === 'function') {
+            await switchToDirectoryElement(targetMulu, { syncCurrent: false, scrollPreviewTop: true, forceRender: true });
+        } else {
+            RemoveOtherSelect();
+            targetMulu.classList.add('select');
+            currentMuluName = result.domId;
+            jiedianwords.value = result.content;
+            isUpdating = true;
+            updateMarkdownPreview({ force: true });
+            isUpdating = false;
+        }
         setTimeout(() => {
             targetMulu.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }, 50);
@@ -300,6 +304,36 @@ function navigateToResult(resultIndex, matchIndex) {
     updateResultListHighlight();
     highlightCurrentMatch();
     updateSearchInfo();
+}
+
+function setSearchResultContent(result, newContent) {
+    if (!result) return;
+    const cleanedContent = typeof normalizeEditorHtmlForStorage === 'function'
+        ? normalizeEditorHtmlForStorage(newContent)
+        : newContent;
+    const targetMulu = document.getElementById(result.domId);
+    if (targetMulu && typeof updateMulufileData === 'function') {
+        updateMulufileData(targetMulu, cleanedContent);
+    } else {
+        for (let i = 0; i < mulufile.length; i++) {
+            if (mulufile[i].length === 4 && mulufile[i][2] === result.dirId) {
+                if (mulufile[i][3] !== cleanedContent) {
+                    mulufile[i][3] = cleanedContent;
+                    if (typeof markUnsavedChanges === 'function') {
+                        markUnsavedChanges();
+                    }
+                }
+                break;
+            }
+        }
+    }
+    result.content = cleanedContent;
+    if (currentMuluName === result.domId) {
+        jiedianwords.value = cleanedContent;
+        isUpdating = true;
+        updateMarkdownPreview({ force: true });
+        isUpdating = false;
+    }
 }
 /**
  * 更新结果列表高亮
@@ -404,8 +438,11 @@ function clearHighlights(syncData = true) {
     if (syncData && currentMuluName) {
         const currentMulu = document.getElementById(currentMuluName);
         if (currentMulu) {
-            jiedianwords.value = markdownPreview.innerHTML;
-            updateMulufileData(currentMulu, markdownPreview.innerHTML);
+            const html = typeof normalizeEditorHtmlForStorage === 'function'
+                ? normalizeEditorHtmlForStorage(markdownPreview.innerHTML)
+                : markdownPreview.innerHTML;
+            jiedianwords.value = html;
+            updateMulufileData(currentMulu, html);
         }
     }
 }
@@ -486,18 +523,7 @@ function replaceOne() {
         matchCount++;
         return match;
     });
-    for (let i = 0; i < mulufile.length; i++) {
-        if (mulufile[i].length === 4 && mulufile[i][2] === result.dirId) {
-            mulufile[i][3] = newContent;
-            break;
-        }
-    }
-    if (currentMuluName === result.domId) {
-        jiedianwords.value = newContent;
-        isUpdating = true;
-        updateMarkdownPreview();
-        isUpdating = false;
-    }
+    setSearchResultContent(result, newContent);
     showToast('已替换 1 处', 'success', 2000);
     performSearch();
 }
@@ -525,18 +551,7 @@ function replaceAll() {
         if (newContent !== originalContent) {
             const matchCount = (originalContent.match(regex) || []).length;
             totalReplaced += matchCount;
-            for (let i = 0; i < mulufile.length; i++) {
-                if (mulufile[i].length === 4 && mulufile[i][2] === result.dirId) {
-                    mulufile[i][3] = newContent;
-                    break;
-                }
-            }
-            if (currentMuluName === result.domId) {
-                jiedianwords.value = newContent;
-                isUpdating = true;
-                updateMarkdownPreview();
-                isUpdating = false;
-            }
+            setSearchResultContent(result, newContent);
         }
     });
     showToast(`已替换 ${totalReplaced} 处`, 'success', 2000);

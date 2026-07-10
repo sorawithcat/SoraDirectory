@@ -78,6 +78,24 @@ async function copyTextToClipboard(text) {
     }
 }
 
+function markDirectoryStructureChanged() {
+    if (typeof markUnsavedChanges === 'function') {
+        markUnsavedChanges();
+    }
+}
+
+function refreshParentChildState(parentDirId) {
+    if (!parentDirId || parentDirId === "mulu") return;
+    const parentElement = document.querySelector(`[data-dir-id="${parentDirId}"]`);
+    if (!parentElement) return;
+    const remainingChildren = findChildElementsByParentId(parentDirId);
+    if (remainingChildren.length === 0) {
+        parentElement.classList.remove("has-children", "expanded");
+    } else {
+        parentElement.classList.add("has-children");
+    }
+}
+
 if (typeof copyMuluId !== 'undefined' && copyMuluId) {
     copyMuluId.addEventListener('click', async function() {
         if (!currentMuluName) {
@@ -116,6 +134,7 @@ deleteMulu.addEventListener("click", function () {
             return;
         }
         let currentDirId = nowchild.getAttribute("data-dir-id");
+        let oldParentId = nowchild.getAttribute("data-parent-id") || "mulu";
         /**
          * 递归删除所有子目录
          * @param {string} parentId - 父目录ID
@@ -152,10 +171,12 @@ function deleteAllChildren(parentId) {
         }
         nowchild.remove();
         rebuildMulufileIndex();
+        refreshParentChildState(oldParentId);
+        markDirectoryStructureChanged();
         currentMuluName = null;
         jiedianwords.value = "";
         isUpdating = true;
-        updateMarkdownPreview();
+        updateMarkdownPreview({ force: true });
         isUpdating = false;
         DuplicateMuluHints();
         hideRightMouseMenu();
@@ -443,9 +464,15 @@ pasteMulu.addEventListener("click", function() {
         hideRightMouseMenu();
         return;
     }
-    const parentDirId = currentMulu.getAttribute("data-parent-id") || "mulu";
-    const newMulu = pasteDirectoryData(directoryClipboard.data, parentDirId, currentMulu);
+    const parentDirId = currentMulu.getAttribute("data-dir-id") || "mulu";
+    const newMulu = pasteDirectoryData(directoryClipboard.data, parentDirId);
+    if (parentDirId !== "mulu") {
+        currentMulu.classList.add("has-children", "expanded");
+        toggleChildDirectories(parentDirId, true);
+        refreshParentChildState(parentDirId);
+    }
     rebuildMulufileIndex();
+    markDirectoryStructureChanged();
     DuplicateMuluHints();
     const childInfo = directoryClipboard.includeChildren ? "（含子目录）" : "";
     showToast(`已粘贴目录${childInfo}`, "success", 2000);
@@ -470,6 +497,7 @@ quickDuplicateWithChildren.addEventListener("click", function() {
     const parentDirId = currentMulu.getAttribute("data-parent-id") || "mulu";
     const newMulu = pasteDirectoryData(copiedData, parentDirId, currentMulu);
     rebuildMulufileIndex();
+    markDirectoryStructureChanged();
     DuplicateMuluHints();
     showToast("已快速复制目录（含子目录）", "success", 2000);
     hideRightMouseMenu();
@@ -493,7 +521,8 @@ quickDuplicateWithoutChildren.addEventListener("click", function() {
     const parentDirId = currentMulu.getAttribute("data-parent-id") || "mulu";
     const newMulu = pasteDirectoryData(copiedData, parentDirId, currentMulu);
     rebuildMulufileIndex();
+    markDirectoryStructureChanged();
     DuplicateMuluHints();
     showToast("已快速复制目录（不含子目录）", "success", 2000);
     hideRightMouseMenu();
-})
+});

@@ -65,6 +65,7 @@ function syncPreviewToTextarea() {
                 '$1 src="about:blank"$3'
             );
         }
+        html = normalizeEditorHtmlForStorage(html);
         isUpdating = true;
         jiedianwords.value = html;
         isUpdating = false;
@@ -155,6 +156,9 @@ function ensureAnchorElements(root) {
         const id = el.id || '';
         if (!String(id).startsWith('sora-anchor-')) {
             el.id = generateUniqueAnchorDomId(name, document);
+            el.setAttribute('data-auto-anchor-id', 'true');
+        } else {
+            el.removeAttribute('data-auto-anchor-id');
         }
     });
 }
@@ -177,8 +181,47 @@ function assignHeadingAutoIds(root) {
         }
         if (!candidate) return;
         h.id = candidate;
+        h.setAttribute('data-auto-heading-id', 'true');
         used.add(candidate);
     });
+}
+
+function normalizeEditorHtmlForStorage(html) {
+    if (!html) return '';
+    const template = document.createElement('template');
+    template.innerHTML = String(html);
+
+    template.content.querySelectorAll('[data-auto-heading-id="true"]').forEach(el => {
+        el.removeAttribute('id');
+        el.removeAttribute('data-auto-heading-id');
+    });
+    template.content.querySelectorAll('[data-auto-anchor-id="true"]').forEach(el => {
+        el.removeAttribute('id');
+        el.removeAttribute('data-auto-anchor-id');
+    });
+    template.content.querySelectorAll('[data-task-attached]').forEach(el => {
+        el.removeAttribute('data-task-attached');
+    });
+    template.content.querySelectorAll('[data-click-attached]').forEach(el => {
+        el.removeAttribute('data-click-attached');
+    });
+    template.content.querySelectorAll('[data-video-index]').forEach(el => {
+        el.removeAttribute('data-video-index');
+    });
+    template.content.querySelectorAll('[data-original-src]').forEach(el => {
+        el.removeAttribute('data-original-src');
+    });
+    template.content.querySelectorAll('[data-loading-media]').forEach(el => {
+        el.removeAttribute('data-loading-media');
+    });
+    template.content.querySelectorAll('.archive-download-btn[data-initialized]').forEach(el => {
+        el.removeAttribute('data-initialized');
+    });
+    template.content.querySelectorAll('[data-sora-methods-executed]').forEach(el => {
+        el.removeAttribute('data-sora-methods-executed');
+    });
+
+    return template.innerHTML;
 }
 
 function scrollToAnchorInPreview(anchorId) {
@@ -225,23 +268,7 @@ async function navigateToDirectoryInternalLink(dirId, anchorId) {
         target.scrollIntoView({ block: 'center' });
     }
 
-    if (currentMuluName) {
-        const current = document.getElementById(currentMuluName);
-        if (current) {
-            syncPreviewToTextarea();
-        }
-    }
-
-    currentMuluName = target.id;
-    RemoveOtherSelect();
-    target.classList.add('select');
-    jiedianwords.value = findMulufileData(target);
-    if (markdownPreview) {
-        markdownPreview.scrollTop = 0;
-    }
-    isUpdating = true;
-    await updateMarkdownPreview();
-    isUpdating = false;
+    await switchToDirectoryElement(target, { syncCurrent: true, scrollPreviewTop: true, forceRender: true });
 
     if (anchorId) {
         requestAnimationFrame(() => {
@@ -250,22 +277,58 @@ async function navigateToDirectoryInternalLink(dirId, anchorId) {
     }
 }
 
+async function switchToDirectoryElement(target, options = {}) {
+    if (!target) return false;
+    const syncCurrent = options.syncCurrent !== false;
+    const scrollPreviewTop = options.scrollPreviewTop !== false;
+    const forceRender = options.forceRender !== false;
+
+    if (syncCurrent && currentMuluName) {
+        const current = document.getElementById(currentMuluName);
+        if (current) {
+            syncPreviewToTextarea();
+        }
+    }
+
+    currentMuluName = target.id;
+    if (typeof RemoveOtherSelect === 'function') {
+        RemoveOtherSelect();
+    }
+    target.classList.add('select');
+
+    if (jiedianwords) {
+        jiedianwords.value = findMulufileData(target);
+    }
+    if (markdownPreview && scrollPreviewTop) {
+        markdownPreview.scrollTop = 0;
+    }
+
+    isUpdating = true;
+    try {
+        await updateMarkdownPreview({ force: forceRender });
+    } finally {
+        isUpdating = false;
+    }
+    return true;
+}
+
 /**
  * 从 textarea 同步内容到预览区域
  * 性能优化：内容未变化时跳过更新，使用 requestAnimationFrame 优化DOM操作
  */
-async function updateMarkdownPreview() {
+async function updateMarkdownPreview(options = {}) {
     if (markdownPreview && jiedianwords) {
+        const forceRender = !!(options && options.force);
         let content = jiedianwords.value || '';
         // 性能优化：如果内容没有变化，跳过更新
-        if (content === lastPreviewContent && markdownPreview.innerHTML) {
+        if (!forceRender && content === lastPreviewContent && markdownPreview.innerHTML) {
             return;
         }
         // 不在这里自动加载媒体数据
         // 视频/图片会保持data-media-storage-id属性，只在用户真正需要时才加载
         // 这样可以避免切换目录时的卡顿和进度提示
         // 性能优化：如果处理后的内容仍然相同，跳过更新
-        if (content === lastPreviewContent && markdownPreview.innerHTML === content) {
+        if (!forceRender && content === lastPreviewContent && markdownPreview.innerHTML === content) {
             return;
         }
 
@@ -397,13 +460,12 @@ async function updateMarkdownPreview() {
                     }
                 });
             }
+            attachTaskListEvents();
             // 不自动加载媒体数据，保持延迟加载
             // 图片和视频保持只有data-media-storage-id属性，不设置src
             // 只在用户真正需要时（滚动到可见区域、点击播放等）才从IndexedDB加载
             // 使用 requestIdleCallback 或 setTimeout 分批处理后续操作，避免阻塞主线程
             const processDeferred = () => {
-                // 绑定任务列表复选框事件
-                attachTaskListEvents();
                 // 初始化视频元素，确保视频正确显示和播放
                 initializeVideos();
                 // 初始化压缩文件下载按钮
@@ -417,24 +479,25 @@ async function updateMarkdownPreview() {
             }
         };
 
-        if (typeof batchDOMUpdate === 'function') {
-            batchDOMUpdate(() => {
+        await new Promise(resolve => {
+            const commitPreviewDom = () => {
                 isUpdating = true;
                 markdownPreview.innerHTML = content;
                 lastPreviewContent = content; // 更新缓存
                 isUpdating = false;
                 // DOM更新后立即执行的后续操作
                 processAfterDOMUpdate();
-            });
-        } else {
-            // 降级方案：直接更新
-            isUpdating = true;
-            markdownPreview.innerHTML = content;
-            lastPreviewContent = content;
-            isUpdating = false;
-            // 使用 requestAnimationFrame 延迟后续操作
-            requestAnimationFrame(processAfterDOMUpdate);
-        }
+                resolve();
+            };
+
+            if (typeof batchDOMUpdate === 'function') {
+                batchDOMUpdate(commitPreviewDom);
+            } else if (typeof requestAnimationFrame === 'function') {
+                requestAnimationFrame(commitPreviewDom);
+            } else {
+                setTimeout(commitPreviewDom, 16);
+            }
+        });
     }
 }
 /**
@@ -519,7 +582,9 @@ function initializeVideos() {
             const src = video.getAttribute('src');
             const hasValidSrc = src && src !== 'about:blank' && !src.trim().match(/^\s*$/);
             if (!hasValidSrc) {
-                (async () => {
+                video.removeAttribute('src');
+                video.setAttribute('data-media-pending', 'true');
+                const loadStoredVideo = async (playAfterLoad = false) => {
                     try {
                         if (video.hasAttribute('data-loading-media')) {
                             return;
@@ -529,9 +594,13 @@ function initializeVideos() {
                         if (mediaUrl) {
                             video.setAttribute('src', mediaUrl);
                             video.setAttribute('data-original-src', mediaUrl);
+                            video.removeAttribute('data-media-pending');
                             video.removeAttribute('data-loading-media');
                             if (video.offsetParent !== null) {
                                 video.load();
+                            }
+                            if (playAfterLoad) {
+                                video.play().catch(() => {});
                             }
                         } else {
                             console.warn('无法从 IndexedDB 加载视频:', mediaStorageId);
@@ -541,7 +610,15 @@ function initializeVideos() {
                         console.error('加载视频失败:', mediaStorageId, err);
                         video.removeAttribute('data-loading-media');
                     }
-                })();
+                };
+                video.addEventListener('click', () => loadStoredVideo(false), { once: true });
+                video.addEventListener('play', (event) => {
+                    if (video.getAttribute('data-media-pending') === 'true') {
+                        event.preventDefault();
+                        video.pause();
+                        loadStoredVideo(true);
+                    }
+                }, { once: true });
             }
         }
         if (!video.hasAttribute('controls')) {

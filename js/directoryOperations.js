@@ -89,6 +89,10 @@ function createNewDirectory(name, asChild = false) {
  * @param {HTMLElement} newMulu - 新创建的目录元素
  */
 function selectNewDirectory(newMulu) {
+    if (typeof switchToDirectoryElement === 'function') {
+        switchToDirectoryElement(newMulu, { syncCurrent: true, scrollPreviewTop: true, forceRender: true });
+        return;
+    }
     if (currentMuluName) {
         const oldMulu = document.getElementById(currentMuluName);
         if (oldMulu) {
@@ -103,7 +107,7 @@ function selectNewDirectory(newMulu) {
         markdownPreview.scrollTop = 0;
     }
     isUpdating = true;
-    updateMarkdownPreview();
+    updateMarkdownPreview({ force: true });
     isUpdating = false;
 }
 addNewMuluButton.addEventListener("click", async function () {

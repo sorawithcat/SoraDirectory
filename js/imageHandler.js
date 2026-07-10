@@ -214,39 +214,16 @@ if (videoFileInput) {
             videoFileInput.value = '';
             return;
         }
-        // 处理视频
-        let videoData = null;
-        let videoBlob = null;
-        let useBlobStorage = false;
-        // 大文件阈值：超过 30MB 使用 Blob 存储
-        const LARGE_VIDEO_THRESHOLD = 30 * 1024 * 1024;
-        // 不压缩，直接使用原始视频
-        if (file.size > LARGE_VIDEO_THRESHOLD) {
-            // 大文件使用 Blob 存储
-            useBlobStorage = true;
-            videoBlob = file;
-        } else {
-            // 小文件使用 base64
-            videoData = await new Promise((resolve) => {
-                const reader = new FileReader();
-                reader.onload = (e) => resolve(e.target.result);
-                reader.readAsDataURL(file);
-            });
-        }
+        // 处理视频：统一按 Blob 分块存储，避免生成大 base64 字符串
+        let videoBlob = file;
         // 将视频保存到 IndexedDB
         let videoStorageId = null;
         if (typeof MediaStorage !== 'undefined') {
             try {
-                if (useBlobStorage) {
-                    // 大文件：直接存储 Blob（分块）
-                    videoStorageId = await MediaStorage.save(videoBlob, 'video');
-                    MediaStorage.hideProgressToast();
-                } else {
-                    // 小文件：存储 base64
-                    videoStorageId = await MediaStorage.saveVideo(videoData);
-                }
+                videoStorageId = await MediaStorage.save(videoBlob, 'video');
+                MediaStorage.hideProgressToast();
             } catch (err) {
-                if (useBlobStorage) MediaStorage.hideProgressToast();
+                MediaStorage.hideProgressToast();
                 console.error('保存视频到 IndexedDB 失败:', err);
                 showToast('保存视频失败：' + err.message, 'error', 3000);
                 videoFileInput.value = '';
@@ -255,12 +232,7 @@ if (videoFileInput) {
         }
         // 创建视频元素
         const video = document.createElement('video');
-        if (useBlobStorage) {
-            // Blob 存储：创建临时 URL 用于显示
-            video.src = URL.createObjectURL(videoBlob);
-        } else {
-            video.src = videoData;
-        }
+        video.src = URL.createObjectURL(videoBlob);
         video.controls = true;
         video.style.maxWidth = '640px';
         video.style.maxHeight = '360px';

@@ -41,39 +41,38 @@ function stringToHash(str) {
     return Math.abs(hash);
 }
 /**
- * 根据根目录ID动态生成一个唯一的浅色背景
+ * 根据根目录ID动态生成一个唯一的强调色
  * 使用 HSL 颜色模式，固定饱和度和亮度，只变化色相
  * @param {string} rootId - 根目录ID
  * @returns {string} - HSL颜色值
  */
 function getRootColor(rootId) {
     if (!rootId) {
-        return '#f9f9f9';
+        return '#94a3b8';
     }
     if (rootColorMap.has(rootId)) {
         return rootColorMap.get(rootId);
     }
     let hash = stringToHash(rootId);
     let hue = hash % 360;
-    let saturation = 40 + (hash % 20);
-    let lightness = 88 + (hash % 5);
+    let saturation = 52 + (hash % 18);
+    let lightness = 42 + (hash % 10);
     let color = `hsl(${hue}, ${saturation}%, ${lightness}%)`;
     rootColorMap.set(rootId, color);
     return color;
 }
 /**
- * 为目录元素设置背景色（根据根目录）
+ * 为目录元素设置根目录强调色
  * @param {HTMLElement} element - 目录元素
  */
 function setParentColorBall(element) {
     let parentId = element.getAttribute("data-parent-id");
-    if (!parentId || parentId === "mulu") {
-        element.style.backgroundColor = '#f9f9f9';
-        return;
-    }
-    let rootId = findRootDirId(element);
+    let rootId = (!parentId || parentId === "mulu")
+        ? element.getAttribute("data-dir-id")
+        : findRootDirId(element);
     let color = getRootColor(rootId);
-    element.style.backgroundColor = color;
+    element.style.removeProperty('background-color');
+    element.style.setProperty('--root-accent', color);
 }
 /**
  * 更新目录数据（基于 data-dir-id 查找）
@@ -91,15 +90,21 @@ function updateMulufileData(element, newContent) {
     const data = getMulufileByDirId(dirId);
     if (data) {
         const oldContent = data[3];
-        if (oldContent !== newContent) {
-            data[3] = newContent;
+        const cleanedContent = typeof normalizeEditorHtmlForStorage === 'function'
+            ? normalizeEditorHtmlForStorage(newContent)
+            : newContent;
+        const comparableOldContent = typeof normalizeEditorHtmlForStorage === 'function'
+            ? normalizeEditorHtmlForStorage(oldContent)
+            : oldContent;
+        if (comparableOldContent !== cleanedContent) {
+            data[3] = cleanedContent;
             if (typeof markUnsavedChanges === 'function') {
                 markUnsavedChanges();
             }
-            if (newContent && newContent.includes('<video')) {
+            if (cleanedContent && cleanedContent.includes('<video')) {
                 console.log('updateMulufileData: 已保存视频内容到 mulufile');
                 console.log('  - dirId:', dirId);
-                console.log('  - 内容长度:', newContent.length);
+                console.log('  - 内容长度:', cleanedContent.length);
             }
         }
         return true;
@@ -293,23 +298,15 @@ function bindMuluEvents(muluElement, mulufileIndex = -1) {
             }
             if (clickTimer) clearTimeout(clickTimer);
             clickTimer = setTimeout(function() {
-                if (currentMuluName) {
-                    let currentMulu = document.getElementById(currentMuluName);
-                    if (currentMulu) {
-                        syncPreviewToTextarea();
+                const done = typeof switchToDirectoryElement === 'function'
+                    ? switchToDirectoryElement(muluElement, { syncCurrent: true, scrollPreviewTop: true, forceRender: true })
+                    : Promise.resolve(false);
+                Promise.resolve(done).catch(err => {
+                    console.error('切换目录失败:', err);
+                    if (typeof showToast === 'function') {
+                        showToast('切换目录失败', 'error', 2000);
                     }
-                }
-                currentMuluName = muluElement.id;
-                RemoveOtherSelect();
-                muluElement.classList.add("select");
-                let content = findMulufileData(muluElement);
-                jiedianwords.value = content;
-                if (markdownPreview) {
-                    markdownPreview.scrollTop = 0;
-                }
-                isUpdating = true;
-                updateMarkdownPreview();
-                isUpdating = false;
+                });
                 clickTimer = null;
             }, 300);
         } else if (e.button === 2) {
@@ -317,24 +314,19 @@ function bindMuluEvents(muluElement, mulufileIndex = -1) {
                 clearTimeout(clickTimer);
                 clickTimer = null;
             }
-            if (currentMuluName) {
-                let currentMulu = document.getElementById(currentMuluName);
-                if (currentMulu) {
-                    syncPreviewToTextarea();
-                }
-            }
-            currentMuluName = muluElement.id;
-            RemoveOtherSelect();
-            muluElement.classList.add("select");
-            let rightClickContent = findMulufileData(muluElement);
-            jiedianwords.value = rightClickContent;
-            if (markdownPreview) {
-                markdownPreview.scrollTop = 0;
-            }
-            isUpdating = true;
-            updateMarkdownPreview();
-            isUpdating = false;
-            rightMouseMenu(e);
+            const done = typeof switchToDirectoryElement === 'function'
+                ? switchToDirectoryElement(muluElement, { syncCurrent: true, scrollPreviewTop: true, forceRender: true })
+                : Promise.resolve(false);
+            Promise.resolve(done)
+                .catch(err => {
+                    console.error('右键切换目录失败:', err);
+                    if (typeof showToast === 'function') {
+                        showToast('切换目录失败', 'error', 2000);
+                    }
+                })
+                .finally(() => {
+                    rightMouseMenu(e);
+                });
         }
     });
     muluElement.addEventListener("dblclick", function(e) {

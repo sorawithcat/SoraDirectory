@@ -307,36 +307,41 @@ function ensureMethodId(cfg) {
     return cfg.methodId;
 }
 
+function normalizeMethodConfig(cfg, options = {}) {
+    if (!cfg || typeof cfg !== 'object') return null;
+    if (!cfg.trigger) {
+        cfg.trigger = 'click';
+    }
+    if (!cfg.formatCommand && cfg.formatType) {
+        cfg.formatCommand = cfg.formatType;
+        delete cfg.formatType;
+    }
+    if (Array.isArray(cfg.formatMethods)) {
+        cfg.formatMethods = cfg.formatMethods
+            .map(item => normalizeMethodConfig(item, options))
+            .filter(Boolean);
+    }
+    if (options.assignId !== false) {
+        ensureMethodId(cfg);
+    }
+    return cfg;
+}
+
 function readMethodsFromElement(a) {
     if (!a || !a.getAttribute) return [];
     const raw = a.getAttribute('data-sora-methods') || '';
     const parsed = safeParseJson(raw, []);
     const arr = Array.isArray(parsed) ? parsed : [];
-    let changed = false;
-    for (let i = 0; i < arr.length; i++) {
-        const cfg = arr[i];
-        if (!cfg || typeof cfg !== 'object') continue;
-        if (!cfg.trigger) {
-            cfg.trigger = 'click';
-            changed = true;
-        }
-        if (!cfg.methodId) {
-            ensureMethodId(cfg);
-            changed = true;
-        }
-    }
-    if (changed) {
-        writeMethodsToElement(a, arr);
-    }
-    return arr;
+    return arr
+        .map(cfg => normalizeMethodConfig(cfg, { assignId: false }))
+        .filter(Boolean);
 }
 
 function writeMethodsToElement(a, methods) {
     if (!a || !a.setAttribute) return;
-    const arr = Array.isArray(methods) ? methods : [];
-    for (let i = 0; i < arr.length; i++) {
-        ensureMethodId(arr[i]);
-    }
+    const arr = (Array.isArray(methods) ? methods : [])
+        .map(cfg => normalizeMethodConfig(cfg, { assignId: true }))
+        .filter(Boolean);
     a.setAttribute('data-sora-link', 'method');
     a.setAttribute('href', '#');
     a.setAttribute('data-sora-methods', JSON.stringify(arr));
@@ -470,7 +475,9 @@ async function setDirHtmlById(dirId, html) {
     } else if (typeof getMulufileByDirId === 'function') {
         const data = getMulufileByDirId(dirId);
         if (data) {
-            data[3] = html;
+            data[3] = typeof normalizeEditorHtmlForStorage === 'function'
+                ? normalizeEditorHtmlForStorage(html)
+                : html;
             if (typeof markUnsavedChanges === 'function') {
                 markUnsavedChanges();
             }
@@ -480,7 +487,7 @@ async function setDirHtmlById(dirId, html) {
     if (currentDirId && currentDirId === dirId && typeof updateMarkdownPreview === 'function') {
         isUpdating = true;
         jiedianwords.value = html;
-        await updateMarkdownPreview();
+        await updateMarkdownPreview({ force: true });
         isUpdating = false;
     }
 }
@@ -565,173 +572,6 @@ function replaceHtmlBetweenAnchors(root, frontId, backId, replacementHtml) {
 async function promptMethodConfig(existing) {
     // 使用统一表单弹窗
     return await showMethodConfigDialog(existing);
-}
-
-async function editMethodElement(a) {
-    const front = await customPrompt('输入前锚点（可写 dir:目录ID#锚点 或 name:目录名#锚点 或 #锚点）：', cfg.frontAnchor || '', '方法');
-    if (front === null) return null;
-    if (!String(front).trim()) return null;
-    cfg.frontAnchor = String(front).trim();
-    const back = await customPrompt('输入后锚点（可为空）：', cfg.backAnchor || '', '方法');
-    if (back === null) return null;
-    cfg.backAnchor = String(back || '').trim();
-
-    const frontRef = parseAnchorRef(cfg.frontAnchor);
-    if (!frontRef) return null;
-    const backRef = cfg.backAnchor ? parseAnchorRef(cfg.backAnchor) : null;
-    const isRangeLevel = !!(cfg.backAnchor && String(cfg.backAnchor).trim());
-    const isDirLevel = !isRangeLevel;
-
-    if (isDirLevel) {
-        const isDirRef = !!((frontRef.dirId || '').trim() || (frontRef.dirName || '').trim());
-        if (!isDirRef || (frontRef.anchorId || '').trim()) {
-            if (typeof showToast === 'function') {
-                showToast('仅有前锚点时，前锚点必须指向目录，例如 dir:目录ID 或 name:目录名', 'warning', 3000);
-            }
-            return null;
-        }
-    } else {
-        const frontDirId = resolveDirIdFromRef(frontRef);
-        const backDirId = backRef ? resolveDirIdFromRef(backRef) : null;
-        if (!frontDirId || !backDirId || frontDirId !== backDirId) {
-            if (typeof showToast === 'function') {
-                showToast('前后锚点必须在同一目录内', 'warning', 2500);
-            }
-            return null;
-        }
-    }
-
-    const methodTypeOptionsAll = [
-        { value: '隐藏', label: '隐藏' },
-        { value: '隐藏（初始不隐藏）', label: '隐藏（初始不隐藏）' },
-        { value: '显示', label: '显示' },
-        { value: '切换', label: '切换' },
-        { value: '更换内容', label: isDirLevel ? '更换内容（目录：重命名）' : '更换内容' },
-        { value: '添加格式', label: '添加格式' },
-        { value: '目录右键动作', label: '目录右键动作' }
-    ];
-    const methodTypeOptions = methodTypeOptionsAll.filter(it => {
-        if (it.value === '添加格式') return !isDirLevel;
-        return true;
-    });
-    const defaultType = methodTypeOptions.some(o => o.value === (cfg.methodType || '')) ? (cfg.methodType || '') : (isDirLevel ? '隐藏' : '更换内容');
-    const methodType = await customSelect('选择方法类型：', methodTypeOptions, defaultType, '方法');
-    if (methodType === null) return null;
-    cfg.methodType = methodType;
-    const once = await customConfirm('是否只执行一次？', '是', '否', '方法');
-    cfg.once = !!once;
-    if (cfg.methodType === '更换内容') {
-        if (isDirLevel) {
-            const newName = await customPrompt('输入目录新名称：', cfg.renameTo || '', '更换内容');
-            if (newName === null) return null;
-            if (!String(newName).trim()) return null;
-            cfg.renameTo = String(newName).trim();
-            cfg.replaceSourceType = '';
-            cfg.replaceFromFrontAnchor = '';
-            cfg.replaceFromBackAnchor = '';
-            cfg.replaceText = '';
-            return cfg;
-        }
-        const sourceOptions = [
-            { value: 'anchor', label: '用锚点范围/目录内容替换' },
-            { value: 'text', label: '直接输入替换文本' }
-        ];
-        const sourceType = await customSelect('选择替换来源：', sourceOptions, cfg.replaceSourceType || 'anchor', '更换内容');
-        if (sourceType === null) return null;
-        cfg.replaceSourceType = sourceType;
-        if (sourceType === 'anchor') {
-            const srcFront = await customPrompt('输入替换来源前锚点（必填）：', (cfg.replaceFromFrontAnchor || ''), '更换内容');
-            if (srcFront === null) return null;
-            if (!String(srcFront).trim()) return null;
-            cfg.replaceFromFrontAnchor = String(srcFront).trim();
-            const srcBack = await customPrompt('输入替换来源后锚点（可为空）：', (cfg.replaceFromBackAnchor || ''), '更换内容');
-            if (srcBack === null) return null;
-            cfg.replaceFromBackAnchor = String(srcBack || '').trim();
-            cfg.replaceText = '';
-        } else {
-            const text = await customPrompt('输入替换文本：', (cfg.replaceText || ''), '更换内容');
-            if (text === null) return null;
-            cfg.replaceText = String(text || '');
-            cfg.replaceFromFrontAnchor = '';
-            cfg.replaceFromBackAnchor = '';
-        }
-    }
-    if (cfg.methodType === '添加格式') {
-        if (isDirLevel) {
-            if (typeof showToast === 'function') {
-                showToast('仅有前锚点（目录级）不允许使用“添加格式”', 'warning', 2500);
-            }
-            return null;
-        }
-        const formatCommandOptions = [
-            { value: 'bold', label: '粗体' },
-            { value: 'italic', label: '斜体' },
-            { value: 'underline', label: '下划线' },
-            { value: 'strikethrough', label: '删除线' },
-            { value: 'highlight', label: '高亮' },
-            { value: 'spoiler', label: '防剧透' },
-            { value: 'superscript', label: '上标' },
-            { value: 'subscript', label: '下标' },
-            { value: 'code', label: '行内代码' },
-            { value: 'color', label: '文字颜色' },
-            { value: 'background-color', label: '背景颜色' },
-            { value: 'link', label: '链接' },
-            { value: 'method', label: '方法（嵌套）' }
-        ];
-        const cmd = await customSelect('选择要添加的格式：', formatCommandOptions, cfg.formatCommand || 'bold', '添加格式');
-        if (cmd === null) return null;
-        cfg.formatCommand = cmd;
-        cfg.formatValue = '';
-        cfg.formatMethods = [];
-        cfg.formatFallbackText = '';
-
-        if (cmd === 'color') {
-            const color = await customPrompt('输入颜色（例如 #ff0000 或 rgb(255,0,0)）：', cfg.formatValue || '#000000', '添加格式');
-            if (color === null) return null;
-            if (!String(color).trim()) return null;
-            cfg.formatValue = String(color).trim();
-        } else if (cmd === 'background-color') {
-            const color = await customPrompt('输入背景颜色（例如 #ffff00）：', cfg.formatValue || '#ffff00', '添加格式');
-            if (color === null) return null;
-            if (!String(color).trim()) return null;
-            cfg.formatValue = String(color).trim();
-        } else if (cmd === 'link') {
-            const href = await customPrompt('输入链接地址（支持 #锚点、dir:目录ID#锚点、name:目录名#锚点、http/https）：', cfg.formatValue || 'https://', '添加格式');
-            if (href === null) return null;
-            if (!String(href).trim()) return null;
-            cfg.formatValue = String(href).trim();
-        } else if (cmd === 'method') {
-            const methods = [];
-            while (true) {
-                const m = await promptMethodConfig(null);
-                if (!m) return null;
-                methods.push(m);
-                const more = await customConfirm('是否继续添加一个嵌套方法？', '继续', '结束', '添加格式');
-                if (!more) break;
-            }
-            cfg.formatMethods = methods;
-            const fallback = await customPrompt('当锚点范围内没有内容时，方法显示文本：', cfg.formatFallbackText || '方法', '添加格式');
-            if (fallback === null) return null;
-            cfg.formatFallbackText = String(fallback || '').trim();
-        }
-    }
-    if (cfg.methodType === '目录右键动作') {
-        const actionOptions = [
-            { value: '复制目录ID', label: '复制目录ID' },
-            { value: '删除目录', label: '删除目录' },
-            { value: '复制目录（含子目录）', label: '复制目录（含子目录）' },
-            { value: '复制目录（不含子目录）', label: '复制目录（不含子目录）' },
-            { value: '粘贴目录', label: '粘贴目录' },
-            { value: '快速复制目录（含子目录）', label: '快速复制目录（含子目录）' },
-            { value: '快速复制目录（不含子目录）', label: '快速复制目录（不含子目录）' },
-            { value: '展开此目录', label: '展开此目录' },
-            { value: '收起此目录', label: '收起此目录' }
-        ];
-        const act = await customSelect('选择目录动作：', actionOptions, cfg.dirAction || '复制目录ID', '目录右键动作');
-        if (act === null) return null;
-        cfg.dirAction = act;
-    }
-    return cfg;
 }
 
 async function editMethodElement(a) {

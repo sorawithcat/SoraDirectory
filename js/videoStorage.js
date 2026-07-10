@@ -31,11 +31,15 @@ function initDB() {
             }
             const request = indexedDB.open(DB_NAME, DB_VERSION);
             request.onerror = () => {
-                console.error('VideoStorage: 无法打开 IndexedDB', request.error);
+                console.error('MediaStorage: 无法打开 IndexedDB', request.error);
                 reject(request.error);
             };
             request.onsuccess = () => {
                 db = request.result;
+                db.onversionchange = () => {
+                    db.close();
+                    db = null;
+                };
                 resolve(db);
             };
             request.onupgradeneeded = (event) => {
@@ -44,6 +48,102 @@ function initDB() {
                     database.createObjectStore(STORE_NAME, { keyPath: 'id' });
                 }
             };
+        });
+    }
+
+    function requestToPromise(request) {
+        return new Promise((resolve, reject) => {
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    function getRecord(database, id) {
+        const transaction = database.transaction([STORE_NAME], 'readonly');
+        const store = transaction.objectStore(STORE_NAME);
+        return requestToPromise(store.get(id));
+    }
+
+    function readChunkRecords(database, chunkIds, onChunk) {
+        return new Promise((resolve, reject) => {
+            if (!chunkIds || chunkIds.length === 0) {
+                resolve();
+                return;
+            }
+            const transaction = database.transaction([STORE_NAME], 'readonly');
+            const store = transaction.objectStore(STORE_NAME);
+            let index = 0;
+
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => reject(transaction.error);
+            transaction.onabort = () => reject(transaction.error);
+
+            const readNext = () => {
+                if (index >= chunkIds.length) return;
+                const currentIndex = index;
+                const chunkId = chunkIds[index++];
+                const request = store.get(chunkId);
+                request.onsuccess = () => {
+                    try {
+                        onChunk(request.result, currentIndex, chunkId);
+                        readNext();
+                    } catch (err) {
+                        reject(err);
+                    }
+                };
+                request.onerror = (event) => {
+                    event.preventDefault();
+                    reject(request.error);
+                };
+            };
+
+            readNext();
+        });
+    }
+
+    function enqueueChunk(controller, chunkRecord, index, blobChunked) {
+        const chunkData = chunkRecord && chunkRecord.data;
+        if (!chunkData) {
+            throw new Error(`分块 ${index} 数据丢失`);
+        }
+        if (blobChunked) {
+            if (chunkData instanceof ArrayBuffer) {
+                controller.enqueue(new Uint8Array(chunkData));
+                return;
+            }
+            if (chunkData instanceof Uint8Array) {
+                controller.enqueue(chunkData);
+                return;
+            }
+            throw new Error(`分块 ${index} 数据格式错误`);
+        }
+
+        try {
+            const binaryString = atob(chunkData);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let j = 0; j < binaryString.length; j++) {
+                bytes[j] = binaryString.charCodeAt(j);
+            }
+            controller.enqueue(bytes);
+        } catch (err) {
+            throw new Error(`分块 ${index} 解码失败`);
+        }
+    }
+
+    function createChunkedStream(database, record) {
+        showProgressToast(`加载中: 0/${record.chunks.length} (0%)`);
+        return new ReadableStream({
+            async start(controller) {
+                try {
+                    await readChunkRecords(database, record.chunks, (chunkRecord, index) => {
+                        reportProgress(index + 1, record.chunks.length, 'loading');
+                        enqueueChunk(controller, chunkRecord, index, !!record.blobChunked);
+                    });
+                    controller.close();
+                } catch (error) {
+                    controller.error(error);
+                }
+            }
         });
     }
     /**
@@ -251,13 +351,7 @@ function reportProgress(current, total, action) {
     }
     async function getMedia(mediaId) {
         const database = await initDB();
-        const record = await new Promise((resolve, reject) => {
-            const transaction = database.transaction([STORE_NAME], 'readonly');
-            const store = transaction.objectStore(STORE_NAME);
-            const request = store.get(mediaId);
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(request.error);
-        });
+        const record = await getRecord(database, mediaId);
         if (!record) {
             return null;
         }
@@ -268,196 +362,42 @@ function reportProgress(current, total, action) {
     }
     async function getMediaChunked(database, chunkIds) {
         const chunks = [];
-        for (let i = 0; i < chunkIds.length; i++) {
-            const chunkId = chunkIds[i];
-            const chunkData = await new Promise((resolve, reject) => {
-                const transaction = database.transaction([STORE_NAME], 'readonly');
-                const store = transaction.objectStore(STORE_NAME);
-                const request = store.get(chunkId);
-                request.onsuccess = () => {
-                    if (request.result) {
-                        resolve(request.result.data);
-                    } else {
-                        console.error(`MediaStorage: 分块 ${chunkId} 不存在`);
-                        resolve(null);
-                    }
-                };
-                request.onerror = () => {
-                    console.error(`MediaStorage: 读取分块 ${chunkId} 失败`, request.error);
-                    reject(request.error);
-                };
-            });
-            if (chunkData === null) {
-                throw new Error(`分块 ${i} 数据丢失`);
+        await readChunkRecords(database, chunkIds, (chunkRecord, index, chunkId) => {
+            if (!chunkRecord) {
+                throw new Error(`分块 ${index} 数据丢失: ${chunkId}`);
             }
-            chunks.push(chunkData);
-        }
+            chunks.push(chunkRecord.data);
+        });
         return chunks.join('');
     }
     async function getChunkedBlobStream(mediaId) {
         const database = await initDB();
-        const record = await new Promise((resolve, reject) => {
-            const transaction = database.transaction([STORE_NAME], 'readonly');
-            const store = transaction.objectStore(STORE_NAME);
-            const request = store.get(mediaId);
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(request.error);
-        });
+        const record = await getRecord(database, mediaId);
         if (!record) {
             console.error('MediaStorage: 记录不存在', mediaId);
             return null;
         }
         if (record.chunked && record.chunks) {
-            showProgressToast(`加载中: 0/${record.chunks.length} (0%)`);
-            return new ReadableStream({
-                async start(controller) {
-                    try {
-                        if (record.blobChunked) {
-                            for (let i = 0; i < record.chunks.length; i++) {
-                                const chunkId = record.chunks[i];
-                                reportProgress(i + 1, record.chunks.length, 'loading');
-                                const chunkData = await new Promise((resolve, reject) => {
-                                    const transaction = database.transaction([STORE_NAME], 'readonly');
-                                    const store = transaction.objectStore(STORE_NAME);
-                                    const request = store.get(chunkId);
-                                    request.onsuccess = () => resolve(request.result?.data);
-                                    request.onerror = () => reject(request.error);
-                                });
-                                if (!chunkData) {
-                                    controller.error(new Error(`分块 ${i} 数据丢失`));
-                                    return;
-                                }
-                                if (chunkData instanceof ArrayBuffer) {
-                                    controller.enqueue(new Uint8Array(chunkData));
-                                } else if (chunkData instanceof Uint8Array) {
-                                    controller.enqueue(chunkData);
-                                } else {
-                                    controller.error(new Error(`分块 ${i} 数据格式错误`));
-                                    return;
-                                }
-                            }
-                        } else {
-                            for (let i = 0; i < record.chunks.length; i++) {
-                                const chunkId = record.chunks[i];
-                                reportProgress(i + 1, record.chunks.length, 'loading');
-                                const chunkData = await new Promise((resolve, reject) => {
-                                    const transaction = database.transaction([STORE_NAME], 'readonly');
-                                    const store = transaction.objectStore(STORE_NAME);
-                                    const request = store.get(chunkId);
-                                    request.onsuccess = () => resolve(request.result?.data);
-                                    request.onerror = () => reject(request.error);
-                                });
-                                if (!chunkData) {
-                                    controller.error(new Error(`分块 ${i} 数据丢失`));
-                                    return;
-                                }
-                                try {
-                                    const binaryString = atob(chunkData);
-                                    const bytes = new Uint8Array(binaryString.length);
-                                    for (let j = 0; j < binaryString.length; j++) {
-                                        bytes[j] = binaryString.charCodeAt(j);
-                                    }
-                                    controller.enqueue(bytes);
-                                } catch (e) {
-                                    console.error(`解码分块 ${i} 失败:`, e);
-                                    controller.error(new Error(`分块 ${i} 解码失败`));
-                                    return;
-                                }
-                            }
-                        }
-                        controller.close();
-                    } catch (error) {
-                        controller.error(error);
-                    }
-                }
-            });
+            return createChunkedStream(database, record);
         }
         return null;
     }
     async function getChunkedBlob(mediaId) {
         const database = await initDB();
-        const record = await new Promise((resolve, reject) => {
-            const transaction = database.transaction([STORE_NAME], 'readonly');
-            const store = transaction.objectStore(STORE_NAME);
-            const request = store.get(mediaId);
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(request.error);
-        });
+        const record = await getRecord(database, mediaId);
         if (!record) {
             console.error('MediaStorage: 记录不存在', mediaId);
             return null;
         }
         let mimeType = record.mimeType || 'application/octet-stream';
         if (record.chunked && record.chunks) {
-            showProgressToast(`加载中: 0/${record.chunks.length} (0%)`);
-            const stream = new ReadableStream({
-                async start(controller) {
-                    try {
-                        if (record.blobChunked) {
-                            for (let i = 0; i < record.chunks.length; i++) {
-                                const chunkId = record.chunks[i];
-                                reportProgress(i + 1, record.chunks.length, 'loading');
-                                const chunkData = await new Promise((resolve, reject) => {
-                                    const transaction = database.transaction([STORE_NAME], 'readonly');
-                                    const store = transaction.objectStore(STORE_NAME);
-                                    const request = store.get(chunkId);
-                                    request.onsuccess = () => resolve(request.result?.data);
-                                    request.onerror = () => reject(request.error);
-                                });
-                                if (!chunkData) {
-                                    controller.error(new Error(`分块 ${i} 数据丢失`));
-                                    return;
-                                }
-                                if (chunkData instanceof ArrayBuffer) {
-                                    controller.enqueue(new Uint8Array(chunkData));
-                                } else if (chunkData instanceof Uint8Array) {
-                                    controller.enqueue(chunkData);
-                                } else {
-                                    controller.error(new Error(`分块 ${i} 数据格式错误`));
-                                    return;
-                                }
-                            }
-                        } else {
-                            if (record.header) {
-                                const mimeMatch = record.header.match(/data:([^;]+)/);
-                                if (mimeMatch) {
-                                    mimeType = mimeMatch[1];
-                                }
-                            }
-                            for (let i = 0; i < record.chunks.length; i++) {
-                                const chunkId = record.chunks[i];
-                                reportProgress(i + 1, record.chunks.length, 'loading');
-                                const chunkData = await new Promise((resolve, reject) => {
-                                    const transaction = database.transaction([STORE_NAME], 'readonly');
-                                    const store = transaction.objectStore(STORE_NAME);
-                                    const request = store.get(chunkId);
-                                    request.onsuccess = () => resolve(request.result?.data);
-                                    request.onerror = () => reject(request.error);
-                                });
-                                if (!chunkData) {
-                                    controller.error(new Error(`分块 ${i} 数据丢失`));
-                                    return;
-                                }
-                                try {
-                                    const binaryString = atob(chunkData);
-                                    const bytes = new Uint8Array(binaryString.length);
-                                    for (let j = 0; j < binaryString.length; j++) {
-                                        bytes[j] = binaryString.charCodeAt(j);
-                                    }
-                                    controller.enqueue(bytes);
-                                } catch (e) {
-                                    console.error(`解码分块 ${i} 失败:`, e);
-                                    controller.error(new Error(`分块 ${i} 解码失败`));
-                                    return;
-                                }
-                            }
-                        }
-                        controller.close();
-                    } catch (error) {
-                        controller.error(error);
-                    }
+            if (record.header) {
+                const mimeMatch = record.header.match(/data:([^;]+)/);
+                if (mimeMatch) {
+                    mimeType = mimeMatch[1];
                 }
-            });
+            }
+            const stream = createChunkedStream(database, record);
             const response = new Response(stream);
             return await response.blob();
         }
@@ -489,57 +429,74 @@ function reportProgress(current, total, action) {
     }
     async function deleteMedia(mediaId) {
         const database = await initDB();
-        const record = await new Promise((resolve, reject) => {
-            const transaction = database.transaction([STORE_NAME], 'readonly');
-            const store = transaction.objectStore(STORE_NAME);
-            const request = store.get(mediaId);
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(request.error);
-        });
-        if (record && record.chunked && record.chunks) {
-            for (const chunkId of record.chunks) {
-                try {
-                    await new Promise((resolve, reject) => {
-                        const transaction = database.transaction([STORE_NAME], 'readwrite');
-                        const store = transaction.objectStore(STORE_NAME);
-                        const request = store.delete(chunkId);
-                        request.onsuccess = () => resolve();
-                        request.onerror = () => {
-                            console.warn(`删除分块 ${chunkId} 失败:`, request.error);
-                            resolve(); 
-                        };
-                    });
-                } catch (err) {
-                    console.warn(`删除分块 ${chunkId} 时出错:`, err);
-                }
-            }
-        }
+        const record = await getRecord(database, mediaId);
         return new Promise((resolve, reject) => {
             const transaction = database.transaction([STORE_NAME], 'readwrite');
             const store = transaction.objectStore(STORE_NAME);
-            const request = store.delete(mediaId);
-            request.onsuccess = () => {
-                resolve();
-            };
-            request.onerror = () => {
-                console.error('MediaStorage: 删除媒体失败', request.error);
-                reject(request.error);
-            };
+            const keys = record && record.chunked && record.chunks
+                ? record.chunks.concat(mediaId)
+                : [mediaId];
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => reject(transaction.error);
+            keys.forEach(key => store.delete(key));
         });
     }
     async function mediaExists(mediaId) {
         const database = await initDB();
-        return new Promise((resolve, reject) => {
-            const transaction = database.transaction([STORE_NAME], 'readonly');
-            const store = transaction.objectStore(STORE_NAME);
-            const request = store.get(mediaId);
-            request.onsuccess = () => {
-                resolve(!!request.result);
-            };
-            request.onerror = () => {
-                reject(request.error);
-            };
-        });
+        const record = await getRecord(database, mediaId);
+        return !!record;
+    }
+    async function getMediaInfo(mediaId) {
+        const database = await initDB();
+        const record = await getRecord(database, mediaId);
+        if (!record) return null;
+        let mimeType = record.mimeType || 'application/octet-stream';
+        if (record.header) {
+            const mimeMatch = record.header.match(/data:([^;]+)/);
+            if (mimeMatch) mimeType = mimeMatch[1];
+        } else if (typeof record.data === 'string') {
+            const mimeMatch = record.data.match(/^data:([^;]+)/);
+            if (mimeMatch) mimeType = mimeMatch[1];
+        }
+        let size = null;
+        if (record.blobChunked && Number.isFinite(record.totalSize)) {
+            size = record.totalSize;
+        } else if (record.data instanceof ArrayBuffer) {
+            size = record.data.byteLength;
+        }
+        return {
+            id: mediaId,
+            type: record.type || 'media',
+            mimeType,
+            size,
+            chunked: !!record.chunked,
+            blobChunked: !!record.blobChunked
+        };
+    }
+    async function writeMediaToWritable(mediaId, writable) {
+        const database = await initDB();
+        const record = await getRecord(database, mediaId);
+        if (!record) {
+            throw new Error(`媒体不存在: ${mediaId}`);
+        }
+        if (record.chunked && record.chunks && record.blobChunked) {
+            showProgressToast(`导出中: 0/${record.chunks.length} (0%)`);
+            for (let i = 0; i < record.chunks.length; i++) {
+                const chunkRecord = await getRecord(database, record.chunks[i]);
+                if (!chunkRecord || !chunkRecord.data) {
+                    throw new Error(`分块 ${i} 数据丢失`);
+                }
+                reportProgress(i + 1, record.chunks.length, 'loading');
+                await writable.write(chunkRecord.data);
+            }
+            return record.totalSize || 0;
+        }
+        const blob = await getChunkedBlob(mediaId);
+        if (!blob) {
+            throw new Error(`媒体读取失败: ${mediaId}`);
+        }
+        await writable.write(blob);
+        return blob.size;
     }
     async function getAllMediaIds() {
         const database = await initDB();
@@ -667,13 +624,7 @@ function reportProgress(current, total, action) {
             return cachedUrl;
         }
         const database = await initDB();
-        const record = await new Promise((resolve, reject) => {
-            const transaction = database.transaction([STORE_NAME], 'readonly');
-            const store = transaction.objectStore(STORE_NAME);
-            const request = store.get(mediaId);
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(request.error);
-        });
+        const record = await getRecord(database, mediaId);
         if (!record) return null;
         if (record.chunked) {
             const blob = await getChunkedBlob(mediaId);
@@ -873,13 +824,7 @@ function reportProgress(current, total, action) {
     }
     async function getMediaAsDataUrl(mediaId) {
         const database = await initDB();
-        const record = await new Promise((resolve, reject) => {
-            const transaction = database.transaction([STORE_NAME], 'readonly');
-            const store = transaction.objectStore(STORE_NAME);
-            const request = store.get(mediaId);
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(request.error);
-        });
+        const record = await getRecord(database, mediaId);
         if (!record) return null;
         if (!record.chunked) {
             return record.data || null;
@@ -1011,6 +956,9 @@ function reportProgress(current, total, action) {
         setProgressCallback,  
         hideProgressToast,    
         deleteMedia,
+        mediaExists,
+        getMediaInfo,
+        writeMediaToWritable,
         cleanupOrphanedData,  
         getAllMediaIds,
         clearAll,
@@ -1028,3 +976,4 @@ function reportProgress(current, total, action) {
         preloadAllDirectoryContent
     };
 })();
+window.MediaStorage = MediaStorage;

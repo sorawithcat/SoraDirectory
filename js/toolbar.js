@@ -54,7 +54,7 @@ if (topSaveBtn) {
 if (topLoadBtn) {
     const fileInput = document.createElement('input');
     fileInput.type = 'file';
-    fileInput.accept = '.json,.txt,.xml,.csv,.encrypted.json';  
+    fileInput.accept = '.sora,.json,.txt,.xml,.csv,.encrypted.json';  
     fileInput.style.display = 'none';
     document.body.appendChild(fileInput);
     topLoadBtn.addEventListener("click", async function() {
@@ -69,6 +69,16 @@ if (topLoadBtn) {
         const file = e.target.files[0];
         if (!file) return;
         const fileName = file.name;
+        if (typeof isSoraPackageFile === 'function' && isSoraPackageFile(file)) {
+            try {
+                await openSoraPackageFile(file, null);
+            } catch (error) {
+                console.error("文件加载错误:", error);
+                customAlert("文件加载失败：" + error.message);
+            }
+            fileInput.value = '';
+            return;
+        }
         const reader = new FileReader();
         reader.onload = async function() {
             try {
@@ -92,12 +102,9 @@ if (topLoadBtn) {
                         return;
                     }
                     if (!isEncrypted && typeof FileCache !== 'undefined' && Array.isArray(parsedData)) {
-                        try {
-                            await FileCache.set(file, parsedData);
-                            console.log('FileCache: 已缓存文件', fileName);
-                        } catch (err) {
-                            console.warn('FileCache: 缓存保存失败', err);
-                        }
+                        FileCache.set(file, parsedData)
+                            .then(() => console.log('FileCache: 已缓存文件', fileName))
+                            .catch(err => console.warn('FileCache: 缓存保存失败', err));
                     }
                 }
                 if (typeof isDiffFile === 'function' && isDiffFile(parsedData)) {
@@ -169,8 +176,10 @@ if (topLoadBtn) {
                         currentFileName = fileName;
                     }
                     LoadMulu();
-                    if (typeof calculateAllHashes === 'function') {
-                        calculateAllHashes();
+                    if (typeof scheduleHashBaselineUpdate === 'function') {
+                        scheduleHashBaselineUpdate();
+                    } else if (typeof calculateAllHashes === 'function') {
+                        setTimeout(calculateAllHashes, 0);
                     }
                     if (typeof hasUnsavedChanges !== 'undefined') {
                         hasUnsavedChanges = false;
@@ -320,15 +329,23 @@ if (newBtn) {
 if (saveAsBtn) {
     saveAsBtn.addEventListener("click", async function() {
         const saveAsOptions = [
-            { value: 'webpage', label: '网页 (.html) - 独立可浏览的网页' },
-            { value: 'custom', label: '自定义文件名 - 手动输入文件名和格式' }
+            { value: 'sora', label: 'Sora 单文件包 (.sora) - 可导入，包含媒体' },
+            { value: 'webpage', label: '网页 (.html) - 独立可浏览的网页' }
         ];
-        const saveType = await customSelect('选择另存为格式：', saveAsOptions, 'webpage', '另存为');
+        const saveType = await customSelect('选择另存为格式：', saveAsOptions, 'sora', '另存为');
         if (saveType === null) {
             showToast('已取消保存', 'info', 2000);
             return;
         }
-        if (saveType === 'webpage') {
+        const exportScope = typeof chooseSaveAsExportScope === 'function'
+            ? await chooseSaveAsExportScope()
+            : { data: mulufile, mode: 'all', count: Array.isArray(mulufile) ? mulufile.length : 0, label: '全部目录' };
+        if (!exportScope) {
+            return;
+        }
+        if (saveType === 'sora') {
+            await handleSaveAsSoraPackage(null, exportScope.data, exportScope);
+        } else if (saveType === 'webpage') {
             const encryptOptions = [
                 { value: 'no', label: '不加密' },
                 { value: 'yes', label: '加密网页（需要密码才能查看）' }
@@ -338,7 +355,7 @@ if (saveAsBtn) {
                 showToast('已取消', 'info', 2000);
                 return;
             }
-            await handleSaveAsWebpage(encrypt === 'yes');
+            await handleSaveAsWebpage(encrypt === 'yes', null, exportScope.data, exportScope);
         } else if (saveType === 'custom') {
             const encryptOptions = [
                 { value: 'no', label: '不加密' },
@@ -362,15 +379,15 @@ if (saveAsBtn) {
                     return;
                 }
             }
-            let customName = await customPrompt("输入文件名（包含扩展名，如：mydata.json）", "");
+            let customName = await customPrompt("输入文件名（包含扩展名，如：mydata.sora）", "");
             if (!customName) {
                 showToast('已取消保存', 'info', 2000);
                 return;
             }
             if (password) {
-                await handleSaveAsEncrypted(customName, password);
+                await handleSaveAsEncrypted(customName, password, exportScope.data);
             } else {
-                await handleSaveAs(customName);
+                await handleSaveAs(customName, exportScope.data);
             }
         }
     });
@@ -397,6 +414,13 @@ if (topImageUploadBtn) {
         e.preventDefault();
         e.stopPropagation();
         if (imageFileInput) imageFileInput.click();
+    });
+}
+if (topVideoUploadBtn) {
+    topVideoUploadBtn.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (videoFileInput) videoFileInput.click();
     });
 }
 
@@ -899,10 +923,11 @@ function buildHelpPageContents() {
         '<h2 id="另存为">另存为</h2>',
         '<p>点击顶部工具栏 <strong>另存为</strong> 后会先选择保存格式：</p>',
         '<ul>',
+        '<li><strong>Sora 单文件包 (.sora)</strong>：导出为可重新导入的单文件包，媒体按二进制保存。</li>',
         '<li><strong>网页 (.html)</strong>：导出为独立可浏览的网页。</li>',
-        '<li><strong>自定义文件名</strong>：手动输入文件名与扩展名（如：mydata.json）。</li>',
         '</ul>',
-        '<p>两种格式都会再询问“是否加密”。</p>',
+        '<p>选择格式后会询问导出范围：可导出全部目录、当前目录及其子目录，或手动勾选部分目录。</p>',
+        '<p>网页导出可选择是否加密；.sora 包用于快速导入与分享。</p>',
         '<h2 id="导出网页">导出网页（不加密）</h2>',
         '<ul>',
         '<li>导出网页后可离线打开浏览，目录与内部跳转都可用。</li>',
@@ -1214,120 +1239,84 @@ function buildDecryptGameTemplateHtml(dirId) {
 
     const openInit = [
         { trigger: 'open', frontAnchor: hiddenDirRef, backAnchor: '', methodType: '隐藏', once: true },
+        { trigger: 'open', frontAnchor: '#system_methods_start', backAnchor: '#system_methods_end', methodType: '隐藏', once: true },
         { trigger: 'open', frontAnchor: '#stage2_start', backAnchor: '#stage2_end', methodType: '隐藏', once: true },
         { trigger: 'open', frontAnchor: '#stage3_start', backAnchor: '#stage3_end', methodType: '隐藏', once: true },
-        { trigger: 'open', frontAnchor: '#stage4_start', backAnchor: '#stage4_end', methodType: '隐藏', once: true },
         { trigger: 'open', frontAnchor: '#final_stage_start', backAnchor: '#final_stage_end', methodType: '隐藏', once: true },
         { trigger: 'open', frontAnchor: '#success_msg_start', backAnchor: '#success_msg_end', methodType: '隐藏', once: true },
         { trigger: 'open', frontAnchor: '#clue1_hidden_start', backAnchor: '#clue1_hidden_end', methodType: '隐藏', once: true },
         { trigger: 'open', frontAnchor: '#clue2_hidden_start', backAnchor: '#clue2_hidden_end', methodType: '隐藏', once: true },
         { trigger: 'open', frontAnchor: '#clue3_hidden_start', backAnchor: '#clue3_hidden_end', methodType: '隐藏', once: true },
-        { trigger: 'open', frontAnchor: '#hint_box_start', backAnchor: '#hint_box_end', methodType: '隐藏', once: true }
+        { trigger: 'open', frontAnchor: '#hover_hint_start', backAnchor: '#hover_hint_end', methodType: '隐藏', once: true }
     ];
 
-    const openInitLink = methodLink('初始化游戏（打开网页时触发，导出后自动执行）', openInit);
+    const openInitLink = methodLink('启动导出页状态机', openInit);
 
-    const enterDirDemo = methodLink('选中目录时触发示例', [
-        { trigger: 'enter_dir', frontAnchor: '#enter_demo_start', backAnchor: '#enter_demo_end', methodType: '切换', once: false }
-    ]);
-
-    const showClue1 = methodLink('显示线索', [
+    const showClue1 = methodLink('展开协议说明', [
         { trigger: 'click', frontAnchor: '#clue1_hidden_start', backAnchor: '#clue1_hidden_end', methodType: '显示', once: true }
     ]);
 
-    const passStage1Wrong1 = methodLink('答案：256', [
-        { trigger: 'click', frontAnchor: '#feedback1_start', backAnchor: '#feedback1_end', methodType: '更换内容', once: false, replaceSourceType: 'text', replaceText: '答案错误！提示：2的8次方减1' }
+    const passStage1Wrong1 = methodLink('提交 NODE', [
+        { trigger: 'click', frontAnchor: '#feedback1_start', backAnchor: '#feedback1_end', methodType: '更换内容', once: false, replaceSourceType: 'text', replaceText: '校验失败：第 3 组 22 对应的是 V，不是 D。' }
     ]);
 
-    const passStage1Wrong2 = methodLink('答案：128', [
-        { trigger: 'click', frontAnchor: '#feedback1_start', backAnchor: '#feedback1_end', methodType: '更换内容', once: false, replaceSourceType: 'text', replaceText: '答案错误！提示：不是2的7次方' }
+    const passStage1Wrong2 = methodLink('提交 VOID', [
+        { trigger: 'click', frontAnchor: '#feedback1_start', backAnchor: '#feedback1_end', methodType: '更换内容', once: false, replaceSourceType: 'text', replaceText: '校验失败：第 2 组 15 对应的是 O，序列没有 I。' }
     ]);
 
-    const passStage1 = methodLink('答案：255', [
+    const passStage1 = methodLink('提交 NOVA', [
         { trigger: 'click', frontAnchor: '#answer_display1_start', backAnchor: '#answer_display1_end', methodType: '更换内容', once: true, replaceSourceType: 'anchor', replaceFromFrontAnchor: hiddenDirRef + '#answer1_start', replaceFromBackAnchor: hiddenDirRef + '#answer1_end' },
         { trigger: 'click', frontAnchor: '#stage2_start', backAnchor: '#stage2_end', methodType: '显示', once: true },
         { trigger: 'click', frontAnchor: '#stage1_start', backAnchor: '#stage1_end', methodType: '隐藏', once: true }
     ]);
 
-    const toggleClue2 = methodLink('切换线索显示', [
+    const toggleClue2 = methodLink('切换偏移提示', [
         { trigger: 'click', frontAnchor: '#clue2_hidden_start', backAnchor: '#clue2_hidden_end', methodType: '切换', once: false }
     ]);
 
-    const addHintFormat = methodLink('添加格式提示', [
-        { trigger: 'click', frontAnchor: '#stage2_question_start', backAnchor: '#stage2_question_end', methodType: '添加格式', once: false, formatType: 'bold' }
+    const markCipherLine = methodLink('标记密文行', [
+        { trigger: 'click', frontAnchor: '#cipher_line_start', backAnchor: '#cipher_line_end', methodType: '添加格式', once: true, formatCommand: 'highlight' }
     ]);
 
-    const passStage2Wrong1 = methodLink('答案：迭代', [
-        { trigger: 'click', frontAnchor: '#feedback2_start', backAnchor: '#feedback2_end', methodType: '更换内容', once: false, replaceSourceType: 'text', replaceText: '答案错误！迭代是循环，不是函数调用自己' }
+    const passStage2Wrong1 = methodLink('提交 BLACK BAR', [
+        { trigger: 'click', frontAnchor: '#feedback2_start', backAnchor: '#feedback2_end', methodType: '更换内容', once: false, replaceSourceType: 'text', replaceText: '未通过：BAR 不是 EOD 的向前 3 位还原结果。' }
     ]);
 
-    const passStage2Wrong2 = methodLink('答案：多态', [
-        { trigger: 'click', frontAnchor: '#feedback2_start', backAnchor: '#feedback2_end', methodType: '更换内容', once: false, replaceSourceType: 'text', replaceText: '答案错误！多态是面向对象的概念' }
+    const passStage2Wrong2 = methodLink('提交 BLOCK KEY', [
+        { trigger: 'click', frontAnchor: '#feedback2_start', backAnchor: '#feedback2_end', methodType: '更换内容', once: false, replaceSourceType: 'text', replaceText: '未通过：第二个词应由 ERA 还原得到。' }
     ]);
 
-    const passStage2 = methodLink('答案：递归', [
+    const passStage2 = methodLink('提交 BLACK BOX', [
         { trigger: 'click', frontAnchor: '#answer_display2_start', backAnchor: '#answer_display2_end', methodType: '更换内容', once: true, replaceSourceType: 'anchor', replaceFromFrontAnchor: hiddenDirRef + '#answer2_start', replaceFromBackAnchor: hiddenDirRef + '#answer2_end' },
         { trigger: 'click', frontAnchor: '#stage3_start', backAnchor: '#stage3_end', methodType: '显示', once: true },
         { trigger: 'click', frontAnchor: '#stage2_start', backAnchor: '#stage2_end', methodType: '隐藏', once: true }
     ]);
 
-    const showClue3 = methodLink('显示隐藏线索', [
+    const showClue3 = methodLink('展开路由表提示', [
         { trigger: 'click', frontAnchor: '#clue3_hidden_start', backAnchor: '#clue3_hidden_end', methodType: '显示', once: true }
     ]);
 
-    const hoverShowHint = methodLink('悬停显示提示', [
-        { trigger: 'hover', frontAnchor: '#hint_box_start', backAnchor: '#hint_box_end', methodType: '切换', once: false }
+    const hoverShowHint = methodLink('悬停查看异常标记', [
+        { trigger: 'hover', frontAnchor: '#hover_hint_start', backAnchor: '#hover_hint_end', methodType: '切换', once: false }
     ]);
 
-    const passStage3Wrong1 = methodLink('答案：LUCAS', [
-        { trigger: 'click', frontAnchor: '#feedback3_start', backAnchor: '#feedback3_end', methodType: '更换内容', once: false, replaceSourceType: 'text', replaceText: '答案错误！Lucas数列与此类似但初始值不同' }
+    const passStage3Wrong1 = methodLink('提交 FRAME', [
+        { trigger: 'click', frontAnchor: '#feedback3_start', backAnchor: '#feedback3_end', methodType: '更换内容', once: false, replaceSourceType: 'text', replaceText: '路由拒绝：F 命中的是 FORGE，不是 FRAME。' }
     ]);
 
-    const passStage3Wrong2 = methodLink('答案：PASCAL', [
-        { trigger: 'click', frontAnchor: '#feedback3_start', backAnchor: '#feedback3_end', methodType: '更换内容', once: false, replaceSourceType: 'text', replaceText: '答案错误！Pascal三角形和这个数列不同' }
+    const passStage3Wrong2 = methodLink('提交 FROST', [
+        { trigger: 'click', frontAnchor: '#feedback3_start', backAnchor: '#feedback3_end', methodType: '更换内容', once: false, replaceSourceType: 'text', replaceText: '路由拒绝：FROST 是诱饵项，表中没有激活标记。' }
     ]);
 
-    const passStage3 = methodLink('答案：FIBONACCI', [
+    const passStage3 = methodLink('提交 FORGE', [
         { trigger: 'click', frontAnchor: '#answer_display3_start', backAnchor: '#answer_display3_end', methodType: '更换内容', once: true, replaceSourceType: 'anchor', replaceFromFrontAnchor: hiddenDirRef + '#answer3_start', replaceFromBackAnchor: hiddenDirRef + '#answer3_end' },
-        { trigger: 'click', frontAnchor: '#stage4_start', backAnchor: '#stage4_end', methodType: '显示', once: true },
+        { trigger: 'click', frontAnchor: '#final_stage_start', backAnchor: '#final_stage_end', methodType: '显示', once: true },
         { trigger: 'click', frontAnchor: '#stage3_start', backAnchor: '#stage3_end', methodType: '隐藏', once: true }
     ]);
 
-    const randomPass1 = Math.random().toString(36).substring(2, 10).toUpperCase();
-    const randomPass2 = Math.random().toString(36).substring(2, 10).toUpperCase();
-    const randomPass3 = Math.random().toString(36).substring(2, 10).toUpperCase();
-    
-    const replaceContent1 = methodLink('随机密码1', [
-        { trigger: 'click', frontAnchor: '#password_content_start', backAnchor: '#password_content_end', methodType: '更换内容', once: false, replaceSourceType: 'text', replaceText: '临时密码：' + randomPass1 }
-    ]);
-    
-    const replaceContent2 = methodLink('随机密码2', [
-        { trigger: 'click', frontAnchor: '#password_content_start', backAnchor: '#password_content_end', methodType: '更换内容', once: false, replaceSourceType: 'text', replaceText: '临时密码：' + randomPass2 }
-    ]);
-    
-    const replaceContent3 = methodLink('随机密码3', [
-        { trigger: 'click', frontAnchor: '#password_content_start', backAnchor: '#password_content_end', methodType: '更换内容', once: false, replaceSourceType: 'text', replaceText: '临时密码：' + randomPass3 }
-    ]);
-
-    const passStage4Wrong1 = methodLink('答案：987', [
-        { trigger: 'click', frontAnchor: '#feedback4_start', backAnchor: '#feedback4_end', methodType: '更换内容', once: false, replaceSourceType: 'text', replaceText: '答案错误！987是F(16)，不是F(17)' }
-    ]);
-
-    const passStage4Wrong2 = methodLink('答案：2584', [
-        { trigger: 'click', frontAnchor: '#feedback4_start', backAnchor: '#feedback4_end', methodType: '更换内容', once: false, replaceSourceType: 'text', replaceText: '答案错误！2584是F(18)，不是F(17)' }
-    ]);
-
-    const passStage4 = methodLink('答案：1597', [
-        { trigger: 'click', frontAnchor: '#answer_display4_start', backAnchor: '#answer_display4_end', methodType: '更换内容', once: true, replaceSourceType: 'anchor', replaceFromFrontAnchor: hiddenDirRef + '#answer4_start', replaceFromBackAnchor: hiddenDirRef + '#answer4_end' },
-        { trigger: 'click', frontAnchor: '#final_stage_start', backAnchor: '#final_stage_end', methodType: '显示', once: true },
-        { trigger: 'click', frontAnchor: '#stage4_start', backAnchor: '#stage4_end', methodType: '隐藏', once: true }
-    ]);
-
-    const finalDecrypt = methodLink('解密最终密码', (function() {
-        const timestamp = new Date().getTime().toString(36).toUpperCase();
-        const finalPassword = 'SORA-' + timestamp.substring(timestamp.length - 6);
+    const finalDecrypt = methodLink('组装最终密钥', (function() {
         const ms = [
-            { trigger: 'click', frontAnchor: '#final_password_start', backAnchor: '#final_password_end', methodType: '更换内容', once: true, replaceSourceType: 'text', replaceText: '最终密码：' + finalPassword },
+            { trigger: 'click', frontAnchor: '#final_report_start', backAnchor: '#final_report_end', methodType: '更换内容', once: true, replaceSourceType: 'anchor', replaceFromFrontAnchor: hiddenDirRef + '#final_report_source_start', replaceFromBackAnchor: hiddenDirRef + '#final_report_source_end' },
             { trigger: 'click', frontAnchor: '#success_msg_start', backAnchor: '#success_msg_end', methodType: '显示', once: true },
             { trigger: 'click', frontAnchor: '#final_stage_start', backAnchor: '#final_stage_end', methodType: '隐藏', once: true }
         ];
@@ -1339,121 +1328,111 @@ function buildDecryptGameTemplateHtml(dirId) {
 
     return [
         '<hr>',
-        '<h2>SoraDirectory 方法系统演示</h2>',
-        '<p><strong>游戏说明：</strong>这是一个综合演示所有方法功能的解密游戏。编辑器中方法不会执行，需要导出为网页后才能游玩。</p>',
+        '<h2>深层档案：雾港站</h2>',
+        '<p><strong>玩法说明：</strong>这是一个可导出的互动解谜模板。编辑器中方法链接只是配置，导出为网页后会按“打开网页 / 点击 / 悬停”触发。</p>',
         '<blockquote>',
-        '<p><strong>方法类型演示：</strong>隐藏、显示、切换、更换内容、添加格式、目录重命名</p>',
-        '<p><strong>触发方式演示：</strong>打开网页时、选中目录时、点击时、悬浮时</p>',
-        '<p><strong>隐藏目录演示：</strong>本游戏包含一个名为“隐藏答案库”的子目录，导出网页后该目录会被隐藏，但其内容会被方法系统提取到主游戏区域显示。</p>',
+        '<p><strong>演示点：</strong>打开网页时初始化、隐藏答案库、阶段推进、错误反馈、提示切换、锚点范围替换、添加格式、悬停提示、目录重命名。</p>',
+        '<p><strong>结构：</strong>主目录负责玩家流程；“隐藏答案库”在导出页会隐藏，但仍可作为内容替换来源。</p>',
         '</blockquote>',
+        anchor('system_methods_start'),
         '<p>' + openInitLink + '</p>',
-        '<hr>',
-
-        anchor('enter_demo_start'),
-        '<p><em>（选中目录时触发示例：这段文字会在每次选中该目录时切换显示/隐藏状态）</em></p>',
-        anchor('enter_demo_end'),
-        '<p>' + enterDirDemo + '</p>',
+        anchor('system_methods_end'),
         '<hr>',
 
         anchor('stage1_start'),
-        '<h3>第一关：二进制的秘密</h3>',
-        '<p><strong>题目：</strong>8位二进制数能表示的最大十进制数是多少？</p>',
-        '<blockquote>',
-        '<p>提示：8个1组成的二进制数是 11111111</p>',
-        '</blockquote>',
+        '<h3>第一幕：握手包</h3>',
+        '<p><strong>截获序列：</strong><code>14-15-22-1</code></p>',
+        '<p>协议说明被拆走了。你需要还原四位代号，才能打开下一段日志。</p>',
         '<p>' + showClue1 + '</p>',
         anchor('clue1_hidden_start'),
         '<blockquote>',
-        '<p><strong>线索：</strong>2⁸ - 1 = ？（显示方法演示）</p>',
+        '<p>协议说明：A=1，B=2，C=3，以此类推。数字序列按字母表还原。</p>',
         '</blockquote>',
         anchor('clue1_hidden_end'),
         '<p>' + passStage1Wrong1 + ' | ' + passStage1Wrong2 + ' | ' + passStage1 + '</p>',
+        '<blockquote>',
         anchor('feedback1_start'),
+        '<p><em>等待提交...</em></p>',
         anchor('feedback1_end'),
+        '</blockquote>',
+        '<div style="border:1px solid #d8dee6;border-radius:8px;padding:12px;background:#f8fafc;">',
         anchor('answer_display1_start'),
+        '<p>握手结果尚未确认。</p>',
         anchor('answer_display1_end'),
+        '</div>',
         anchor('stage1_end'),
 
         anchor('stage2_start'),
-        '<h3>第二关：函数的自我调用</h3>',
-        anchor('stage2_question_start'),
-        '<p><strong>题目：</strong>在编程中，函数调用自身的技术叫什么？</p>',
-        anchor('stage2_question_end'),
-        '<pre><code>function factorial(n) {\n    if (n &lt;= 1) return 1;\n    return n * factorial(n - 1);  // 函数调用了自己\n}</code></pre>',
-        '<p>' + toggleClue2 + ' | ' + addHintFormat + '</p>',
+        '<h3>第二幕：偏移日志</h3>',
+        '<p>第一幕的代号会打开一条加密日志。它不是随机乱码，而是一次很老派的 Caesar 偏移。</p>',
+        anchor('cipher_line_start'),
+        '<pre><code>EODFN ERA</code></pre>',
+        anchor('cipher_line_end'),
+        '<p>' + toggleClue2 + ' | ' + markCipherLine + '</p>',
         anchor('clue2_hidden_start'),
         '<blockquote>',
-        '<p><strong>提示：</strong>这个技术的英文是 Recursion（切换方法演示）</p>',
+        '<p>提示：密文每个字母比明文向后移动 3 位；还原时每个字母向前移动 3 位。</p>',
         '</blockquote>',
         anchor('clue2_hidden_end'),
         '<p>' + passStage2Wrong1 + ' | ' + passStage2Wrong2 + ' | ' + passStage2 + '</p>',
+        '<blockquote>',
         anchor('feedback2_start'),
+        '<p><em>等待提交...</em></p>',
         anchor('feedback2_end'),
+        '</blockquote>',
+        '<div style="border:1px solid #d8dee6;border-radius:8px;padding:12px;background:#f8fafc;">',
         anchor('answer_display2_start'),
+        '<p>模块名尚未恢复。</p>',
         anchor('answer_display2_end'),
+        '</div>',
         anchor('stage2_end'),
 
         anchor('stage3_start'),
-        '<h3>第三关：神秘数列</h3>',
-        '<p><strong>题目：</strong>以下数列的名称是什么？（英文大写）</p>',
-        '<p><code>1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144...</code></p>',
+        '<h3>第三幕：路由表</h3>',
+        '<p>日志恢复后，系统给出一张路由表。你需要用前两幕得到的两个词计算下一跳。</p>',
+        '<pre><code>NOVA      -> 字母序号和 52\nBLACKBOX  -> 字母序号和 84\n84 - 52   -> 32\n32 mod 26 -> 6\n第 6 个字母 -> F</code></pre>',
+        '<p>路由表：F = FORGE，R = RELAY，M = MINT。</p>',
         '<p>' + showClue3 + ' | ' + hoverShowHint + '</p>',
         anchor('clue3_hidden_start'),
         '<blockquote>',
-        '<p><strong>线索：</strong>这个数列的规律是 F(n) = F(n-1) + F(n-2)，前两项都是1</p>',
+        '<p>提示：这里的 mod 26 表示超过 26 后从 1 重新计数；32 回绕后是 6。</p>',
         '</blockquote>',
         anchor('clue3_hidden_end'),
-        anchor('hint_box_start'),
+        anchor('hover_hint_start'),
         '<blockquote>',
-        '<p>提示：这个数列以意大利数学家的名字命名，他在研究兔子繁殖问题时发现了这个规律。（悬浮时触发演示）</p>',
+        '<p>异常标记：FRAME 和 FROST 是相邻诱饵项，只有 FORGE 带有激活标记。</p>',
         '</blockquote>',
-        anchor('hint_box_end'),
+        anchor('hover_hint_end'),
         '<p>' + passStage3Wrong1 + ' | ' + passStage3Wrong2 + ' | ' + passStage3 + '</p>',
+        '<blockquote>',
         anchor('feedback3_start'),
+        '<p><em>等待提交...</em></p>',
         anchor('feedback3_end'),
+        '</blockquote>',
+        '<div style="border:1px solid #d8dee6;border-radius:8px;padding:12px;background:#f8fafc;">',
         anchor('answer_display3_start'),
+        '<p>下一跳未确认。</p>',
         anchor('answer_display3_end'),
+        '</div>',
         anchor('stage3_end'),
 
-        anchor('stage4_start'),
-        '<h3>第四关：数列推演</h3>',
-        '<p><strong>题目：</strong>根据上一关的数列规律，第17项的值是多少？</p>',
-        '<blockquote>',
-        '<p>提示：F(1)=1, F(2)=1, F(3)=2, F(4)=3, F(5)=5, F(6)=8, F(7)=13, F(8)=21...</p>',
-        '</blockquote>',
-        '<p>你需要获取一个临时密码，然后用它计算最终密码。点击以下任意一个按钮获取：</p>',
-        '<p>' + replaceContent1 + ' | ' + replaceContent2 + ' | ' + replaceContent3 + '（更换内容方法演示 - 每个按钮生成不同内容）</p>',
-        anchor('password_content_start'),
-        '<p><em>这里会被替换成随机密码</em></p>',
-        anchor('password_content_end'),
-        '<p>' + passStage4Wrong1 + ' | ' + passStage4Wrong2 + ' | ' + passStage4 + '</p>',
-        anchor('feedback4_start'),
-        anchor('feedback4_end'),
-        anchor('answer_display4_start'),
-        anchor('answer_display4_end'),
-        anchor('stage4_end'),
-
         anchor('final_stage_start'),
-        '<h3>最终关：解密密码</h3>',
-        '<p><strong>任务：</strong>点击下方按钮，获取最终解密密码！</p>',
+        '<h3>终幕：档案解封</h3>',
+        '<p>你已经得到三段材料：<code>NOVA</code>、<code>BLACK BOX</code>、<code>FORGE</code>。现在从隐藏答案库调取最终报告。</p>',
         '<blockquote>',
-        '<p>这一步将演示：</p>',
-        '<p>• 更换内容方法（替换密码显示区）</p>',
-        '<p>• 显示方法（显示通关信息）</p>',
-        '<p>• 隐藏方法（隐藏当前关卡）</p>',
-        '<p>• 目录重命名方法（将目录名改为"已通关"）</p>',
+        '<p>这一步会用锚点范围替换内容、显示通关报告、隐藏当前阶段，并把目录重命名为“已通关”。</p>',
         '</blockquote>',
         '<p>' + finalDecrypt + '</p>',
-        '<blockquote>',
-        anchor('final_password_start'),
-        '<p><em>密码尚未解密...</em></p>',
-        anchor('final_password_end'),
-        '</blockquote>',
         anchor('final_stage_end'),
 
         anchor('success_msg_start'),
         '<hr>',
-        '<h3>恭喜通关！</h3>',
+        '<h3>档案已解封</h3>',
+        '<div style="border:1px solid #b8e2d0;border-radius:8px;padding:12px;background:#ecfdf5;">',
+        anchor('final_report_start'),
+        '<p>最终报告等待写入。</p>',
+        anchor('final_report_end'),
+        '</div>',
         anchor('success_msg_end'),
         '<hr>',
     ].join('');
@@ -1470,39 +1449,35 @@ function buildDecryptHiddenAnswersHtml(dirId) {
 
     return [
         '<h2>隐藏答案库</h2>',
-        '<p><strong>说明：</strong>这是一个隐藏目录，存放游戏的答案和线索。在导出网页后，这个目录会被隐藏，但其内容会被方法系统提取到游戏主目录的指定位置。</p>',
+        '<p><strong>说明：</strong>导出网页时，本目录会被打开网页方法隐藏；主游戏仍能按锚点从这里提取答案片段。</p>',
         '<hr>',
 
-        '<h3>第一关答案</h3>',
+        '<h3>第一幕结果</h3>',
         anchor('answer1_start'),
-        '<p>正确答案是 255。</p>',
-        '<p>2的 8 次方等于 256，减去 1 得到 255。</p>',
-        '<p>8位二进制数 11111111 转换为十进制就是 255。</p>',
+        '<p><strong>握手通过：</strong>14-15-22-1 还原为 NOVA。</p>',
+        '<p>系统接受代号，偏移日志已解锁。</p>',
         anchor('answer1_end'),
         '<hr>',
 
-        '<h3>第二关答案</h3>',
+        '<h3>第二幕结果</h3>',
         anchor('answer2_start'),
-        '<p>正确答案是：递归（Recursion）</p>',
-        '<p>递归是指函数调用自身的编程技术。</p>',
-        '<p>在代码中，factorial 函数调用了 factorial(n-1)，这就是递归。</p>',
+        '<p><strong>模块恢复：</strong>EODFN ERA 向前偏移 3 位得到 BLACK BOX。</p>',
+        '<p>黑箱模块已挂载，路由表进入可读状态。</p>',
         anchor('answer2_end'),
         '<hr>',
 
-        '<h3>第三关答案</h3>',
+        '<h3>第三幕结果</h3>',
         anchor('answer3_start'),
-        '<p>正确答案是：FIBONACCI（斯波那契数列）</p>',
-        '<p>这个数列的规律是：F(n) = F(n-1) + F(n-2)</p>',
-        '<p>前两项都是 1，后面每一项都是前两项之和。</p>',
+        '<p><strong>路由确认：</strong>F 命中 FORGE。</p>',
+        '<p>下一跳站点已确认，最终报告可以解封。</p>',
         anchor('answer3_end'),
         '<hr>',
 
-        '<h3>第四关答案</h3>',
-        anchor('answer4_start'),
-        '<p>正确答案是：1597</p>',
-        '<p>根据斯波那契数列的规律，第 17 项的值为 1597。</p>',
-        '<p>完整数列：1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377, 610, 987, 1597...</p>',
-        anchor('answer4_end'),
+        '<h3>最终报告</h3>',
+        anchor('final_report_source_start'),
+        '<p><strong>最终密钥：</strong><code>NOVA-BLACKBOX-FORGE</code></p>',
+        '<p>演示结果正常：隐藏答案库已被读取，主流程完成内容替换，当前目录应被重命名为“已通关”。</p>',
+        anchor('final_report_source_end'),
         '<hr>'
     ].join('');
 }
@@ -1536,6 +1511,8 @@ document.addEventListener('keydown', function(e) {
     }
 });
 const storageInfoElement = document.getElementById('storageInfo');
+let storageInfoUpdatePromise = null;
+let lastStorageInfoUpdatedAt = 0;
 /**
  * 格式化存储大小
  * @param {number} bytes - 字节数
@@ -1548,13 +1525,30 @@ function formatStorageSize(bytes) {
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
+
+function setStorageInfoState(state) {
+    if (!storageInfoElement) return;
+    storageInfoElement.classList.remove('calculating', 'warning', 'danger');
+    if (state) storageInfoElement.classList.add(state);
+}
+
 /**
  * 更新存储空间信息显示
  */
-async function updateStorageInfo() {
+async function updateStorageInfo(options = {}) {
     if (!storageInfoElement) return;
+    const force = !!options.force;
+    const now = Date.now();
+    if (!force && storageInfoUpdatePromise) {
+        return storageInfoUpdatePromise;
+    }
+    if (!force && now - lastStorageInfoUpdatedAt < 5000) {
+        return;
+    }
+
     storageInfoElement.textContent = '计算中...';
-    storageInfoElement.className = 'storage-info calculating';
+    setStorageInfoState('calculating');
+    storageInfoUpdatePromise = (async () => {
     try {
         if (navigator.storage && navigator.storage.estimate) {
             const estimate = await navigator.storage.estimate();
@@ -1562,6 +1556,12 @@ async function updateStorageInfo() {
             const quota = estimate.quota || 0;
             const available = quota - used;
             const usagePercent = quota > 0 ? (used / quota * 100) : 0;
+            const persisted = navigator.storage.persisted
+                ? await navigator.storage.persisted()
+                : null;
+            const cacheStats = (typeof FileCache !== 'undefined' && FileCache.getStats)
+                ? await FileCache.getStats()
+                : null;
             // 格式化显示
             const usedStr = formatStorageSize(used);
             const availableStr = formatStorageSize(available);
@@ -1572,31 +1572,39 @@ async function updateStorageInfo() {
 剩余: ${availableStr}
 总配额: ${quotaStr}
 使用率: ${usagePercent.toFixed(1)}%
+文件缓存: ${cacheStats ? `${cacheStats.valid} 项 / ${cacheStats.totalSizeMB} MB` : '不可用'}
+持久化: ${persisted === null ? '未知' : (persisted ? '已启用' : '未启用')}
 
 左键刷新 | 右键清理孤立数据`;
             // 根据使用率设置样式
-            storageInfoElement.classList.remove('calculating', 'warning', 'danger');
             if (usagePercent > 90) {
-                storageInfoElement.classList.add('danger');
+                setStorageInfoState('danger');
             } else if (usagePercent > 70) {
-                storageInfoElement.classList.add('warning');
+                setStorageInfoState('warning');
+            } else {
+                setStorageInfoState('');
             }
         } else {
             storageInfoElement.textContent = '不支持';
             storageInfoElement.title = '浏览器不支持 Storage API';
-            storageInfoElement.classList.remove('calculating');
+            setStorageInfoState('');
         }
+        lastStorageInfoUpdatedAt = Date.now();
     } catch (err) {
         console.error('获取存储信息失败:', err);
         storageInfoElement.textContent = '获取失败';
         storageInfoElement.title = '获取存储信息失败: ' + err.message;
-        storageInfoElement.classList.remove('calculating');
+        setStorageInfoState('');
+    } finally {
+        storageInfoUpdatePromise = null;
     }
+    })();
+    return storageInfoUpdatePromise;
 }
 // 点击刷新存储信息
 if (storageInfoElement) {
     storageInfoElement.addEventListener('click', function() {
-        updateStorageInfo();
+        updateStorageInfo({ force: true });
         if (typeof showToast === 'function') {
             showToast('正在刷新存储信息...', 'info', 1000);
         }
@@ -1613,7 +1621,7 @@ if (storageInfoElement) {
         try {
             showToast('正在清理...', 'info', 2000);
             const deletedCount = await MediaStorage.cleanupOrphanedData();
-            await updateStorageInfo();
+            await updateStorageInfo({ force: true });
             if (deletedCount > 0) {
                 showToast(`已清理 ${deletedCount} 个孤立数据`, 'success', 3000);
             } else {
@@ -1626,9 +1634,9 @@ if (storageInfoElement) {
     });
 }
 // 初始化时获取存储信息
-updateStorageInfo();
-// 定期更新存储信息（每30秒）
-setInterval(updateStorageInfo, 30000);
+updateStorageInfo({ force: true });
+// 定期更新存储信息（每60秒）
+setInterval(() => updateStorageInfo(), 60000);
 // -------------------- 格式工具栏鼠标滚轮横向滚动 --------------------
 /**
  * 初始化格式工具栏的鼠标滚轮横向滚动功能

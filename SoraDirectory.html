@@ -1471,10 +1471,284 @@
         .drag-hint.visible {
             opacity: 1;
         }
+
+        /* ==================== 现代化界面覆盖 ==================== */
+        :root {
+            --toolbar-height: 72px;
+            --sidebar-width: 22%;
+            --color-bg: #f4f6f8;
+            --color-panel: #ffffff;
+            --color-panel-subtle: #f8fafc;
+            --color-border: #d8dee6;
+            --color-border-soft: #e7ebf0;
+            --color-text: #1f2933;
+            --color-muted: #607080;
+            --color-primary: #2563eb;
+            --color-primary-soft: #e8f0fe;
+            --color-success: #0f8a5f;
+            --color-warning: #9a5b00;
+            --color-danger: #b42318;
+            --shadow-soft: 0 8px 24px rgba(31, 41, 51, 0.08);
+        }
+
+        html,
+        body {
+            height: 100%;
+            background: var(--color-bg);
+            color: var(--color-text);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+        }
+
+        .top-toolbar {
+            min-height: 54px;
+            background: rgba(255, 255, 255, 0.98);
+            border-bottom: 1px solid var(--color-border);
+            box-shadow: var(--shadow-soft);
+            padding: 8px 14px;
+            gap: 8px;
+        }
+
+        .top-toolbar-group {
+            min-height: 34px;
+            margin-right: 10px;
+            padding-right: 12px;
+            border-right: 1px solid var(--color-border-soft);
+            gap: 4px;
+        }
+
+        .format-toolbar-group {
+            flex: 1 1 720px;
+            width: auto;
+            max-width: none;
+            min-width: 360px;
+        }
+
+        .top-toolbar-label {
+            color: var(--color-muted);
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .top-toolbar-btn,
+        .format-btn,
+        .search-btn {
+            min-height: 32px;
+            border: 1px solid var(--color-border);
+            border-radius: 6px;
+            background: var(--color-panel);
+            color: var(--color-text);
+            box-shadow: 0 1px 1px rgba(31, 41, 51, 0.04);
+        }
+
+        .top-toolbar-btn {
+            padding: 6px 10px;
+            margin: 0 2px;
+            white-space: nowrap;
+        }
+
+        .top-toolbar-btn:hover,
+        .format-btn:hover,
+        .search-btn:hover {
+            background: var(--color-primary-soft);
+            border-color: #9bb7f5;
+            color: #123c8c;
+        }
+
+        .top-toolbar-btn:active,
+        .format-btn:active,
+        .search-btn:active {
+            transform: translateY(1px);
+        }
+
+        .top-toolbar-btn.active {
+            background: var(--color-primary);
+            border-color: var(--color-primary);
+            color: #fff;
+        }
+
+        .top-toolbar-input {
+            height: 32px;
+            border-color: var(--color-border);
+            border-radius: 6px;
+            background: var(--color-panel-subtle);
+        }
+
+        .top-toolbar-input:focus {
+            border-color: var(--color-primary);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
+        }
+
+        .storage-info {
+            min-width: 138px;
+            padding: 6px 10px;
+            border: 1px solid #b8e2d0;
+            border-radius: 6px;
+            background: #ecfdf5;
+            color: var(--color-success);
+            font-weight: 600;
+            text-align: center;
+        }
+
+        .storage-info:hover {
+            background: #dff8ec;
+        }
+
+        .storage-info.warning {
+            border-color: #f5cf85;
+            background: #fff7e6;
+            color: var(--color-warning);
+        }
+
+        .storage-info.danger {
+            border-color: #f2a7a1;
+            background: #fff1f0;
+            color: var(--color-danger);
+        }
+
+        .storage-info.calculating {
+            border-color: var(--color-border);
+            background: var(--color-panel-subtle);
+            color: var(--color-muted);
+        }
+
+        .bigbox {
+            border-right: 1px solid var(--color-border);
+            background: var(--color-panel-subtle);
+        }
+
+        .sidebar-help {
+            padding: 9px 12px;
+            background: #eef4fb;
+            border-bottom: 1px solid var(--color-border);
+            color: #475569;
+            font-size: 12px;
+            line-height: 1.45;
+        }
+
+        .mulu {
+            min-height: 32px;
+            line-height: 32px;
+            border: 0;
+            border-left: 3px solid var(--root-accent, transparent);
+            border-bottom: 1px solid var(--color-border-soft);
+            background: transparent !important;
+            color: var(--color-text);
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .mulu:hover {
+            background: #edf3fa !important;
+        }
+
+        .mulu.select,
+        .select {
+            background: var(--color-primary-soft) !important;
+            border-left-color: var(--color-primary) !important;
+            color: #123c8c;
+            font-weight: 700;
+        }
+
+        .sidebar-resizer {
+            width: 5px;
+            background: #cbd5e1;
+        }
+
+        .sidebar-resizer:hover,
+        .sidebar-resizer.dragging {
+            background: var(--color-primary);
+        }
+
+        .wordsbox {
+            border: 0;
+            background: var(--color-panel);
+            box-shadow: inset 1px 0 0 var(--color-border);
+        }
+
+        .markdown-preview {
+            padding: 22px 28px;
+            color: var(--color-text);
+            background: var(--color-panel);
+        }
+
+        .markdown-preview:focus {
+            outline: 3px solid rgba(37, 99, 235, 0.16);
+            outline-offset: -3px;
+        }
+
+        .markdown-preview blockquote {
+            border-left-color: var(--color-primary);
+            background: #f6f9fd;
+            color: #475569;
+        }
+
+        .markdown-preview pre {
+            border-color: var(--color-border);
+            background: #f8fafc;
+        }
+
+        .rightmousemenu,
+        .custom-dialog,
+        .search-dialog,
+        .text-format-toolbar {
+            border: 1px solid var(--color-border);
+            box-shadow: var(--shadow-soft);
+        }
+
+        .boot-status {
+            position: fixed;
+            right: 18px;
+            bottom: 18px;
+            z-index: 10050;
+            min-width: 180px;
+            max-width: min(360px, calc(100vw - 36px));
+            padding: 10px 12px;
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.96);
+            color: var(--color-muted);
+            box-shadow: var(--shadow-soft);
+            font-size: 13px;
+            line-height: 1.4;
+        }
+
+        .boot-status.is-hidden {
+            display: none;
+        }
+
+        .boot-status.is-error {
+            border-color: #f2a7a1;
+            background: #fff1f0;
+            color: var(--color-danger);
+        }
+
+        @media (max-width: 900px) {
+            :root {
+                --sidebar-width: 32%;
+            }
+
+            .top-toolbar {
+                align-items: flex-start;
+            }
+
+            .format-toolbar-group {
+                min-width: 100%;
+                order: 10;
+            }
+
+            .storage-info-group {
+                margin-left: 0;
+            }
+
+            .markdown-preview {
+                padding: 18px;
+            }
+        }
     </style>
 </head>
 <body>
 
+    <div class="boot-status" id="bootStatus">正在加载...</div>
     
     <div class="top-toolbar" id="topToolbar">
         <div class="top-toolbar-group">
@@ -1507,7 +1781,7 @@
                 <button class="top-toolbar-btn format-toolbar-btn" data-command="anchor" id="topAnchorBtn" title="锚点">锚点</button>
                 <button class="top-toolbar-btn format-toolbar-btn" data-command="method" id="topMethodBtn" title="方法">方法</button>
                 <button class="top-toolbar-btn" id="topImageUploadBtn" title="插入图片">🖼️</button>
-                <!--<button class="top-toolbar-btn" id="topVideoUploadBtn" title="插入视频">🎬</button>-->
+                <button class="top-toolbar-btn" id="topVideoUploadBtn" title="插入视频">🎬</button>
                 <!--<button class="top-toolbar-btn" id="topArchiveUploadBtn" title="插入压缩文件">📦</button>-->
                 <button class="top-toolbar-btn format-toolbar-btn" data-command="unordered-list" title="无序列表">无序列表</button>
                 <button class="top-toolbar-btn format-toolbar-btn" data-command="ordered-list" title="有序列表">有序列表</button>
@@ -1551,7 +1825,7 @@
     </div>
     
     <div class="bigbox">
-        <div style="padding: 10px; background-color: #f9f9f9; border-bottom: 1px solid #ddd; font-size: 12px; color: #666;">
+        <div class="sidebar-help">
             左键选择/展开，右键菜单，双击改名，拖拽移动目录（含子目录）。链接：Ctrl+单击打开；页内跳转输入 #锚点；任意锚点：点“锚点”输入锚点名；目录内跳转输入 dir:目录ID#锚点 或 name:目录名#锚点
         </div>
         <div class="showbox">
@@ -1682,11 +1956,23 @@
     </div>
     
     
-    <script src="js/scriptLoader.js"></script>
+    <script src="js/scriptLoader.js?v=20260709-partial-fast-save"></script>
     <script>
-        // 分块加载脚本
         (async function() {
-            // 核心脚本（必须立即加载，按顺序）
+            const bootStatus = document.getElementById('bootStatus');
+            const assetVersion = '20260710-sora-video-package';
+            const versionScript = src => src + (src.includes('?') ? '&' : '?') + 'v=' + assetVersion;
+            function setBootStatus(message, isError) {
+                if (!bootStatus) return;
+                if (!message) {
+                    bootStatus.classList.add('is-hidden');
+                    return;
+                }
+                bootStatus.textContent = message;
+                bootStatus.classList.toggle('is-error', !!isError);
+                bootStatus.classList.remove('is-hidden');
+            }
+
             const coreScripts = [
                 'SoraDirectoryJS.js',
                 'js/licenseSystem.js',
@@ -1714,28 +2000,35 @@
             
             // 主初始化脚本（必须最后加载）
             const mainScript = 'js/main.js';
+            const coreScriptUrls = coreScripts.map(versionScript);
+            const featureScriptUrls = featureScripts.map(versionScript);
+            const mainScriptUrl = versionScript(mainScript);
             
             try {
-                // 第一步：加载核心脚本
-                await ScriptLoader.loadScripts(coreScripts);
+                ScriptLoader.preloadScripts(coreScriptUrls.concat(featureScriptUrls, [mainScriptUrl]));
+
+                setBootStatus('正在加载核心模块...');
+                await ScriptLoader.loadScripts(coreScriptUrls);
                 
-                // 第二步：并行加载功能脚本（不阻塞）
-                const featureLoadPromise = ScriptLoader.loadScriptsParallel(featureScripts);
+                setBootStatus('正在加载编辑功能...');
+                const featureLoadPromise = ScriptLoader.loadScriptsParallel(featureScriptUrls);
                 
-                // 第三步：根据DOM状态决定加载时机
                 if (document.readyState === 'loading') {
-                    // DOM还在加载，等待DOMContentLoaded
                     document.addEventListener('DOMContentLoaded', async () => {
                         await featureLoadPromise;
-                        await ScriptLoader.loadScript(mainScript);
+                        setBootStatus('正在初始化工作区...');
+                        await ScriptLoader.loadScript(mainScriptUrl);
+                        setBootStatus('');
                     });
                 } else {
-                    // DOM已经就绪，立即加载
                     await featureLoadPromise;
-                    await ScriptLoader.loadScript(mainScript);
+                    setBootStatus('正在初始化工作区...');
+                    await ScriptLoader.loadScript(mainScriptUrl);
+                    setBootStatus('');
                 }
             } catch (error) {
                 console.error('脚本加载失败:', error);
+                setBootStatus(error && error.message ? error.message : '脚本加载失败', true);
             }
         })();
     </script>

@@ -45,27 +45,32 @@ if (document.readyState === 'loading') {
     initOnDOMReady();
 }
 async function initializeApp() {
-    if (typeof MediaStorage !== 'undefined' && MediaStorage.clearAll) {
-        const clearStorage = async () => {
+    if (navigator.storage && navigator.storage.persist) {
+        const requestPersistentStorage = async () => {
             try {
-                await MediaStorage.clearAll();
+                const alreadyPersisted = navigator.storage.persisted
+                    ? await navigator.storage.persisted()
+                    : false;
+                if (!alreadyPersisted) {
+                    await navigator.storage.persist();
+                }
                 if (typeof updateStorageInfo === 'function') {
-                    await updateStorageInfo();
+                    await updateStorageInfo({ force: true });
                 }
             } catch (err) {
-                console.warn('后台清理 IndexedDB 失败:', err);
+                console.warn('请求持久化存储失败:', err);
             }
         };
         if (typeof requestIdleCallback !== 'undefined') {
-            requestIdleCallback(() => {
-                clearStorage();
-            }, { timeout: 1000 });
+            requestIdleCallback(requestPersistentStorage, { timeout: 1500 });
         } else {
-            setTimeout(clearStorage, 100);
+            setTimeout(requestPersistentStorage, 200);
         }
     }
     for (let i = 0; i < allThins.length; i++) {
-        allThins[i].id = getOneId(10, 0);
+        if (!allThins[i].id) {
+            allThins[i].id = getOneId(10, 0);
+        }
     }
     if (typeof mulufile !== 'undefined' && Array.isArray(mulufile) && mulufile.length > 0) {
         LoadMulu();
@@ -110,13 +115,17 @@ async function initializeApp() {
                 }
             }
             if (firstRootMulu) {
-                currentMuluName = firstRootMulu.id;
-                RemoveOtherSelect();
-                firstRootMulu.classList.add("select");
-                jiedianwords.value = findMulufileData(firstRootMulu);
-                isUpdating = true;
-                updateMarkdownPreview();
-                isUpdating = false;
+                if (typeof switchToDirectoryElement === 'function') {
+                    switchToDirectoryElement(firstRootMulu, { syncCurrent: false, scrollPreviewTop: true, forceRender: true });
+                } else {
+                    currentMuluName = firstRootMulu.id;
+                    RemoveOtherSelect();
+                    firstRootMulu.classList.add("select");
+                    jiedianwords.value = findMulufileData(firstRootMulu);
+                    isUpdating = true;
+                    updateMarkdownPreview({ force: true });
+                    isUpdating = false;
+                }
             }
         });
     }

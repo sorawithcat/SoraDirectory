@@ -6,6 +6,9 @@ let currentFileName = null;
 const directoryHashes = new Map();
 /** 未保存更改标记 */
 let hasUnsavedChanges = false;
+let hashBaselineTimer = null;
+const SORA_PACKAGE_MAGIC = 'SORA_DIRECTORY_PACKAGE_V1';
+const SORA_PACKAGE_MIME = 'application/x-sora-directory';
 /**
  * 检查浏览器是否支持 File System Access API
  * @returns {boolean}
@@ -38,10 +41,35 @@ function calculateAllHashes() {
     for (let i = 0; i < mulufile.length; i++) {
         if (mulufile[i].length === 4) {
             const dirId = mulufile[i][2];
-            const content = JSON.stringify(mulufile[i]);
-            directoryHashes.set(dirId, simpleHash(content));
+            directoryHashes.set(dirId, simpleHash(buildDirectoryHashInput(mulufile[i])));
             originalContentCache.set(dirId, mulufile[i][3] || '');
         }
+    }
+}
+
+function buildDirectoryHashInput(row) {
+    if (!row || row.length !== 4) return '';
+    return String(row[0] || '') + '\u001f' +
+        String(row[1] || '') + '\u001f' +
+        String(row[2] || '') + '\u001f' +
+        String(row[3] || '');
+}
+
+function scheduleHashBaselineUpdate(timeout = 800) {
+    if (hashBaselineTimer) {
+        return;
+    }
+    const run = () => {
+        hashBaselineTimer = null;
+        calculateAllHashes();
+        if (typeof updateSaveButtonState === 'function') {
+            updateSaveButtonState();
+        }
+    };
+    if (typeof requestIdleCallback !== 'undefined') {
+        hashBaselineTimer = requestIdleCallback(run, { timeout });
+    } else {
+        hashBaselineTimer = setTimeout(run, Math.min(timeout, 150));
     }
 }
 /**
@@ -52,7 +80,7 @@ function calculateAllHashes() {
 function hasDirectoryChanged(dirId) {
     const dirData = getMulufileByDirId(dirId);
     if (!dirData) return false;
-    const currentHash = simpleHash(JSON.stringify(dirData));
+    const currentHash = simpleHash(buildDirectoryHashInput(dirData));
     const savedHash = directoryHashes.get(dirId);
     return currentHash !== savedHash;
 }
@@ -84,9 +112,13 @@ function markUnsavedChanges() {
 /**
  * 清除未保存更改标记
  */
-function clearUnsavedChanges() {
+function clearUnsavedChanges(options = {}) {
     hasUnsavedChanges = false;
-    calculateAllHashes();
+    if (options.deferHashes) {
+        scheduleHashBaselineUpdate();
+    } else {
+        calculateAllHashes();
+    }
     updateSaveButtonState();
 }
 /**
@@ -113,6 +145,394 @@ function updatePageTitle() {
     const baseName = currentFileName || 'SoraList';
     document.title = hasUnsavedChanges ? `* ${baseName}` : baseName;
 }
+
+function isSoraPackageFile(fileOrName) {
+    const name = typeof fileOrName === 'string' ? fileOrName : (fileOrName && fileOrName.name) || '';
+    return /\.sora$/i.test(name);
+}
+
+function getSoraBaseName(name) {
+    return String(name || 'soralist')
+        .replace(/\s*\(\d+\)\s*\./g, '.')
+        .replace(/\.(sora|json|txt|xml|csv|html)$/i, '')
+        .replace(/\.(encrypted|patch)$/i, '')
+        .replace(/_incremental$/i, '') || 'soralist';
+}
+
+function inferMediaTypeFromId(mediaId) {
+    const prefix = String(mediaId || '').split('_')[0];
+    return prefix || 'media';
+}
+
+function collectSoraPackageMediaIds(data) {
+    const ids = new Set();
+    const source = Array.isArray(data) ? data : [];
+    const mediaRegex = /data-media-storage-id=["']([^"']+)["']/gi;
+    for (const row of source) {
+        if (!row || row.length !== 4 || !row[3]) continue;
+        mediaRegex.lastIndex = 0;
+        let match;
+        while ((match = mediaRegex.exec(row[3])) !== null) {
+            if (match[1]) ids.add(match[1]);
+        }
+    }
+    return ids;
+}
+
+function sanitizeSoraPackageHtml(html) {
+    if (!html || !html.includes('data-media-storage-id')) return html || '';
+    const template = document.createElement('template');
+    template.innerHTML = html;
+    template.content.querySelectorAll('[data-media-storage-id]').forEach(el => {
+        el.removeAttribute('data-original-src');
+        el.removeAttribute('data-loading-media');
+        el.removeAttribute('data-export-url');
+        if (el.matches('img, video, audio, source')) {
+            el.setAttribute('src', 'about:blank');
+        }
+        if (el.tagName === 'VIDEO') {
+            el.setAttribute('controls', '');
+            el.setAttribute('preload', 'none');
+            el.querySelectorAll('source').forEach(source => {
+                source.setAttribute('src', 'about:blank');
+            });
+        }
+    });
+    return template.innerHTML;
+}
+
+function sanitizeSoraPackageDirectories(data) {
+    const source = Array.isArray(data) ? data : [];
+    return source.map(row => {
+        if (!row || row.length !== 4) return Array.isArray(row) ? row.slice() : row;
+        return [row[0], row[1], row[2], sanitizeSoraPackageHtml(row[3])];
+    });
+}
+
+async function collectSoraPackageMediaParts(source, preferStreaming = false) {
+    const mediaIds = collectSoraPackageMediaIds(source);
+    const mediaEntries = [];
+    const mediaParts = [];
+    let offset = 0;
+
+    if (mediaIds.size > 0 && (typeof MediaStorage === 'undefined' || typeof MediaStorage.getChunkedBlob !== 'function')) {
+        throw new Error('媒体存储未初始化，无法生成包含媒体的 .sora 文件');
+    }
+
+    let processedMedia = 0;
+    for (const mediaId of mediaIds) {
+        processedMedia++;
+        if (mediaIds.size > 1) {
+            showToast(`正在打包媒体 ${processedMedia}/${mediaIds.size}`, 'info', 1200);
+        }
+        if (preferStreaming && typeof MediaStorage.getMediaInfo === 'function' && typeof MediaStorage.writeMediaToWritable === 'function') {
+            const info = await MediaStorage.getMediaInfo(mediaId);
+            if (info && info.blobChunked && Number.isFinite(info.size)) {
+                const length = info.size;
+                mediaEntries.push({
+                    id: mediaId,
+                    type: info.type || inferMediaTypeFromId(mediaId),
+                    mimeType: info.mimeType || 'application/octet-stream',
+                    size: length,
+                    offset,
+                    length
+                });
+                mediaParts.push({ id: mediaId, stream: true });
+                offset += length;
+                continue;
+            }
+        }
+        const blob = await MediaStorage.getChunkedBlob(mediaId);
+        if (typeof MediaStorage.hideProgressToast === 'function') {
+            MediaStorage.hideProgressToast();
+        }
+        if (!blob) {
+            console.warn('跳过不存在的媒体:', mediaId);
+            continue;
+        }
+        const length = blob.size;
+        const type = inferMediaTypeFromId(mediaId);
+        mediaEntries.push({
+            id: mediaId,
+            type,
+            mimeType: blob.type || 'application/octet-stream',
+            size: length,
+            offset,
+            length
+        });
+        mediaParts.push({ id: mediaId, blob, stream: false });
+        offset += length;
+        if (processedMedia % 5 === 0) {
+            await new Promise(resolve => setTimeout(resolve, 0));
+        }
+    }
+    return { mediaEntries, mediaParts };
+}
+
+function createSoraPackageManifest(directories, mediaEntries, exportScope = null) {
+    return {
+        type: 'SoraDirectoryPackage',
+        version: 1,
+        createdAt: new Date().toISOString(),
+        scope: exportScope ? {
+            mode: exportScope.mode || 'all',
+            count: exportScope.count || directories.length,
+            label: exportScope.label || ''
+        } : null,
+        directories,
+        media: mediaEntries
+    };
+}
+
+async function buildSoraPackageBlob(data, exportScope = null) {
+    const source = Array.isArray(data) ? data : [];
+    const directories = sanitizeSoraPackageDirectories(source);
+    const { mediaEntries, mediaParts } = await collectSoraPackageMediaParts(source, false);
+    const manifest = createSoraPackageManifest(directories, mediaEntries, exportScope);
+    const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest));
+    const header = `${SORA_PACKAGE_MAGIC}\n${manifestBytes.byteLength}\n`;
+    return new Blob([header, manifestBytes, ...mediaParts.map(part => part.blob)], { type: SORA_PACKAGE_MIME });
+}
+
+async function writeSoraPackageToFileHandle(fileHandle, data, exportScope = null) {
+    const source = Array.isArray(data) ? data : [];
+    const directories = sanitizeSoraPackageDirectories(source);
+    const { mediaEntries, mediaParts } = await collectSoraPackageMediaParts(source, true);
+    const manifest = createSoraPackageManifest(directories, mediaEntries, exportScope);
+    const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest));
+    const header = `${SORA_PACKAGE_MAGIC}\n${manifestBytes.byteLength}\n`;
+    const writable = await fileHandle.createWritable();
+    try {
+        await writable.write(header);
+        await writable.write(manifestBytes);
+        for (const part of mediaParts) {
+            if (part.stream) {
+                await MediaStorage.writeMediaToWritable(part.id, writable);
+                if (typeof MediaStorage.hideProgressToast === 'function') {
+                    MediaStorage.hideProgressToast();
+                }
+            } else if (part.blob) {
+                await writable.write(part.blob);
+            }
+        }
+        await writable.close();
+    } catch (err) {
+        if (typeof writable.abort === 'function') {
+            try {
+                await writable.abort();
+            } catch (abortErr) {
+                console.warn('.sora 写入回滚失败:', abortErr);
+            }
+        }
+        throw err;
+    }
+}
+
+async function handleSaveAsSoraPackage(customName = null, exportData = null, exportScope = null, options = {}) {
+    const sourceData = Array.isArray(exportData) ? exportData : mulufile;
+    const baseName = getSoraBaseName(customName || (fileNameInput && fileNameInput.value.trim()) || currentFileName || 'soralist');
+    const partialSuffix = exportScope && exportScope.mode === 'partial' ? '_partial' : '';
+    let filename = customName ? customName : `${baseName}${partialSuffix}.sora`;
+    if (!/\.sora$/i.test(filename)) {
+        filename += '.sora';
+    }
+    const setCurrent = !!options.setCurrent;
+
+    if (isFileSystemAccessSupported() && options.usePicker !== false) {
+        try {
+            const fileHandle = await window.showSaveFilePicker({
+                suggestedName: filename,
+                types: [{ description: 'Sora 单文件包', accept: { [SORA_PACKAGE_MIME]: ['.sora'] } }]
+            });
+            await writeSoraPackageToFileHandle(fileHandle, sourceData, exportScope);
+            if (setCurrent) {
+                currentFileHandle = fileHandle;
+                currentFileName = fileHandle.name;
+                clearUnsavedChanges({ deferHashes: true });
+                if (fileNameInput) fileNameInput.value = getSoraBaseName(fileHandle.name);
+            }
+            showToast(`已保存 .sora：${fileHandle.name}`, 'success', 3000);
+            return true;
+        } catch (err) {
+            if (err.name === 'AbortError') return false;
+            console.error('.sora 保存失败，降级为下载:', err);
+        }
+    }
+
+    const blob = await buildSoraPackageBlob(sourceData, exportScope);
+    const objectURL = URL.createObjectURL(blob);
+    const aTag = document.createElement('a');
+    aTag.href = objectURL;
+    aTag.download = filename;
+    aTag.click();
+    URL.revokeObjectURL(objectURL);
+    if (setCurrent) {
+        currentFileHandle = null;
+        currentFileName = filename;
+        clearUnsavedChanges({ deferHashes: true });
+        if (fileNameInput) fileNameInput.value = getSoraBaseName(filename);
+    }
+    showToast(`已保存 .sora：${filename}`, 'success', 3000);
+    return true;
+}
+
+async function readSoraPackageManifest(file) {
+    let probeSize = Math.min(file.size, 1024);
+    let headerText = '';
+    let firstNewline = -1;
+    let secondNewline = -1;
+    while (probeSize <= Math.min(file.size, 1024 * 1024)) {
+        headerText = await file.slice(0, probeSize).text();
+        firstNewline = headerText.indexOf('\n');
+        secondNewline = firstNewline >= 0 ? headerText.indexOf('\n', firstNewline + 1) : -1;
+        if (secondNewline >= 0 || probeSize >= file.size) break;
+        probeSize = Math.min(file.size, probeSize * 4);
+    }
+    if (firstNewline < 0 || secondNewline < 0) {
+        throw new Error('不是有效的 .sora 文件：缺少包头');
+    }
+    const magic = headerText.slice(0, firstNewline).replace(/\r$/, '');
+    if (magic !== SORA_PACKAGE_MAGIC) {
+        throw new Error('不是有效的 .sora 文件：包头不匹配');
+    }
+    const manifestLength = Number(headerText.slice(firstNewline + 1, secondNewline).trim());
+    if (!Number.isFinite(manifestLength) || manifestLength <= 0) {
+        throw new Error('不是有效的 .sora 文件：清单长度错误');
+    }
+    const manifestStart = secondNewline + 1;
+    const manifestEnd = manifestStart + manifestLength;
+    if (manifestEnd > file.size) {
+        throw new Error('不是有效的 .sora 文件：清单越界');
+    }
+    const manifestText = new TextDecoder().decode(await file.slice(manifestStart, manifestEnd).arrayBuffer());
+    const manifest = JSON.parse(manifestText);
+    if (!manifest || manifest.type !== 'SoraDirectoryPackage' || manifest.version !== 1 || !Array.isArray(manifest.directories)) {
+        throw new Error('不是有效的 .sora 文件：清单格式错误');
+    }
+    return { manifest, mediaStart: manifestEnd };
+}
+
+async function importSoraPackageMedia(file, manifest, mediaStart) {
+    const media = Array.isArray(manifest.media) ? manifest.media : [];
+    if (media.length === 0) return 0;
+    if (typeof MediaStorage === 'undefined' || typeof MediaStorage.save !== 'function') {
+        throw new Error('媒体存储未初始化');
+    }
+    let imported = 0;
+    for (let i = 0; i < media.length; i++) {
+        const entry = media[i];
+        if (!entry || !entry.id || !Number.isFinite(entry.offset) || !Number.isFinite(entry.length)) {
+            continue;
+        }
+        if (typeof MediaStorage.mediaExists === 'function' && await MediaStorage.mediaExists(entry.id)) {
+            continue;
+        }
+        const start = mediaStart + entry.offset;
+        const end = start + entry.length;
+        if (start < mediaStart || end > file.size) {
+            console.warn('跳过越界媒体:', entry.id);
+            continue;
+        }
+        const blob = file.slice(start, end, entry.mimeType || 'application/octet-stream');
+        await MediaStorage.save(blob, entry.type || inferMediaTypeFromId(entry.id), entry.id);
+        if (typeof MediaStorage.hideProgressToast === 'function') {
+            MediaStorage.hideProgressToast();
+        }
+        imported++;
+        showToast(`正在导入媒体 ${i + 1}/${media.length}`, 'info', 1200);
+        if (i % 3 === 0) {
+            await new Promise(resolve => setTimeout(resolve, 0));
+        }
+    }
+    return imported;
+}
+
+function startSoraPackageMediaImport(file, manifest, mediaStart) {
+    const mediaCount = Array.isArray(manifest.media) ? manifest.media.length : 0;
+    if (mediaCount === 0) return;
+    showToast(`目录已加载，正在后台导入 ${mediaCount} 个媒体文件`, 'info', 3000);
+    const importTask = importSoraPackageMedia(file, manifest, mediaStart)
+        .then(count => {
+            if (typeof updateMarkdownPreview === 'function') {
+                updateMarkdownPreview();
+            }
+            showToast(`.sora 媒体导入完成：${count}/${mediaCount}`, 'success', 3000);
+        })
+        .catch(err => {
+            console.error('.sora 媒体导入失败:', err);
+            showToast('.sora 媒体导入失败：' + err.message, 'error', 4000);
+        });
+    window.__soraMediaImportPromise = importTask;
+}
+
+async function openSoraPackageFile(file, fileHandle = null) {
+    const { manifest, mediaStart } = await readSoraPackageManifest(file);
+    const parsedData = manifest.directories;
+    if (!Array.isArray(parsedData) || parsedData.length === 0) {
+        customAlert("文件格式错误：无法解析为有效的目录数据");
+        return false;
+    }
+
+    const isIncremental = parsedData[0].length >= 4 && parsedData[0][0] !== "mulu";
+    let loadMode = 'replace';
+    if (mulufile && mulufile.length > 0) {
+        const modeOptions = [
+            { value: 'replace', label: '替换 - 清空现有数据，加载新文件' },
+            { value: 'merge', label: '合并 - 将新数据合并到现有数据' }
+        ];
+        const defaultMode = isIncremental ? 'merge' : 'replace';
+        const hint = isIncremental ? '（检测到增量文件，建议合并）' : '';
+        loadMode = await customSelect(`选择加载方式${hint}：`, modeOptions, defaultMode, '加载 .sora');
+        if (loadMode === null) {
+            showToast('已取消加载', 'info', 2000);
+            return false;
+        }
+    }
+
+    if (loadMode === 'merge') {
+        const mergeResult = mergeDirectoryData(mulufile, parsedData);
+        mulufile = mergeResult.data;
+        rebuildMulufileIndex();
+        LoadMulu();
+        markUnsavedChanges();
+        setTimeout(() => {
+            if (typeof expandAllDirectories === 'function') expandAllDirectories();
+            if (typeof selectFirstRootDirectory === 'function') selectFirstRootDirectory();
+        }, 10);
+        bigbox.style.display = "block";
+        wordsbox.style.display = "block";
+        startSoraPackageMediaImport(file, manifest, mediaStart);
+        showToast(`已合并 .sora：新增 ${mergeResult.added} 个，更新 ${mergeResult.updated} 个目录`, 'success', 3000);
+        return true;
+    }
+
+    if (parsedData[0].length < 4 || parsedData[0][0] !== "mulu") {
+        customAlert("文件格式错误：第一个目录必须以'mulu'开头\n\n如果这是增量文件，请选择【合并】模式加载");
+        return false;
+    }
+
+    currentFileHandle = fileHandle;
+    currentFileName = file.name;
+    mulufile = parsedData;
+    LoadMulu();
+    if (typeof scheduleHashBaselineUpdate === 'function') {
+        scheduleHashBaselineUpdate();
+    }
+    hasUnsavedChanges = false;
+    updateSaveButtonState();
+    setTimeout(() => {
+        if (typeof expandAllDirectories === 'function') expandAllDirectories();
+        if (typeof selectFirstRootDirectory === 'function') selectFirstRootDirectory();
+    }, 10);
+    bigbox.style.display = "block";
+    wordsbox.style.display = "block";
+    if (fileNameInput) {
+        fileNameInput.value = getSoraBaseName(file.name);
+    }
+    startSoraPackageMediaImport(file, manifest, mediaStart);
+    showToast(`已打开：${file.name}（.sora）`, 'success', 3000);
+    return true;
+}
 /**
  * 使用 File System Access API 打开文件
  * @returns {Promise<boolean>} - 是否成功打开
@@ -127,6 +547,7 @@ async function openFileWithFSAPI() {
                 {
                     description: 'SoraList 文件',
                     accept: {
+                        'application/x-sora-directory': ['.sora'],
                         'application/json': ['.json'],
                         'text/plain': ['.txt'],
                         'application/xml': ['.xml'],
@@ -137,6 +558,9 @@ async function openFileWithFSAPI() {
             multiple: false
         });
         const file = await fileHandle.getFile();
+        if (isSoraPackageFile(file)) {
+            return await openSoraPackageFile(file, fileHandle);
+        }
         // 先检查缓存（仅对非加密文件使用缓存）
         let parsedData = null;
         let fromCache = false;
@@ -164,12 +588,9 @@ async function openFileWithFSAPI() {
             }
             // 将解析结果保存到缓存（仅对非加密文件）
             if (!isEncrypted && typeof FileCache !== 'undefined' && Array.isArray(parsedData)) {
-                try {
-                    await FileCache.set(file, parsedData);
-                    console.log('FileCache: 已缓存文件', file.name);
-                } catch (err) {
-                    console.warn('FileCache: 缓存保存失败', err);
-                }
+                FileCache.set(file, parsedData)
+                    .then(() => console.log('FileCache: 已缓存文件', file.name))
+                    .catch(err => console.warn('FileCache: 缓存保存失败', err));
             }
         }
         // 检查是否是差异补丁文件
@@ -254,24 +675,23 @@ async function openFileWithFSAPI() {
         LoadMulu();
         // 性能优化：将计算哈希改为延迟执行，不阻塞显示
         // 哈希计算用于变化追踪，不是显示内容所必需的
-        if (typeof calculateAllHashes === 'function') {
-            const calculateHashes = () => {
-                calculateAllHashes();
-            };
-            if (typeof requestIdleCallback !== 'undefined') {
-                requestIdleCallback(calculateHashes, { timeout: 500 });
-            } else {
-                setTimeout(calculateHashes, 50);
-            }
+        if (typeof scheduleHashBaselineUpdate === 'function') {
+            scheduleHashBaselineUpdate();
         }
         hasUnsavedChanges = false;
         updateSaveButtonState();
-        // 预加载所有目录内容（后台处理，不阻塞UI）
-        // 这样在切换目录时就不会再卡顿了，因为所有数据都已经准备好
-        if (typeof MediaStorage !== 'undefined' && typeof MediaStorage.preloadAllDirectoryContent === 'function') {
-            MediaStorage.preloadAllDirectoryContent(mulufile).catch(err => {
-                console.warn('预加载目录内容失败:', err);
-            });
+        // 大文件优先保证打开速度；媒体数据保持延迟加载。
+        if (mulufile.length <= 120 && typeof MediaStorage !== 'undefined' && typeof MediaStorage.preloadAllDirectoryContent === 'function') {
+            const preloadSmallFile = () => {
+                MediaStorage.preloadAllDirectoryContent(mulufile).catch(err => {
+                    console.warn('预加载目录内容失败:', err);
+                });
+            };
+            if (typeof requestIdleCallback !== 'undefined') {
+                requestIdleCallback(preloadSmallFile, { timeout: 1500 });
+            } else {
+                setTimeout(preloadSmallFile, 300);
+            }
         }
         setTimeout(() => {
             // 展开所有目录
@@ -319,14 +739,14 @@ async function saveToCurrentFile() {
         const dataToSave = await prepareDataForExport(mulufile);
         const ext = currentFileName.split('.').pop().toLowerCase();
         const stringData = (ext === 'json')
-            ? JSON.stringify(dataToSave, null, 2)
+            ? stringifyJsonData(dataToSave)
             : formatDataByExtension(dataToSave, currentFileName);
         // 写入文件
         const writable = await currentFileHandle.createWritable();
         await writable.write(stringData);
         await writable.close();
         // 更新哈希并清除未保存标记
-        clearUnsavedChanges();
+        clearUnsavedChanges({ deferHashes: true });
         if (modifiedCount > 0) {
             showToast(`已保存 ${modifiedCount} 个修改的目录到 ${currentFileName}`, 'success', 2500);
         } else {
@@ -378,7 +798,7 @@ async function saveAsWithFSAPI() {
         // 准备数据
         const dataToSave = await prepareDataForExport(mulufile);
         const stringData = (ext === 'json')
-            ? JSON.stringify(dataToSave, null, 2)
+            ? stringifyJsonData(dataToSave)
             : formatDataByExtension(dataToSave, fileName);
         // 写入文件
         const writable = await fileHandle.createWritable();
@@ -397,7 +817,7 @@ async function saveAsWithFSAPI() {
             fileNameInput.value = nameWithoutExt;
         }
         // 清除未保存标记
-        clearUnsavedChanges();
+        clearUnsavedChanges({ deferHashes: true });
         showToast(`已保存：${fileName}`, 'success', 2500);
         return true;
     } catch (err) {
@@ -576,11 +996,11 @@ async function handleSaveEncrypted() {
     const filename = `${baseName}.encrypted.json`;
     // 准备数据
     const dataToSave = await prepareDataForExport(mulufile);
-    const stringData = JSON.stringify(dataToSave, null, 2);
+    const stringData = stringifyJsonData(dataToSave);
     // 加密并保存
     await saveEncryptedFile(stringData, filename, password);
     // 清除未保存标记
-    clearUnsavedChanges();
+    clearUnsavedChanges({ deferHashes: true });
 }
 /**
  * 导出为加密 HTML 网页（自带解密功能）
@@ -604,7 +1024,7 @@ async function handleSaveEncryptedWebpage() {
     const filename = `${baseName}.encrypted.html`;
     // 准备数据
     const dataToSave = await prepareDataForExport(mulufile);
-    const stringData = JSON.stringify(dataToSave);
+    const stringData = stringifyJsonData(dataToSave);
     // 加密数据
     const encryptedData = await encryptData(stringData, password);
     // 生成自解密 HTML
@@ -740,6 +1160,9 @@ function selectFirstRootDirectory() {
         }
     }
     if (firstRootMulu) {
+        if (typeof switchToDirectoryElement === 'function') {
+            return switchToDirectoryElement(firstRootMulu, { syncCurrent: false, scrollPreviewTop: true, forceRender: true });
+        }
         currentMuluName = firstRootMulu.id;
         RemoveOtherSelect();
         firstRootMulu.classList.add("select");
@@ -749,7 +1172,7 @@ function selectFirstRootDirectory() {
             markdownPreview.scrollTop = 0;
         }
         isUpdating = true;
-        updateMarkdownPreview();
+        updateMarkdownPreview({ force: true });
         isUpdating = false;
     }
 }
@@ -772,7 +1195,23 @@ function parseFileContent(content, filename) {
             return parseFileContent(decrypted, filename.replace('.encrypted', ''));
         })();
     }
-    if (ext === 'xml' || content.trim().startsWith('<?xml')) {
+
+    const firstChar = getFirstNonWhitespaceChar(content);
+    if (ext === 'json' || firstChar === '[' || firstChar === '{') {
+        try {
+            const parsed = JSON.parse(content);
+            if (Array.isArray(parsed) || isDiffFile(parsed)) {
+                return parsed;
+            }
+        } catch (e) {
+            if (ext === 'json') {
+                throw new Error("JSON 解析失败：" + e.message);
+            }
+            console.warn("JSON 解析失败，尝试其他格式", e);
+        }
+    }
+
+    if (ext === 'xml' || firstChar === '<') {
         try {
             let parser = new DOMParser();
             let xmlDoc = parser.parseFromString(content, "text/xml");
@@ -792,7 +1231,7 @@ function parseFileContent(content, filename) {
             console.warn("XML 解析失败，尝试其他格式", e);
         }
     }
-    if (ext === 'csv' || (content.includes(',') && content.includes('\n') && content.split('\n').length > 1)) {
+    if (ext === 'csv' || shouldTryCsvParse(content, firstChar)) {
         try {
             let lines = content.split('\n');
             let result = [];
@@ -816,21 +1255,36 @@ function parseFileContent(content, filename) {
             console.warn("CSV 解析失败，尝试其他格式", e);
         }
     }
-    if (ext === 'json' || content.trim().startsWith('[') || content.trim().startsWith('{')) {
-        try {
-            let parsed = JSON.parse(content);
-            if (Array.isArray(parsed) && parsed.length > 0 && Array.isArray(parsed[0])) {
-                return parsed;
-            }
-        } catch (e) {
-            console.warn("JSON 解析失败，尝试其他格式", e);
-        }
-    }
     try {
         return stringToArr(content);
     } catch (e) {
         throw new Error("无法解析文件格式，请确保文件格式正确");
     }
+}
+
+function getFirstNonWhitespaceChar(text) {
+    const str = String(text || '');
+    for (let i = 0; i < str.length; i++) {
+        const ch = str.charAt(i);
+        if (ch !== ' ' && ch !== '\n' && ch !== '\r' && ch !== '\t' && ch !== '\f') {
+            return ch;
+        }
+    }
+    return '';
+}
+
+function shouldTryCsvParse(content, firstChar) {
+    if (!content || firstChar === '[' || firstChar === '{' || firstChar === '<') {
+        return false;
+    }
+    const firstLineEnd = content.indexOf('\n');
+    if (firstLineEnd < 0) return false;
+    const firstLine = content.slice(0, firstLineEnd);
+    return firstLine.includes(',');
+}
+
+function stringifyJsonData(data) {
+    return JSON.stringify(data);
 }
 /**
  * 根据文件扩展名获取 MIME 类型
@@ -862,7 +1316,7 @@ function formatDataByExtension(data, filename) {
     let ext = filename.toLowerCase().split('.').pop();
     switch(ext) {
         case 'json':
-            return JSON.stringify(data, null, 2);
+            return stringifyJsonData(data);
         case 'txt':
             return JSON.stringify(data);
         case 'xml':
@@ -885,7 +1339,7 @@ function formatDataByExtension(data, filename) {
             }
             return csv;
         default:
-            return JSON.stringify(data, null, 2);
+            return stringifyJsonData(data);
     }
 }
 /**
@@ -933,6 +1387,22 @@ async function handleSave() {
             return;
         }
     }
+    if (!password && saveMode === 'all') {
+        const exportScope = { mode: 'all', count: Array.isArray(mulufile) ? mulufile.length : 0, label: '全部目录' };
+        if (currentFileHandle && isSoraPackageFile(currentFileName)) {
+            try {
+                await writeSoraPackageToFileHandle(currentFileHandle, mulufile, exportScope);
+                clearUnsavedChanges({ deferHashes: true });
+                showToast(`已保存：${currentFileName}`, 'success', 2500);
+                return;
+            } catch (err) {
+                if (err.name === 'AbortError') return;
+                console.error('.sora 直接保存失败，尝试另存为:', err);
+            }
+        }
+        await handleSaveAsSoraPackage(null, mulufile, exportScope, { setCurrent: true });
+        return;
+    }
     // 4. 准备数据
     let dataToSave;
     if (saveMode === 'diff') {
@@ -943,7 +1413,7 @@ async function handleSave() {
         dataToSave = await prepareDataForExport(mulufile);
     }
     // 5. 格式化数据
-    let stringData = JSON.stringify(dataToSave, null, 2);
+    let stringData = stringifyJsonData(dataToSave);
     // 6. 加密（如果需要）
     if (password) {
         const encrypted = await encryptData(stringData, password);
@@ -968,7 +1438,7 @@ async function handleSave() {
             const writable = await currentFileHandle.createWritable();
             await writable.write(stringData);
             await writable.close();
-            clearUnsavedChanges();
+            clearUnsavedChanges({ deferHashes: true });
             showToast(`已保存：${currentFileName}`, 'success', 2500);
             return;
         } catch (err) {
@@ -994,7 +1464,7 @@ async function handleSave() {
             if (saveMode === 'all') {
                 currentFileHandle = fileHandle;
                 currentFileName = fileHandle.name;
-                clearUnsavedChanges();
+                clearUnsavedChanges({ deferHashes: true });
             }
             const modeText = saveMode === 'diff' ? '（差异补丁）' : (saveMode === 'modified' ? '（增量）' : '');
             showToast(`已保存${modeText}：${fileHandle.name}`, 'success', 2500);
@@ -1017,7 +1487,7 @@ async function handleSave() {
     URL.revokeObjectURL(objectURL);
     // 更新状态
     if (saveMode === 'all' && !password) {
-        clearUnsavedChanges();
+        clearUnsavedChanges({ deferHashes: true });
     }
     currentFileName = filename;
     updatePageTitle();
@@ -1117,7 +1587,7 @@ async function handleSaveFallback() {
     }
     // 7. 格式化数据
     let stringData = (format === 'json' || password)
-        ? JSON.stringify(dataToSave, null, 2)
+        ? stringifyJsonData(dataToSave)
         : formatDataByExtension(dataToSave, filename);
     // 8. 加密（如果需要）
     if (password) {
@@ -1135,7 +1605,7 @@ async function handleSaveFallback() {
     URL.revokeObjectURL(objectURL);
     // 10. 更新状态
     if (saveMode === 'all') {
-        clearUnsavedChanges();
+        clearUnsavedChanges({ deferHashes: true });
     }
     currentFileName = filename;
     updatePageTitle();
@@ -1410,22 +1880,358 @@ function mergeDirectoryData(existingData, newData) {
         updated: updated
     };
 }
+
+function getCurrentExportDirId() {
+    if (!currentMuluName) return '';
+    const currentMulu = document.getElementById(currentMuluName);
+    return currentMulu ? (currentMulu.getAttribute('data-dir-id') || '') : '';
+}
+
+function buildChildrenIdMap(data = mulufile) {
+    const childrenMap = new Map();
+    for (let i = 0; i < data.length; i++) {
+        const row = data[i];
+        if (!row || row.length !== 4) continue;
+        const parentId = row[0] || 'mulu';
+        if (!childrenMap.has(parentId)) {
+            childrenMap.set(parentId, []);
+        }
+        childrenMap.get(parentId).push(row[2]);
+    }
+    return childrenMap;
+}
+
+function buildDirectoryLevelMap(data = mulufile) {
+    const dirMap = new Map();
+    for (let i = 0; i < data.length; i++) {
+        const row = data[i];
+        if (row && row.length === 4) {
+            dirMap.set(row[2], row);
+        }
+    }
+    const levelMap = new Map();
+    const resolving = new Set();
+    const getLevel = (dirId) => {
+        if (levelMap.has(dirId)) return levelMap.get(dirId);
+        if (resolving.has(dirId)) {
+            levelMap.set(dirId, 0);
+            return 0;
+        }
+        const row = dirMap.get(dirId);
+        if (!row || !row[0] || row[0] === 'mulu' || !dirMap.has(row[0])) {
+            levelMap.set(dirId, 0);
+            return 0;
+        }
+        resolving.add(dirId);
+        const level = Math.min(getLevel(row[0]) + 1, 20);
+        resolving.delete(dirId);
+        levelMap.set(dirId, level);
+        return level;
+    };
+    for (const dirId of dirMap.keys()) {
+        getLevel(dirId);
+    }
+    return levelMap;
+}
+
+function collectDirectorySubtreeIds(rootDirId, data = mulufile) {
+    const selected = new Set();
+    if (!rootDirId) return selected;
+    const childrenMap = buildChildrenIdMap(data);
+    const stack = [rootDirId];
+    while (stack.length > 0) {
+        const dirId = stack.pop();
+        if (!dirId || selected.has(dirId)) continue;
+        selected.add(dirId);
+        const children = childrenMap.get(dirId) || [];
+        for (let i = children.length - 1; i >= 0; i--) {
+            stack.push(children[i]);
+        }
+    }
+    return selected;
+}
+
+function buildPartialExportData(selectedIds, data = mulufile) {
+    const selected = selectedIds instanceof Set ? selectedIds : new Set(selectedIds || []);
+    const exportRows = [];
+    for (let i = 0; i < data.length; i++) {
+        const row = data[i];
+        if (!row || row.length !== 4 || !selected.has(row[2])) continue;
+        const parentId = selected.has(row[0]) ? row[0] : 'mulu';
+        exportRows.push([parentId, row[1], row[2], row[3]]);
+    }
+    return exportRows;
+}
+
+async function chooseSaveAsExportScope() {
+    if (!Array.isArray(mulufile) || mulufile.length === 0) {
+        customAlert('当前没有可导出的目录');
+        return null;
+    }
+
+    const currentDirId = getCurrentExportDirId();
+    const scopeOptions = [
+        { value: 'all', label: `全部目录（${mulufile.length} 个）` }
+    ];
+    if (currentDirId) {
+        const currentSubtreeCount = collectDirectorySubtreeIds(currentDirId).size;
+        scopeOptions.push({ value: 'current', label: `当前目录及子目录（${currentSubtreeCount} 个）` });
+    }
+    scopeOptions.push({ value: 'pick', label: '手动勾选目录' });
+
+    const scope = await customSelect('选择另存为范围：', scopeOptions, 'all', '另存为范围');
+    if (scope === null) {
+        showToast('已取消保存', 'info', 2000);
+        return null;
+    }
+    if (scope === 'all') {
+        return { data: mulufile, mode: 'all', count: mulufile.length, label: '全部目录' };
+    }
+    if (scope === 'current') {
+        const selectedIds = collectDirectorySubtreeIds(currentDirId);
+        const data = buildPartialExportData(selectedIds);
+        return { data, mode: 'partial', count: data.length, label: '当前目录及子目录' };
+    }
+    const selectedIds = await showDirectoryExportPicker(currentDirId);
+    if (!selectedIds || selectedIds.size === 0) {
+        showToast('未选择目录，已取消保存', 'info', 2000);
+        return null;
+    }
+    const data = buildPartialExportData(selectedIds);
+    return { data, mode: 'partial', count: data.length, label: '勾选目录' };
+}
+
+function showDirectoryExportPicker(currentDirId) {
+    return new Promise((resolve) => {
+        const levelMap = buildDirectoryLevelMap(mulufile);
+        const childrenMap = buildChildrenIdMap(mulufile);
+        const checkboxMap = new Map();
+
+        customDialogTitle.textContent = '选择要另存为的目录';
+        customDialogInput.style.display = 'none';
+        customDialogMessage.innerHTML = '';
+        customDialog.style.maxWidth = '760px';
+        customDialog.style.width = '92vw';
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'export-scope-dialog';
+        wrapper.style.textAlign = 'left';
+
+        const hint = document.createElement('div');
+        hint.textContent = '勾选父目录会同时勾选它的所有子目录。未勾选父级的目录会作为新文件的根目录导出。';
+        hint.style.fontSize = '12px';
+        hint.style.color = '#667085';
+        hint.style.marginBottom = '10px';
+        wrapper.appendChild(hint);
+
+        const controls = document.createElement('div');
+        controls.style.display = 'flex';
+        controls.style.gap = '8px';
+        controls.style.marginBottom = '10px';
+        controls.style.flexWrap = 'wrap';
+
+        const searchInput = document.createElement('input');
+        searchInput.type = 'search';
+        searchInput.placeholder = '筛选目录名或 ID';
+        searchInput.style.flex = '1 1 220px';
+        searchInput.style.padding = '8px 10px';
+        searchInput.style.border = '1px solid #d0d5dd';
+        searchInput.style.borderRadius = '6px';
+        controls.appendChild(searchInput);
+
+        const makeSmallBtn = (text) => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.textContent = text;
+            btn.className = 'custom-dialog-btn custom-dialog-btn-secondary';
+            btn.style.padding = '7px 10px';
+            return btn;
+        };
+        const selectAllBtn = makeSmallBtn('全选');
+        const clearBtn = makeSmallBtn('清空');
+        const currentBtn = makeSmallBtn('只选当前');
+        controls.appendChild(selectAllBtn);
+        controls.appendChild(clearBtn);
+        if (currentDirId) {
+            controls.appendChild(currentBtn);
+        }
+        wrapper.appendChild(controls);
+
+        const countEl = document.createElement('div');
+        countEl.style.fontSize = '12px';
+        countEl.style.color = '#475467';
+        countEl.style.marginBottom = '8px';
+        wrapper.appendChild(countEl);
+
+        const list = document.createElement('div');
+        list.style.maxHeight = '46vh';
+        list.style.overflow = 'auto';
+        list.style.border = '1px solid #e4e7ec';
+        list.style.borderRadius = '8px';
+        list.style.background = '#fff';
+
+        const fragment = document.createDocumentFragment();
+        for (let i = 0; i < mulufile.length; i++) {
+            const row = mulufile[i];
+            if (!row || row.length !== 4) continue;
+            const dirId = row[2];
+            const level = levelMap.get(dirId) || 0;
+            const label = document.createElement('label');
+            label.style.display = 'flex';
+            label.style.alignItems = 'center';
+            label.style.gap = '8px';
+            label.style.minHeight = '32px';
+            label.style.padding = '6px 10px';
+            label.style.paddingLeft = (10 + level * 18) + 'px';
+            label.style.borderBottom = '1px solid #f2f4f7';
+            label.style.cursor = 'pointer';
+            label.dataset.dirId = dirId;
+            label.dataset.search = (String(row[1] || '') + ' ' + String(dirId || '')).toLowerCase();
+
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.value = dirId;
+            checkbox.style.flex = '0 0 auto';
+
+            const textWrap = document.createElement('span');
+            textWrap.style.minWidth = '0';
+            textWrap.style.flex = '1';
+            const name = document.createElement('span');
+            name.textContent = row[1] || '未命名';
+            name.style.display = 'block';
+            name.style.overflow = 'hidden';
+            name.style.textOverflow = 'ellipsis';
+            name.style.whiteSpace = 'nowrap';
+            const meta = document.createElement('span');
+            meta.textContent = dirId;
+            meta.style.display = 'block';
+            meta.style.fontSize = '11px';
+            meta.style.color = '#98a2b3';
+            meta.style.overflow = 'hidden';
+            meta.style.textOverflow = 'ellipsis';
+            meta.style.whiteSpace = 'nowrap';
+            textWrap.appendChild(name);
+            textWrap.appendChild(meta);
+            label.appendChild(checkbox);
+            label.appendChild(textWrap);
+            fragment.appendChild(label);
+            checkboxMap.set(dirId, checkbox);
+        }
+        list.appendChild(fragment);
+        wrapper.appendChild(list);
+        customDialogMessage.appendChild(wrapper);
+
+        const updateCount = () => {
+            let count = 0;
+            checkboxMap.forEach(cb => {
+                if (cb.checked) count++;
+            });
+            countEl.textContent = `已选择 ${count} / ${checkboxMap.size} 个目录`;
+        };
+
+        const setSubtreeChecked = (dirId, checked) => {
+            const stack = [dirId];
+            const visited = new Set();
+            while (stack.length > 0) {
+                const id = stack.pop();
+                if (!id || visited.has(id)) continue;
+                visited.add(id);
+                const cb = checkboxMap.get(id);
+                if (cb) cb.checked = checked;
+                const children = childrenMap.get(id) || [];
+                for (let i = children.length - 1; i >= 0; i--) {
+                    stack.push(children[i]);
+                }
+            }
+        };
+
+        list.addEventListener('change', (event) => {
+            const cb = event.target;
+            if (!cb || cb.type !== 'checkbox') return;
+            setSubtreeChecked(cb.value, cb.checked);
+            updateCount();
+        });
+
+        searchInput.addEventListener('input', () => {
+            const keyword = searchInput.value.trim().toLowerCase();
+            list.querySelectorAll('label[data-dir-id]').forEach(label => {
+                label.style.display = !keyword || label.dataset.search.includes(keyword) ? 'flex' : 'none';
+            });
+        });
+
+        selectAllBtn.onclick = () => {
+            checkboxMap.forEach(cb => { cb.checked = true; });
+            updateCount();
+        };
+        clearBtn.onclick = () => {
+            checkboxMap.forEach(cb => { cb.checked = false; });
+            updateCount();
+        };
+        currentBtn.onclick = () => {
+            checkboxMap.forEach(cb => { cb.checked = false; });
+            if (currentDirId) {
+                setSubtreeChecked(currentDirId, true);
+            }
+            updateCount();
+        };
+
+        if (currentDirId) {
+            setSubtreeChecked(currentDirId, true);
+        }
+        updateCount();
+
+        customDialogFooter.innerHTML =
+            '<button class="custom-dialog-btn custom-dialog-btn-secondary" id="customDialogCancel">取消</button>' +
+            '<button class="custom-dialog-btn custom-dialog-btn-primary" id="customDialogOk">确定</button>';
+        const okBtn = document.getElementById('customDialogOk');
+        const cancelBtn = document.getElementById('customDialogCancel');
+        const closeBtn = customDialogClose;
+        const closeDialog = (result) => {
+            customDialogOverlay.classList.remove('active');
+            customDialogMessage.innerHTML = '';
+            customDialog.style.maxWidth = '';
+            customDialog.style.width = '';
+            resolve(result);
+        };
+        okBtn.onclick = () => {
+            const selected = new Set();
+            checkboxMap.forEach((cb, dirId) => {
+                if (cb.checked) selected.add(dirId);
+            });
+            closeDialog(selected);
+        };
+        cancelBtn.onclick = () => closeDialog(null);
+        closeBtn.onclick = () => closeDialog(null);
+        customDialogOverlay.onclick = (event) => {
+            if (event.target === customDialogOverlay) closeDialog(null);
+        };
+        customDialogOverlay.classList.add('active');
+        setTimeout(() => searchInput.focus(), 100);
+    });
+}
+
 /**
  * 准备导出数据（从 IndexedDB 恢复视频数据）
  * @param {Array} muluData - 原始目录数据
  * @returns {Promise<Array>} - 包含完整视频数据的目录数据副本
  */
 async function prepareDataForExport(muluData) {
-    // 创建数据副本
-    const exportData = JSON.parse(JSON.stringify(muluData));
-    // 遍历并恢复媒体数据（视频/图片）
-    for (let i = 0; i < exportData.length; i++) {
-        if (exportData[i].length === 4) {
-            let content = exportData[i][3];
-            // 如果内容包含 IndexedDB 媒体引用，恢复媒体数据
-            if (content && content.includes('data-media-storage-id') && typeof MediaStorage !== 'undefined') {
-                exportData[i][3] = await MediaStorage.processHtmlForExport(content);
-            }
+    const source = Array.isArray(muluData) ? muluData : [];
+    const exportData = new Array(source.length);
+    for (let i = 0; i < source.length; i++) {
+        const item = source[i];
+        if (!item || item.length !== 4) {
+            exportData[i] = Array.isArray(item) ? item.slice() : item;
+            continue;
+        }
+        const row = [item[0], item[1], item[2], item[3]];
+        const content = row[3];
+        if (content && content.includes('data-media-storage-id') && typeof MediaStorage !== 'undefined') {
+            row[3] = await MediaStorage.processHtmlForExport(content);
+        }
+        exportData[i] = row;
+        if (i > 0 && i % 200 === 0) {
+            await new Promise(resolve => setTimeout(resolve, 0));
         }
     }
     return exportData;
@@ -1434,7 +2240,7 @@ async function prepareDataForExport(muluData) {
  * 另存为功能
  * @param {string} customName - 自定义文件名
  */
-async function handleSaveAs(customName) {
+async function handleSaveAs(customName, exportData = null) {
     if (!customName) {
         customAlert("已取消保存");
         return;
@@ -1443,15 +2249,19 @@ async function handleSaveAs(customName) {
     let nameWithoutExt = customName.substring(0, customName.lastIndexOf('.'));
     let ext = customName.substring(customName.lastIndexOf('.'));
     if (!nameWithoutExt || !ext) {
-        customAlert("文件名格式错误，请包含扩展名（如：data.json）");
+        customAlert("文件名格式错误，请包含扩展名（如：data.sora）");
+        return;
+    }
+    if (/\.sora$/i.test(filename)) {
+        await handleSaveAsSoraPackage(filename, exportData, null, { usePicker: false });
         return;
     }
     let format = ext.substring(1).toLowerCase();
     let mimeType = getMimeType(filename);
     // 准备数据（从 IndexedDB 恢复视频数据）
-    let dataToSave = await prepareDataForExport(mulufile);
+    let dataToSave = await prepareDataForExport(Array.isArray(exportData) ? exportData : mulufile);
     let stringData = (format === 'json')
-        ? JSON.stringify(dataToSave, null, 2)
+        ? stringifyJsonData(dataToSave)
         : formatDataByExtension(dataToSave, filename);
     // 创建并下载文件
     const blob = new Blob([stringData], { type: `${mimeType};charset=utf-8` });
@@ -1468,7 +2278,7 @@ async function handleSaveAs(customName) {
  * @param {string} customName - 自定义文件名
  * @param {string} password - 加密密码
  */
-async function handleSaveAsEncrypted(customName, password) {
+async function handleSaveAsEncrypted(customName, password, exportData = null) {
     if (!customName || !password) {
         customAlert("已取消保存");
         return;
@@ -1479,8 +2289,8 @@ async function handleSaveAsEncrypted(customName, password) {
         filename += '.json';
     }
     // 准备数据
-    let dataToSave = await prepareDataForExport(mulufile);
-    let stringData = JSON.stringify(dataToSave, null, 2);
+    let dataToSave = await prepareDataForExport(Array.isArray(exportData) ? exportData : mulufile);
+    let stringData = stringifyJsonData(dataToSave);
     // 加密数据
     const encrypted = await encryptData(stringData, password);
     const encryptedContent = ENCRYPTED_FILE_HEADER + ':' + encrypted;
@@ -1500,7 +2310,7 @@ async function handleSaveAsEncrypted(customName, password) {
  * @param {boolean} encrypt - 是否加密
  * @param {string} password - 加密密码（仅当 encrypt 为 true 时需要）
  */
-async function handleSaveAsWebpage(encrypt = false, password = null) {
+async function handleSaveAsWebpage(encrypt = false, password = null, exportData = null, exportScope = null) {
     // 如果需要加密但没有密码，询问用户
     if (encrypt && !password) {
         password = await customPrompt('设置加密密码：', '', '加密导出');
@@ -1518,7 +2328,9 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
     let baseName = (fileNameInput && fileNameInput.value.trim()) || "soralist";
     // 移除可能的扩展名
     baseName = baseName.replace(/\.(json|txt|xml|csv|html|encrypted)$/i, '');
-    let filename = encrypt ? `${baseName}.encrypted.html` : `${baseName}.html`;
+    const sourceData = Array.isArray(exportData) ? exportData : mulufile;
+    const partialSuffix = exportScope && exportScope.mode === 'partial' ? '_partial' : '';
+    let filename = encrypt ? `${baseName}${partialSuffix}.encrypted.html` : `${baseName}${partialSuffix}.html`;
     // 构建目录树结构
     function buildDirectoryTree(muluData) {
         const tree = [];
@@ -1554,20 +2366,20 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
         }
         return Math.abs(hash);
     }
-    // 根据根目录ID生成颜色
+    // 根据根目录ID生成强调色
     const rootColorCache = {};
     function getRootColor(rootId) {
-        if (!rootId) return '#f9f9f9';
+        if (!rootId) return '#94a3b8';
         if (rootColorCache[rootId]) return rootColorCache[rootId];
         const hash = stringToHash(rootId);
         const hue = hash % 360;
-        const saturation = 40 + (hash % 20);
-        const lightness = 88 + (hash % 5);
+        const saturation = 52 + (hash % 18);
+        const lightness = 42 + (hash % 10);
         const color = `hsl(${hue}, ${saturation}%, ${lightness}%)`;
         rootColorCache[rootId] = color;
         return color;
     }
-    // 递归生成目录HTML，rootId 用于设置底色
+    // 递归生成目录HTML，rootId 用于设置根目录强调色
     function generateDirectoryHTML(items, level = 0, rootId = null) {
         let html = '';
         items.forEach((item, index) => {
@@ -1584,13 +2396,13 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
             const toggleIcon = hasChildren 
                 ? `<span class="toggle-icon"></span>` 
                 : `<span class="bullet-icon"></span>`;
-            // 计算当前目录的根目录ID和底色
+            // 计算当前目录的根目录ID和强调色
             const currentRootId = level === 0 ? item.id : rootId;
-            const bgColor = level === 0 ? '#f9f9f9' : getRootColor(currentRootId);
+            const accentColor = getRootColor(currentRootId);
             html += `<div class="mulu${hasChildren ? ' has-children expanded' : ''}" 
                          data-dir-id="${escapeHtml(item.id)}" 
                          data-level="${level}"
-                         style="padding-left: ${indent}px; background-color: ${bgColor};"
+                         style="padding-left: ${indent}px; --root-accent: ${accentColor};"
                          >
                         ${toggleIcon}<span class="mulu-text">${escapeHtml(item.name)}</span>
                     </div>`;
@@ -1619,13 +2431,13 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
         });
     }
 
-    // 根据根目录ID生成颜色
+    // 根据根目录ID生成强调色
     function getRootColorForRootId(rootId) {
-        if (!rootId) return '#f9f9f9';
+        if (!rootId) return '#94a3b8';
         const hash = stringToHash(rootId);
         const hue = hash % 360;
-        const saturation = 40 + (hash % 20);
-        const lightness = 88 + (hash % 5);
+        const saturation = 52 + (hash % 18);
+        const lightness = 42 + (hash % 10);
         return 'hsl(' + hue + ', ' + saturation + '%, ' + lightness + '%)';
     }
 
@@ -1656,7 +2468,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
         return tree;
     }
 
-    // 递归生成目录HTML，rootId 用于设置底色
+    // 递归生成目录HTML，rootId 用于设置根目录强调色
     function generateDirectoryHTML(items, level = 0, rootId = null) {
         let html = '';
         items.forEach((item, index) => {
@@ -1673,13 +2485,13 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
             const toggleIcon = hasChildren 
                 ? `<span class="toggle-icon"></span>` 
                 : `<span class="bullet-icon"></span>`;
-            // 计算当前目录的根目录ID和底色
+            // 计算当前目录的根目录ID和强调色
             const currentRootId = level === 0 ? item.id : rootId;
-            const bgColor = level === 0 ? '#f9f9f9' : getRootColorForRootId(currentRootId);
+            const accentColor = getRootColorForRootId(currentRootId);
             html += `<div class="mulu${hasChildren ? ' has-children expanded' : ''}" 
                          data-dir-id="${escapeHtml(item.id)}" 
                          data-level="${level}"
-                         style="padding-left: ${indent}px; background-color: ${bgColor};"
+                         style="padding-left: ${indent}px; --root-accent: ${accentColor};"
                          >
                         ${toggleIcon}<span class="mulu-text">${escapeHtml(item.name)}</span>
                     </div>`;
@@ -1814,11 +2626,11 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
     }
 
     // 生成完整的HTML页面
-    const directoryTree = buildDirectoryTree(mulufile);
+    const directoryTree = buildDirectoryTree(sourceData);
     const directoryHTML = generateDirectoryHTML(directoryTree);
-    const { contentScripts, mediaDataScripts } = await generateContentScripts(mulufile);
+    const { contentScripts, mediaDataScripts } = await generateContentScripts(sourceData);
     // 获取第一个目录的ID作为默认选中
-    const firstDirId = mulufile.length > 0 && mulufile[0].length === 4 ? mulufile[0][2] : '';
+    const firstDirId = sourceData.length > 0 && sourceData[0].length === 4 ? sourceData[0][2] : '';
     // 生成完整的HTML页面
     const htmlContent = `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -1862,19 +2674,23 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
         .mulu {
             min-height: 36px;
             line-height: 36px;
-            border-bottom: 1px solid #eee;
+            border-left: 3px solid var(--root-accent, transparent);
+            border-bottom: 1px solid #e6ebf1;
             text-align: left;
             white-space: nowrap;
             position: relative;
             cursor: pointer;
-            background-color: #f9f9f9;
-            transition: background-color 0.2s;
+            background-color: transparent;
+            transition: background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease;
             padding-right: 10px;
         }
         .mulu:hover {
-            filter: brightness(0.95);
+            background-color: #edf3fa;
         }
         .mulu.selected {
+            background-color: #e8f0ff;
+            border-left-color: #0066cc;
+            color: #123c8c;
             font-weight: bold;
         }
         .bullet-icon {
@@ -2314,6 +3130,12 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
         const soraExecutedMethodIds = new Set();
         const soraMethodHoverCooldownMap = new WeakMap();
         let soraDirClipboard = null;
+        const SORA_METHOD_DEBUG = false;
+
+        function methodDebugLog() {
+            if (!SORA_METHOD_DEBUG) return;
+            console.log.apply(console, arguments);
+        }
 
         function escapeCssSelectorValue(value) {
             if (value === null || value === undefined) return '';
@@ -2381,7 +3203,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
         }
 
         function selectDirectory(dirId, toggleExpand = false) {
-            console.log('[Sora方法] selectDirectory被调用, dirId:', dirId);
+            methodDebugLog('[Sora方法] selectDirectory被调用, dirId:', dirId);
             if (currentSelected) {
                 currentSelected.classList.remove('selected');
             }
@@ -2398,7 +3220,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
             }
 
             const content = getContent(dirId) || '';
-            console.log('[Sora方法] 目录内容长度:', content.length, '前100字符:', content.substring(0, 100));
+            methodDebugLog('[Sora方法] 目录内容长度:', content.length, '前100字符:', content.substring(0, 100));
             const title = nameMap[dirId] || '未命名';
             document.getElementById('contentTitle').textContent = title;
             document.getElementById('contentBody').innerHTML = content || '<div class="empty-state">此目录暂无内容</div>';
@@ -2410,7 +3232,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                 loadLazyMedia();
             }, 100);
 
-            console.log('[Sora方法] 开始执行enter_dir触发');
+            methodDebugLog('[Sora方法] 开始执行enter_dir触发');
             handleSoraMethodTriggersCascade('enter_dir');
         }
 
@@ -2498,18 +3320,41 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
             return cfg.methodId;
         }
 
+        function normalizeRuntimeMethodConfig(cfg, idx, salt) {
+            if (!cfg || typeof cfg !== 'object') return null;
+            if (!cfg.trigger) cfg.trigger = 'click';
+            if (!cfg.formatCommand && cfg.formatType) {
+                cfg.formatCommand = cfg.formatType;
+                delete cfg.formatType;
+            }
+            if (Array.isArray(cfg.formatMethods)) {
+                cfg.formatMethods = cfg.formatMethods
+                    .map(function(item, nestedIndex) {
+                        return normalizeRuntimeMethodConfig(item, nestedIndex, salt + '_nested_' + nestedIndex);
+                    })
+                    .filter(Boolean);
+            }
+            ensureMethodId(cfg, idx, salt);
+            return cfg;
+        }
+
         function readMethodsFromElement(a) {
             if (!a || !a.getAttribute) return [];
             const raw = a.getAttribute('data-sora-methods') || '';
             const parsed = safeParseJson(raw, []);
             const arr = Array.isArray(parsed) ? parsed : [];
-            for (let i = 0; i < arr.length; i++) {
-                const cfg = arr[i];
-                if (!cfg || typeof cfg !== 'object') continue;
-                if (!cfg.trigger) cfg.trigger = 'click';
-                ensureMethodId(cfg, i, (a.textContent || '').slice(0, 30));
-            }
-            return arr;
+            return arr
+                .map(function(cfg, i) {
+                    return normalizeRuntimeMethodConfig(cfg, i, (a.textContent || '').slice(0, 30));
+                })
+                .filter(Boolean);
+        }
+
+        function extractMethodLinksFromHtml(html) {
+            if (!html) return [];
+            const template = document.createElement('template');
+            template.innerHTML = String(html);
+            return Array.from(template.content.querySelectorAll('a[data-sora-link="method"][data-sora-methods]'));
         }
 
         function executeMethodsForElement(a, trigger) {
@@ -2542,7 +3387,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
         }
 
         function handleSoraMethodTriggersCascade(reason) {
-            console.log('[Sora方法] 开始级联触发:', reason);
+            methodDebugLog('[Sora方法] 开始级联触发:', reason);
             const maxPasses = 20;
             const executedInRun = new Set();
             
@@ -2553,64 +3398,45 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                 
                 // 遍历所有.mulu元素获取目录ID
                 const allDirElements = document.querySelectorAll('.mulu');
-                console.log('[Sora方法] 开始遍历目录, 总数:', allDirElements.length);
+                methodDebugLog('[Sora方法] 开始遍历目录, 总数:', allDirElements.length);
                 
                 allDirElements.forEach(function(el) {
                     const dirId = el.dataset.dirId;
                     if (!dirId) return;
                     
-                    const dirName = nameMap[dirId] || '未命名';
                     const content = getContent(dirId);
                     if (!content) return;
                     
-                    const regex = /<a[^>]*data-sora-methods="([^"]*)"[^>]*>/g;
-                    let match;
-                    let dirMethodCount = 0;
-                    
-                    while ((match = regex.exec(content)) !== null) {
-                        const fullTag = match[0];
-                        if (!fullTag.includes('data-sora-link="method"')) {
-                            continue;
-                        }
-                        
-                        dirMethodCount++;
-                        const methodsJson = match[1]
-                            .replace(/&quot;/g, '"')
-                            .replace(/&amp;/g, '&')
-                            .replace(/&lt;/g, '<')
-                            .replace(/&gt;/g, '>');
-                        const methods = safeParseJson(methodsJson, []);
-                        if (Array.isArray(methods)) {
-                            totalMethods += methods.length;
-                            for (let m = 0; m < methods.length; m++) {
-                                const cfg = methods[m];
-                                if (!cfg || typeof cfg !== 'object') continue;
-                                if ((cfg.trigger || 'click') !== 'open') continue;
-                                openMethods++;
-                                ensureMethodId(cfg, m, '');
-                                const id = cfg.methodId;
-                                if (cfg.once && id && soraExecutedMethodIds.has(id)) {
-                                    continue;
-                                }
-                                console.log('[Sora方法] 执行open方法:', cfg.methodType, cfg.frontAnchor, '所在目录:', dirId);
-                                
-                                soraMethodContextDirId = dirId;
-                                const ok = executeSingleMethod(cfg);
+                    const methodLinks = extractMethodLinksFromHtml(content);
+                    methodLinks.forEach(function(methodLink, linkIndex) {
+                        const methods = readMethodsFromElement(methodLink);
+                        totalMethods += methods.length;
+                        for (let m = 0; m < methods.length; m++) {
+                            const cfg = methods[m];
+                            if (!cfg || typeof cfg !== 'object') continue;
+                            if ((cfg.trigger || 'click') !== 'open') continue;
+                            openMethods++;
+                            const id = ensureMethodId(cfg, m, dirId + '_' + linkIndex);
+                            if (cfg.once && id && soraExecutedMethodIds.has(id)) {
+                                continue;
+                            }
+
+                            let ok = false;
+                            soraMethodContextDirId = dirId;
+                            try {
+                                ok = executeSingleMethod(cfg);
+                            } finally {
                                 soraMethodContextDirId = null;
-                                
-                                if (ok && cfg.once && id) {
-                                    soraExecutedMethodIds.add(id);
-                                }
+                            }
+
+                            if (ok && cfg.once && id) {
+                                soraExecutedMethodIds.add(id);
                             }
                         }
-                    }
-                    
-                    if (dirMethodCount > 0) {
-                        console.log('[Sora方法] 目录', dirName, '找到方法链接:', dirMethodCount);
-                    }
+                    });
                 });
                 
-                console.log('[Sora方法] open触发执行完成, 总方法数:', totalMethods, 'open方法数:', openMethods);
+                methodDebugLog('[Sora方法] open触发执行完成, 总方法数:', totalMethods, 'open方法数:', openMethods);
                 return;
             }
             
@@ -2619,30 +3445,30 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                 // 在当前显示的目录中查找
                 const contentBody = document.getElementById('contentBody');
                 if (!contentBody) {
-                    console.log('[Sora方法] contentBody不存在');
+                    methodDebugLog('[Sora方法] contentBody不存在');
                     return;
                 }
                 const links = Array.from(contentBody.querySelectorAll('a[data-sora-link="method"]'));
-                console.log('[Sora方法] 找到方法链接数量:', links.length);
+                methodDebugLog('[Sora方法] 找到方法链接数量:', links.length);
                 
                 let anyOk = false;
                 for (let i = 0; i < links.length; i++) {
                     const a = links[i];
                     const methods = readMethodsFromElement(a);
-                    console.log('[Sora方法] 链接', i, '方法数:', methods.length, '配置:', methods);
+                    methodDebugLog('[Sora方法] 链接', i, '方法数:', methods.length, '配置:', methods);
                     if (!methods || methods.length === 0) continue;
                     if (!methods.some(m => (m.trigger || 'click') === reason)) {
-                        console.log('[Sora方法] 链接', i, '没有匹配', reason, '的方法');
+                        methodDebugLog('[Sora方法] 链接', i, '没有匹配', reason, '的方法');
                         continue;
                     }
                     const ok = executeMethodsForElement(a, reason, executedInRun);
-                    console.log('[Sora方法] 链接', i, '执行结果:', ok);
+                    methodDebugLog('[Sora方法] 链接', i, '执行结果:', ok);
                     if (ok) {
                         anyOk = true;
                     }
                 }
                 if (!anyOk) {
-                    console.log('[Sora方法] 级联结束,没有方法执行');
+                    methodDebugLog('[Sora方法] 级联结束,没有方法执行');
                     return;
                 }
             }
@@ -2652,7 +3478,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
         function executeSingleMethod(cfg) {
             if (!cfg || typeof cfg !== 'object') return false;
             const type = cfg.methodType || '';
-            console.log('[Sora方法] 执行单个方法, 类型:', type, '配置:', cfg);
+            methodDebugLog('[Sora方法] 执行单个方法, 类型:', type, '配置:', cfg);
             if (type === '更换内容') {
                 if (cfg.renameTo && String(cfg.renameTo).trim()) {
                     return executeRenameDirectoryMethod(cfg);
@@ -2951,7 +3777,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
         }
 
         function wrapRangeInRoot(root, frontId, backId, wrapperId, initialDisplay) {
-            console.log('[Sora方法] wrapRangeInRoot, frontId:', frontId, 'backId:', backId, 'wrapperId:', wrapperId);
+            methodDebugLog('[Sora方法] wrapRangeInRoot, frontId:', frontId, 'backId:', backId, 'wrapperId:', wrapperId);
             if (!root) return null;
             const range = document.createRange();
             try {
@@ -2961,7 +3787,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                         console.error('[Sora方法] 找不到前锚点元素:', frontId);
                         return null;
                     }
-                    console.log('[Sora方法] 找到前锚点:', frontEl);
+                    methodDebugLog('[Sora方法] 找到前锚点:', frontEl);
                     range.setStartAfter(frontEl);
                 } else {
                     range.setStart(root, 0);
@@ -2972,7 +3798,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                         console.error('[Sora方法] 找不到后锚点元素:', backId);
                         return null;
                     }
-                    console.log('[Sora方法] 找到后锚点:', backEl);
+                    methodDebugLog('[Sora方法] 找到后锚点:', backEl);
                     range.setEndBefore(backEl);
                 } else {
                     range.setEnd(root, root.childNodes.length);
@@ -2987,7 +3813,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
             wrapper.style.display = initialDisplay;
             wrapper.appendChild(frag);
             range.insertNode(wrapper);
-            console.log('[Sora方法] wrapper创建成功, display:', initialDisplay);
+            methodDebugLog('[Sora方法] wrapper创建成功, display:', initialDisplay);
             return wrapper;
         }
 
@@ -3009,22 +3835,22 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
         }
 
         function executeVisibilityMethod(cfg, mode) {
-            console.log('[Sora方法] executeVisibilityMethod, mode:', mode, 'frontAnchor:', cfg.frontAnchor, 'backAnchor:', cfg.backAnchor);
+            methodDebugLog('[Sora方法] executeVisibilityMethod, mode:', mode, 'frontAnchor:', cfg.frontAnchor, 'backAnchor:', cfg.backAnchor);
             const frontRef = parseAnchorRef(cfg.frontAnchor);
             if (!frontRef) {
                 console.error('[Sora方法] 前锚点解析失败:', cfg.frontAnchor);
                 showExportToast('前锚点无效，无法执行方法');
                 return false;
             }
-            console.log('[Sora方法] 前锚点解析结果:', frontRef);
+            methodDebugLog('[Sora方法] 前锚点解析结果:', frontRef);
             const targetDir = resolveDirIdFromRef(frontRef);
-            console.log('[Sora方法] 目标目录:', targetDir, 'currentDirId:', currentDirId);
+            methodDebugLog('[Sora方法] 目标目录:', targetDir, 'currentDirId:', currentDirId);
             if (!targetDir) {
                 showExportToast('未能确定目标目录，无法执行方法');
                 return false;
             }
             const isRange = !!(cfg.backAnchor && String(cfg.backAnchor).trim());
-            console.log('[Sora方法] 是否范围操作:', isRange);
+            methodDebugLog('[Sora方法] 是否范围操作:', isRange);
             if (!isRange) {
                 if (mode === 'hide') return hideDirectoryTree(targetDir);
                 if (mode === 'show') return showDirectoryTree(targetDir);
@@ -3191,7 +4017,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
             }
             const frontId = frontRef.anchorId || '';
             const backId = backRef.anchorId || '';
-            const cmd = cfg.formatCommand || '';
+            const cmd = cfg.formatCommand || cfg.formatType || '';
             const value = cfg.formatValue || '';
             const methods = Array.isArray(cfg.formatMethods) ? cfg.formatMethods : [];
             const fallbackText = cfg.formatFallbackText || '';
@@ -3245,11 +4071,11 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
         }
 
         function getRootColorForRootId(rootId) {
-            if (!rootId) return '#f9f9f9';
+            if (!rootId) return '#94a3b8';
             const hash = stringToHash(rootId);
             const hue = hash % 360;
-            const saturation = 40 + (hash % 20);
-            const lightness = 88 + (hash % 5);
+            const saturation = 52 + (hash % 18);
+            const lightness = 42 + (hash % 10);
             return 'hsl(' + hue + ', ' + saturation + '%, ' + lightness + '%)';
         }
 
@@ -3262,9 +4088,9 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
             el.dataset.dirId = dirId;
             el.dataset.level = String(level);
             const indent = 20 + (level * 20);
-            const bg = level === 0 ? '#f9f9f9' : getRootColorForRootId(rootId);
+            const accentColor = getRootColorForRootId(level === 0 ? dirId : rootId);
             el.style.paddingLeft = indent + 'px';
-            el.style.backgroundColor = bg;
+            el.style.setProperty('--root-accent', accentColor);
 
             const toggleIcon = hasChildren
                 ? '<span class="toggle-icon"></span>'
@@ -3695,7 +4521,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
                 const selector2 = '.sora-anchor[data-sora-anchor="true"][data-anchor-name="' + escapeCssSelectorValue(id) + '"]';
                 el = root.querySelector(selector2);
                 if (!el) {
-                    console.log('[Sora方法] 找不到锚点, id:', id, '选择器:', selector1, selector2);
+                    methodDebugLog('[Sora方法] 找不到锚点, id:', id, '选择器:', selector1, selector2);
                 }
             }
             return el;
@@ -4387,12 +5213,12 @@ async function handleSaveAsWebpage(encrypt = false, password = null) {
         
         const defaultDirId = ${JSON.stringify(firstDirId || '').replace(/<\/script>/gi, '<\\/script')};
         if (defaultDirId) {
-            console.log('[Sora方法] 即将调用selectDirectory, dirId:', defaultDirId);
+            methodDebugLog('[Sora方法] 即将调用selectDirectory, dirId:', defaultDirId);
             selectDirectory(defaultDirId, false);
-            console.log('[Sora方法] selectDirectory调用完成');
+            methodDebugLog('[Sora方法] selectDirectory调用完成');
         }
         
-        console.log('[Sora方法] 网页加载完成，开始执行open触发');
+        methodDebugLog('[Sora方法] 网页加载完成，开始执行open触发');
         handleSoraMethodTriggersCascade('open');
     </script>
 </body>

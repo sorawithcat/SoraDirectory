@@ -187,7 +187,7 @@ function showMethodConfigDialog(existing, parentStack) {
         replaceFromFrontAnchorInput.value = cfg.replaceFromFrontAnchor || '';
         replaceFromBackAnchorInput.value = cfg.replaceFromBackAnchor || '';
         replaceTextTextarea.value = cfg.replaceText || '';
-        formatCommandSelect.value = cfg.formatCommand || 'bold';
+        formatCommandSelect.value = cfg.formatCommand || cfg.formatType || 'bold';
         formatValueInput.value = cfg.formatValue || '';
         formatFallbackTextInput.value = cfg.formatFallbackText || '方法';
         dirActionSelect.value = cfg.dirAction || '复制目录ID';
