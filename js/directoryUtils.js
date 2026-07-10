@@ -64,22 +64,21 @@ function stringToHash(str) {
     return Math.abs(hash);
 }
 /**
- * 根据根目录ID动态生成一个唯一的强调色
- * 使用 HSL 颜色模式，固定饱和度和亮度，只变化色相
+ * 根据根目录ID生成同组子目录共用的浅色背景
  * @param {string} rootId - 根目录ID
  * @returns {string} - HSL颜色值
  */
 function getRootColor(rootId) {
     if (!rootId) {
-        return '#94a3b8';
+        return '#f9f9f9';
     }
     if (rootColorMap.has(rootId)) {
         return rootColorMap.get(rootId);
     }
     let hash = stringToHash(rootId);
     let hue = hash % 360;
-    let saturation = 52 + (hash % 18);
-    let lightness = 42 + (hash % 10);
+    let saturation = 40 + (hash % 20);
+    let lightness = 88 + (hash % 5);
     let color = `hsl(${hue}, ${saturation}%, ${lightness}%)`;
     rootColorMap.set(rootId, color);
     return color;
@@ -89,42 +88,44 @@ function getRootColorPalette(rootId) {
     if (rootColorPaletteMap.has(rootId)) {
         return rootColorPaletteMap.get(rootId);
     }
-    const accent = getRootColor(rootId);
-    const match = accent.match(/hsl\((\d+),\s*(\d+)%,\s*(\d+)%\)/);
+    const background = getRootColor(rootId);
+    const match = background.match(/hsl\((\d+),\s*(\d+)%,\s*(\d+)%\)/);
     let palette;
     if (match) {
         const hue = Number(match[1]);
         const saturation = Number(match[2]);
+        const lightness = Number(match[3]);
         palette = {
-            accent,
-            bg: `hsl(${hue}, ${Math.max(28, saturation - 18)}%, 96%)`,
-            hover: `hsl(${hue}, ${Math.max(32, saturation - 12)}%, 92%)`,
-            selected: `hsl(${hue}, ${Math.max(36, saturation - 8)}%, 86%)`
+            bg: background,
+            hover: `hsl(${hue}, ${saturation}%, ${Math.max(82, lightness - 4)}%)`,
+            selected: `hsl(${hue}, ${Math.min(70, saturation + 6)}%, ${Math.max(78, lightness - 8)}%)`
         };
     } else {
         palette = {
-            accent,
-            bg: '#f8fafc',
-            hover: '#edf3fa',
-            selected: '#e8f0fe'
+            bg: '#f9f9f9',
+            hover: '#eef1f4',
+            selected: '#dfe8f4'
         };
     }
     rootColorPaletteMap.set(rootId, palette);
     return palette;
 }
 /**
- * 为目录元素设置根目录强调色
+ * 为目录元素设置所属根目录的整行背景色
  * @param {HTMLElement} element - 目录元素
  */
 function setParentColorBall(element) {
     let parentId = element.getAttribute("data-parent-id");
     let dirId = element.getAttribute("data-dir-id");
-    let rootId = (!parentId || parentId === "mulu")
+    const isRoot = !parentId || parentId === "mulu";
+    let rootId = isRoot
         ? dirId
         : (findRootDirIdFromData(dirId, parentId) || findRootDirId(element));
-    let palette = getRootColorPalette(rootId);
+    let palette = isRoot
+        ? { bg: '#f9f9f9', hover: '#eef1f4', selected: '#dfe8f4' }
+        : getRootColorPalette(rootId);
     element.style.removeProperty('background-color');
-    element.style.setProperty('--root-accent', palette.accent);
+    element.style.removeProperty('--root-accent');
     element.style.setProperty('--dir-bg', palette.bg);
     element.style.setProperty('--dir-hover-bg', palette.hover);
     element.style.setProperty('--dir-selected-bg', palette.selected);

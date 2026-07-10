@@ -2379,20 +2379,36 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         }
         return Math.abs(hash);
     }
-    // 根据根目录ID生成强调色
+    // 根据根目录ID生成子目录背景色
     const rootColorCache = {};
     function getRootColor(rootId) {
-        if (!rootId) return '#94a3b8';
+        if (!rootId) return '#f9f9f9';
         if (rootColorCache[rootId]) return rootColorCache[rootId];
         const hash = stringToHash(rootId);
         const hue = hash % 360;
-        const saturation = 52 + (hash % 18);
-        const lightness = 42 + (hash % 10);
+        const saturation = 40 + (hash % 20);
+        const lightness = 88 + (hash % 5);
         const color = `hsl(${hue}, ${saturation}%, ${lightness}%)`;
         rootColorCache[rootId] = color;
         return color;
     }
-    // 递归生成目录HTML，rootId 用于设置根目录强调色
+
+    function getDirectoryPalette(rootId, isRoot) {
+        if (isRoot) {
+            return { bg: '#f9f9f9', hover: '#eef1f4', selected: '#dfe8f4' };
+        }
+        const hash = stringToHash(rootId || '');
+        const hue = hash % 360;
+        const saturation = 40 + (hash % 20);
+        const lightness = 88 + (hash % 5);
+        return {
+            bg: getRootColor(rootId),
+            hover: `hsl(${hue}, ${saturation}%, ${Math.max(82, lightness - 4)}%)`,
+            selected: `hsl(${hue}, ${Math.min(70, saturation + 6)}%, ${Math.max(78, lightness - 8)}%)`
+        };
+    }
+
+    // 递归生成目录HTML，rootId 用于设置同组子目录背景色
     function generateDirectoryHTML(items, level = 0, rootId = null) {
         let html = '';
         items.forEach((item, index) => {
@@ -2409,13 +2425,13 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             const toggleIcon = hasChildren 
                 ? `<span class="toggle-icon"></span>` 
                 : `<span class="bullet-icon"></span>`;
-            // 计算当前目录的根目录ID和强调色
+            // 计算当前目录的根目录ID和整行背景色
             const currentRootId = level === 0 ? item.id : rootId;
-            const accentColor = getRootColor(currentRootId);
+            const palette = getDirectoryPalette(currentRootId, level === 0);
             html += `<div class="mulu${hasChildren ? ' has-children expanded' : ''}" 
                          data-dir-id="${escapeHtml(item.id)}" 
                          data-level="${level}"
-                         style="padding-left: ${indent}px; --root-accent: ${accentColor};"
+                         style="padding-left: ${indent}px; --dir-bg: ${palette.bg}; --dir-hover-bg: ${palette.hover}; --dir-selected-bg: ${palette.selected};"
                          >
                         ${toggleIcon}<span class="mulu-text">${escapeHtml(item.name)}</span>
                     </div>`;
@@ -2442,16 +2458,6 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             const hex = ch.charCodeAt(0).toString(16);
             return backslash + hex + ' ';
         });
-    }
-
-    // 根据根目录ID生成强调色
-    function getRootColorForRootId(rootId) {
-        if (!rootId) return '#94a3b8';
-        const hash = stringToHash(rootId);
-        const hue = hash % 360;
-        const saturation = 52 + (hash % 18);
-        const lightness = 42 + (hash % 10);
-        return 'hsl(' + hue + ', ' + saturation + '%, ' + lightness + '%)';
     }
 
     // 构建目录树结构
@@ -2481,7 +2487,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         return tree;
     }
 
-    // 递归生成目录HTML，rootId 用于设置根目录强调色
+    // 递归生成目录HTML，rootId 用于设置同组子目录背景色
     function generateDirectoryHTML(items, level = 0, rootId = null) {
         let html = '';
         items.forEach((item, index) => {
@@ -2498,13 +2504,13 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             const toggleIcon = hasChildren 
                 ? `<span class="toggle-icon"></span>` 
                 : `<span class="bullet-icon"></span>`;
-            // 计算当前目录的根目录ID和强调色
+            // 计算当前目录的根目录ID和整行背景色
             const currentRootId = level === 0 ? item.id : rootId;
-            const accentColor = getRootColorForRootId(currentRootId);
+            const palette = getDirectoryPalette(currentRootId, level === 0);
             html += `<div class="mulu${hasChildren ? ' has-children expanded' : ''}" 
                          data-dir-id="${escapeHtml(item.id)}" 
                          data-level="${level}"
-                         style="padding-left: ${indent}px; --root-accent: ${accentColor};"
+                         style="padding-left: ${indent}px; --dir-bg: ${palette.bg}; --dir-hover-bg: ${palette.hover}; --dir-selected-bg: ${palette.selected};"
                          >
                         ${toggleIcon}<span class="mulu-text">${escapeHtml(item.name)}</span>
                     </div>`;
@@ -2763,23 +2769,21 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         .mulu {
             min-height: 36px;
             line-height: 36px;
-            border-left: 3px solid var(--root-accent, transparent);
             border-bottom: 1px solid #e6ebf1;
             text-align: left;
             white-space: nowrap;
             position: relative;
             cursor: pointer;
-            background-color: transparent;
-            transition: background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+            background-color: var(--dir-bg, #f9f9f9);
+            transition: background-color 0.16s ease, color 0.16s ease;
             padding-right: 10px;
         }
         .mulu:hover {
-            background-color: #edf3fa;
+            background-color: var(--dir-hover-bg, #eef1f4);
         }
         .mulu.selected {
-            background-color: #e8f0ff;
-            border-left-color: #0066cc;
-            color: #123c8c;
+            background-color: var(--dir-selected-bg, #dfe8f4);
+            color: #1f2933;
             font-weight: bold;
         }
         .bullet-icon {
@@ -4215,13 +4219,19 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             return null;
         }
 
-        function getRootColorForRootId(rootId) {
-            if (!rootId) return '#94a3b8';
-            const hash = stringToHash(rootId);
+        function getDirectoryPaletteForRootId(rootId, isRoot) {
+            if (isRoot) {
+                return { bg: '#f9f9f9', hover: '#eef1f4', selected: '#dfe8f4' };
+            }
+            const hash = stringToHash(rootId || '');
             const hue = hash % 360;
-            const saturation = 52 + (hash % 18);
-            const lightness = 42 + (hash % 10);
-            return 'hsl(' + hue + ', ' + saturation + '%, ' + lightness + '%)';
+            const saturation = 40 + (hash % 20);
+            const lightness = 88 + (hash % 5);
+            return {
+                bg: 'hsl(' + hue + ', ' + saturation + '%, ' + lightness + '%)',
+                hover: 'hsl(' + hue + ', ' + saturation + '%, ' + Math.max(82, lightness - 4) + '%)',
+                selected: 'hsl(' + hue + ', ' + Math.min(70, saturation + 6) + '%, ' + Math.max(78, lightness - 8) + '%)'
+            };
         }
 
         function buildMuluElement(dirId, name, level, hasChildren, rootId) {
@@ -4233,9 +4243,11 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             el.dataset.dirId = dirId;
             el.dataset.level = String(level);
             const indent = 20 + (level * 20);
-            const accentColor = getRootColorForRootId(level === 0 ? dirId : rootId);
+            const palette = getDirectoryPaletteForRootId(level === 0 ? dirId : rootId, level === 0);
             el.style.paddingLeft = indent + 'px';
-            el.style.setProperty('--root-accent', accentColor);
+            el.style.setProperty('--dir-bg', palette.bg);
+            el.style.setProperty('--dir-hover-bg', palette.hover);
+            el.style.setProperty('--dir-selected-bg', palette.selected);
 
             const toggleIcon = hasChildren
                 ? '<span class="toggle-icon"></span>'
