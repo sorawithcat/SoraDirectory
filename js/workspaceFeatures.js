@@ -497,6 +497,8 @@ const DirectoryNavigation = (function() {
 window.DirectoryNavigation = DirectoryNavigation;
 
 const MediaManager = (function() {
+    let insertRange = null;
+
     function collectReferences() {
         const references = new Map();
         for (const row of (Array.isArray(mulufile) ? mulufile : [])) {
@@ -531,31 +533,16 @@ const MediaManager = (function() {
             showToast('请先选择一个目录', 'warning', 1800);
             return;
         }
-        let element;
-        const type = item.info.type || '';
-        const mime = item.info.mimeType || '';
-        if (type === 'archive') {
-            const name = item.reference.name || `${item.id}.bin`;
-            element = createArchiveElement(name, item.info.size || 0, null, item.id);
-        } else {
-            const url = await MediaStorage.getMediaAsUrl(item.id);
-            if (type === 'video' || mime.startsWith('video/')) {
-                element = document.createElement('video');
-                element.controls = true;
-            } else {
-                element = document.createElement('img');
-                element.alt = item.reference.name || '媒体资源';
-            }
-            element.setAttribute('data-media-storage-id', item.id);
-            element.setAttribute('src', url || 'about:blank');
+        if (typeof insertStoredMediaResource !== 'function') {
+            showToast('媒体插入功能不可用', 'error', 1800);
+            return;
         }
-        markdownPreview.appendChild(element);
-        markdownPreview.appendChild(document.createElement('br'));
-        syncPreviewToTextarea();
-        if (typeof initializeStoredImages === 'function') initializeStoredImages();
-        if (typeof initializeVideos === 'function') initializeVideos();
-        showToast('已插入媒体资源', 'success', 1600);
+        const range = insertRange ? insertRange.cloneRange() : null;
         FeatureDialog.close();
+        await insertStoredMediaResource(item.id, item.info, {
+            displayName: item.reference.name || (item.info.type === 'archive' ? `${item.id}.bin` : '媒体资源'),
+            range
+        });
     }
 
     async function removeItem(item) {
@@ -635,6 +622,7 @@ const MediaManager = (function() {
     }
 
     async function open() {
+        insertRange = typeof getCurrentMarkdownRange === 'function' ? getCurrentMarkdownRange() : null;
         const wrapper = document.createElement('div');
         wrapper.textContent = '正在读取媒体资源...';
         FeatureDialog.open('媒体资源管理器', wrapper);

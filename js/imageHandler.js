@@ -153,6 +153,33 @@ function wrapMediaWithCaption(mediaElement, caption) {
     return figure;
 }
 
+function createImageMediaNode(src, storageId, displayName, caption = '') {
+    const img = document.createElement('img');
+    img.src = src;
+    img.setAttribute('data-media-storage-id', storageId);
+    img.alt = displayName;
+    if (caption) img.title = caption;
+    limitImageSize(img);
+    img.setAttribute('data-click-attached', 'true');
+    img.addEventListener('click', function(ev) {
+        ev.stopPropagation();
+        showImageViewer(src);
+    });
+    return wrapMediaWithCaption(img, caption);
+}
+
+function createVideoMediaNode(src, storageId, displayName, caption = '') {
+    const video = document.createElement('video');
+    video.src = src;
+    video.controls = true;
+    video.preload = 'none';
+    video.style.maxWidth = '640px';
+    video.style.maxHeight = '360px';
+    video.title = displayName;
+    video.setAttribute('data-media-storage-id', storageId);
+    return wrapMediaWithCaption(video, caption);
+}
+
 async function createImageImportNode(file, caption = '') {
     if (typeof MediaStorage === 'undefined') {
         throw new Error('MediaStorage 未初始化');
@@ -170,18 +197,7 @@ async function createImageImportNode(file, caption = '') {
         if (useBlobStorage && MediaStorage.hideProgressToast) MediaStorage.hideProgressToast();
         throw err;
     }
-    const img = document.createElement('img');
-    img.src = imageData;
-    img.setAttribute('data-media-storage-id', imageStorageId);
-    img.alt = mediaDisplayName(file);
-    if (caption) img.title = caption;
-    limitImageSize(img);
-    img.setAttribute('data-click-attached', 'true');
-    img.addEventListener('click', function(ev) {
-        ev.stopPropagation();
-        showImageViewer(imageData);
-    });
-    return wrapMediaWithCaption(img, caption);
+    return createImageMediaNode(imageData, imageStorageId, mediaDisplayName(file), caption);
 }
 
 async function createVideoImportNode(file, caption = '') {
@@ -196,17 +212,7 @@ async function createVideoImportNode(file, caption = '') {
         if (MediaStorage.hideProgressToast) MediaStorage.hideProgressToast();
         throw err;
     }
-    const video = document.createElement('video');
-    video.src = URL.createObjectURL(file);
-    video.controls = true;
-    video.preload = 'none';
-    video.style.maxWidth = '640px';
-    video.style.maxHeight = '360px';
-    video.title = mediaDisplayName(file);
-    if (videoStorageId) {
-        video.setAttribute('data-media-storage-id', videoStorageId);
-    }
-    return wrapMediaWithCaption(video, caption);
+    return createVideoMediaNode(URL.createObjectURL(file), videoStorageId, mediaDisplayName(file), caption);
 }
 
 function insertMediaFragment(fragment, range) {
@@ -226,6 +232,59 @@ function insertMediaFragment(fragment, range) {
         }
     }
     markdownPreview.appendChild(fragment);
+}
+
+async function insertStoredMediaResource(storageId, info = {}, options = {}) {
+    if (!markdownPreview || !currentMuluName) {
+        showToast('请先选择一个目录', 'warning', 1800);
+        return false;
+    }
+    if (!storageId || typeof MediaStorage === 'undefined') {
+        showToast('媒体资源不可用', 'error', 1800);
+        return false;
+    }
+
+    const type = String(info.type || '').toLowerCase();
+    const mimeType = String(info.mimeType || '').toLowerCase();
+    const kind = type === 'archive' ? 'archive' : ((type === 'video' || mimeType.startsWith('video/')) ? 'video' : 'image');
+    const displayName = options.displayName || (kind === 'archive' ? `${storageId}.bin` : '媒体资源');
+    let caption = options.caption || '';
+    if (kind !== 'archive' && options.promptCaption !== false && options.caption === undefined) {
+        const promptText = kind === 'video'
+            ? '输入视频标题（可选，直接按确定跳过，取消则不插入）:'
+            : '输入图片图注（可选，直接按确定跳过，取消则不插入）:';
+        caption = await customPrompt(promptText, '');
+        if (caption === null) return false;
+    }
+
+    try {
+        let node;
+        if (kind === 'archive') {
+            node = createArchiveElement(displayName, info.size || 0, null, storageId);
+        } else {
+            const mediaUrl = await MediaStorage.getMediaAsUrl(storageId);
+            if (!mediaUrl) throw new Error('无法读取媒体数据');
+            node = kind === 'video'
+                ? createVideoMediaNode(mediaUrl, storageId, displayName, caption)
+                : createImageMediaNode(mediaUrl, storageId, displayName, caption);
+        }
+
+        const fragment = document.createDocumentFragment();
+        fragment.appendChild(node);
+        fragment.appendChild(document.createElement('br'));
+        const range = options.range && markdownPreview.contains(options.range.startContainer)
+            ? options.range
+            : getCurrentMarkdownRange();
+        insertMediaFragment(fragment, range);
+        syncPreviewToTextarea();
+        if (typeof updateStorageInfo === 'function') updateStorageInfo();
+        showToast(`已插入${kind === 'archive' ? '压缩文件' : '媒体资源'}`, 'success', 1600);
+        return true;
+    } catch (err) {
+        console.error('插入媒体资源失败:', err);
+        showToast(`插入失败：${err.message || err}`, 'error', 2200);
+        return false;
+    }
 }
 
 async function importMediaFiles(files, options = {}) {
