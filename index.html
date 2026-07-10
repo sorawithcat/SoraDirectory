@@ -756,18 +756,38 @@
             flex-wrap: wrap;
         }
         .markdown-preview .sora-anchor {
-            color: #0066cc;
+            display: inline-flex;
+            align-items: center;
+            max-width: min(240px, 70vw);
+            min-height: 20px;
+            margin: 0 3px;
+            padding: 1px 6px;
+            color: #075bbd;
+            background-color: #eef6ff;
+            border: 1px solid #b6d4fe;
+            border-radius: 3px;
+            vertical-align: middle;
             cursor: pointer;
             user-select: none;
-            padding: 0 2px;
-            border-radius: 2px;
-            font-size: 12px;
-            opacity: 0.75;
+            font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+            font-size: 11px;
+            line-height: 16px;
+            letter-spacing: 0;
+        }
+
+        .markdown-preview .sora-anchor::before {
+            display: block;
+            min-width: 0;
+            overflow: hidden;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+            content: "# " attr(data-anchor-name);
         }
 
         .markdown-preview .sora-anchor:hover {
-            text-decoration: underline;
-            opacity: 1;
+            color: #043f85;
+            background-color: #dcecff;
+            border-color: #73a7e8;
         }
         
         /* 仅在有选中文字时显示的按钮 */
