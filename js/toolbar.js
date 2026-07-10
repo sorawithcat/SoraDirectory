@@ -429,6 +429,13 @@ if (topVideoUploadBtn) {
         if (videoFileInput) videoFileInput.click();
     });
 }
+if (topMediaUploadBtn) {
+    topMediaUploadBtn.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (mediaFileInput) mediaFileInput.click();
+    });
+}
 
 function buildHelpNavHtml() {
     const items = [

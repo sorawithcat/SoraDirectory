@@ -16,6 +16,120 @@ const SORA_PACKAGE_MIME = 'application/x-sora-directory';
 function isFileSystemAccessSupported() {
     return 'showOpenFilePicker' in window && 'showSaveFilePicker' in window;
 }
+
+function isSavePickerSupported() {
+    return window.isSecureContext && 'showSaveFilePicker' in window;
+}
+
+function isOpfsSupported() {
+    return window.isSecureContext && navigator.storage && typeof navigator.storage.getDirectory === 'function';
+}
+
+async function createTemporaryExport(filename, writer) {
+    if (!isOpfsSupported()) return null;
+    const root = await navigator.storage.getDirectory();
+    const directory = await root.getDirectoryHandle('sora-exports', { create: true });
+    const fileHandle = await directory.getFileHandle(filename, { create: true });
+    try {
+        await writer(fileHandle);
+    } catch (err) {
+        try {
+            await directory.removeEntry(filename);
+        } catch (cleanupErr) {
+            console.warn('Unable to remove failed temporary export:', cleanupErr);
+        }
+        throw err;
+    }
+    return {
+        file: await fileHandle.getFile(),
+        cleanup: async () => {
+            try {
+                await directory.removeEntry(filename);
+            } catch (err) {
+                console.warn('Unable to remove temporary export:', err);
+            }
+        }
+    };
+}
+
+async function writePartsToFileHandle(fileHandle, parts) {
+    const writable = await fileHandle.createWritable();
+    try {
+        for (const part of parts) {
+            if (part != null) await writable.write(part);
+        }
+        await writable.close();
+    } catch (err) {
+        if (typeof writable.abort === 'function') {
+            try {
+                await writable.abort();
+            } catch (abortErr) {
+                console.warn('Unable to abort export:', abortErr);
+            }
+        }
+        throw err;
+    }
+}
+
+function showPreparedFileActions(sourceFile, filename, cleanup = null) {
+    return new Promise(resolve => {
+        const file = sourceFile.name === filename
+            ? sourceFile
+            : new File([sourceFile], filename, { type: sourceFile.type || 'application/octet-stream' });
+        const objectURL = URL.createObjectURL(file);
+        const shareData = { files: [file], title: filename };
+        let canShare = false;
+        try {
+            canShare = typeof navigator.share === 'function' &&
+                typeof navigator.canShare === 'function' && navigator.canShare(shareData);
+        } catch (err) {
+            canShare = false;
+        }
+
+        customDialogTitle.textContent = '文件已生成';
+        customDialogMessage.textContent = `${filename}（${formatFileSize(file.size)}）`;
+        customDialogInput.style.display = 'none';
+        customDialogFooter.innerHTML =
+            '<button class="custom-dialog-btn custom-dialog-btn-secondary" id="preparedFileCancel">取消</button>' +
+            (canShare ? '<button class="custom-dialog-btn custom-dialog-btn-secondary" id="preparedFileShare">分享</button>' : '') +
+            '<a class="custom-dialog-btn custom-dialog-btn-primary prepared-file-download" id="preparedFileDownload">保存到设备</a>';
+
+        const download = document.getElementById('preparedFileDownload');
+        const cancel = document.getElementById('preparedFileCancel');
+        const share = document.getElementById('preparedFileShare');
+        download.href = objectURL;
+        download.download = filename;
+
+        let closed = false;
+        const finish = action => {
+            if (closed) return;
+            closed = true;
+            customDialogOverlay.classList.remove('active');
+            setTimeout(() => {
+                URL.revokeObjectURL(objectURL);
+                if (cleanup) cleanup();
+            }, action === 'cancel' ? 0 : 60000);
+            resolve(action);
+        };
+        download.onclick = () => finish('download');
+        cancel.onclick = () => finish('cancel');
+        customDialogClose.onclick = () => finish('cancel');
+        customDialogOverlay.onclick = event => {
+            if (event.target === customDialogOverlay) finish('cancel');
+        };
+        if (share) {
+            share.onclick = async () => {
+                try {
+                    await navigator.share(shareData);
+                    finish('share');
+                } catch (err) {
+                    if (err.name !== 'AbortError') showToast('分享失败，请改用“保存到设备”', 'warning', 2500);
+                }
+            };
+        }
+        customDialogOverlay.classList.add('active');
+    });
+}
 /**
  * 计算字符串的简单哈希值（用于追踪变化）
  * @param {string} str - 输入字符串
@@ -362,13 +476,19 @@ async function handleSaveAsSoraPackage(customName = null, exportData = null, exp
         }
     }
 
-    const blob = await buildSoraPackageBlob(sourceData, exportScope);
-    const objectURL = URL.createObjectURL(blob);
-    const aTag = document.createElement('a');
-    aTag.href = objectURL;
-    aTag.download = filename;
-    aTag.click();
-    URL.revokeObjectURL(objectURL);
+    let prepared = null;
+    try {
+        prepared = await createTemporaryExport(filename, fileHandle =>
+            writeSoraPackageToFileHandle(fileHandle, sourceData, exportScope)
+        );
+    } catch (err) {
+        console.warn('OPFS temporary export failed, using memory fallback:', err);
+    }
+    const file = prepared
+        ? prepared.file
+        : new File([await buildSoraPackageBlob(sourceData, exportScope)], filename, { type: SORA_PACKAGE_MIME });
+    const action = await showPreparedFileActions(file, filename, prepared && prepared.cleanup);
+    if (action === 'cancel') return false;
     if (setCurrent) {
         currentFileHandle = null;
         currentFileName = filename;
@@ -2356,6 +2476,33 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
     const sourceData = Array.isArray(exportData) ? exportData : mulufile;
     const partialSuffix = exportScope && exportScope.mode === 'partial' ? '_partial' : '';
     let filename = encrypt ? `${baseName}${partialSuffix}.encrypted.html` : `${baseName}${partialSuffix}.html`;
+    let selectedFileHandle = null;
+    if (isSavePickerSupported()) {
+        try {
+            selectedFileHandle = await window.showSaveFilePicker({
+                suggestedName: filename,
+                types: [{ description: 'HTML webpage', accept: { 'text/html': ['.html'] } }]
+            });
+        } catch (err) {
+            if (err.name === 'AbortError') return false;
+            console.warn('Webpage save picker failed, using fallback:', err);
+        }
+    }
+    let mediaChunkTemporary = null;
+    let mediaChunkWriter = null;
+    if (!encrypt && isOpfsSupported()) {
+        try {
+            const chunkFilename = `.chunks-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`;
+            const root = await navigator.storage.getDirectory();
+            const directory = await root.getDirectoryHandle('sora-exports', { create: true });
+            const handle = await directory.getFileHandle(chunkFilename, { create: true });
+            const writable = await handle.createWritable();
+            mediaChunkWriter = part => writable.write(part);
+            mediaChunkTemporary = { directory, handle, writable, filename: chunkFilename };
+        } catch (err) {
+            console.warn('Unable to create webpage media spool:', err);
+        }
+    }
     // 构建目录树结构
     function buildDirectoryTree(muluData) {
         const tree = [];
@@ -2491,7 +2638,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         return html;
     }
 
-    async function generateContentScripts(muluData) {
+    async function generateContentScripts(muluData, chunkWriter = null) {
         const contentScriptParts = [];
         const mediaDataMap = {};
         const mediaChunkScriptParts = [];
@@ -2535,13 +2682,18 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             return fallback || 'application/octet-stream';
         };
 
-        const addVideoChunk = (assetId, base64, index, chunkIds) => {
+        const addVideoChunk = async (assetId, base64, index, chunkIds) => {
             const chunkId = 'media_chunk_' + assetId + '_' + index.toString(36);
             chunkIds.push(chunkId);
-            mediaChunkScriptParts.push('<script type="application/octet-stream" id="' + chunkId + '">' + base64 + '</script>\n');
+            const scriptPart = '<script type="application/octet-stream" id="' + chunkId + '">' + base64 + '</script>\n';
+            if (chunkWriter) {
+                await chunkWriter(scriptPart);
+            } else {
+                mediaChunkScriptParts.push(scriptPart);
+            }
         };
 
-        const exportDataUrlVideo = (dataUrl, assetId) => {
+        const exportDataUrlVideo = async (dataUrl, assetId) => {
             const commaIndex = String(dataUrl || '').indexOf(',');
             if (commaIndex < 0 || !/;base64/i.test(dataUrl.slice(0, commaIndex))) return null;
             const header = dataUrl.slice(0, commaIndex);
@@ -2550,7 +2702,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             const chunkIds = [];
             const chunkChars = Math.floor(((1024 * 1024 * 4 / 3) / 4)) * 4;
             for (let offset = 0, index = 0; offset < base64.length; offset += chunkChars, index++) {
-                addVideoChunk(assetId, base64.slice(offset, offset + chunkChars), index, chunkIds);
+                await addVideoChunk(assetId, base64.slice(offset, offset + chunkChars), index, chunkIds);
             }
             const padding = base64.endsWith('==') ? 2 : (base64.endsWith('=') ? 1 : 0);
             return {
@@ -2576,9 +2728,9 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             if (mediaId && typeof MediaStorage !== 'undefined' && MediaStorage && typeof MediaStorage.exportMediaChunks === 'function') {
                 const chunkIds = [];
                 try {
-                    const info = await MediaStorage.exportMediaChunks(mediaId, (base64, index) => {
-                        addVideoChunk(assetId, base64, index, chunkIds);
-                    });
+                    const info = await MediaStorage.exportMediaChunks(mediaId, (base64, index) =>
+                        addVideoChunk(assetId, base64, index, chunkIds)
+                    );
                     asset = {
                         storage: 'chunks',
                         mimeType: info.mimeType || 'application/octet-stream',
@@ -2590,7 +2742,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                 }
             }
             if (!asset && dataUrl.startsWith('data:')) {
-                asset = exportDataUrlVideo(dataUrl, assetId);
+                asset = await exportDataUrlVideo(dataUrl, assetId);
             }
             if (cacheKey && asset) videoAssetCache.set(cacheKey, asset);
             return asset;
@@ -2692,7 +2844,28 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
     // 生成完整的HTML页面
     const directoryTree = buildDirectoryTree(sourceData);
     const directoryHTML = generateDirectoryHTML(directoryTree);
-    const { contentScripts, mediaDataScripts, mediaChunkScriptParts } = await generateContentScripts(sourceData);
+    let generatedContent;
+    try {
+        generatedContent = await generateContentScripts(sourceData, mediaChunkWriter);
+        if (mediaChunkTemporary) await mediaChunkTemporary.writable.close();
+    } catch (err) {
+        if (mediaChunkTemporary && typeof mediaChunkTemporary.writable.abort === 'function') {
+            try {
+                await mediaChunkTemporary.writable.abort();
+            } catch (abortErr) {
+                console.warn('Unable to abort webpage media spool:', abortErr);
+            }
+        }
+        if (mediaChunkTemporary) {
+            try {
+                await mediaChunkTemporary.directory.removeEntry(mediaChunkTemporary.filename);
+            } catch (cleanupErr) {
+                console.warn('Unable to remove failed webpage media spool:', cleanupErr);
+            }
+        }
+        throw err;
+    }
+    const { contentScripts, mediaDataScripts, mediaChunkScriptParts } = generatedContent;
     const directoryLevelColorsJson = JSON.stringify(
         typeof serializeDirectoryLevelColors === 'function' ? serializeDirectoryLevelColors() : {}
     ).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
@@ -5458,11 +5631,10 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
     if (markerIndex < 0) {
         throw new Error('网页媒体分块插入点缺失');
     }
-    const htmlParts = [
-        htmlContent.slice(0, markerIndex),
-        ...mediaChunkScriptParts,
-        htmlContent.slice(markerIndex + mediaChunkMarker.length)
-    ];
+    const htmlPrefix = htmlContent.slice(0, markerIndex);
+    const htmlSuffix = htmlContent.slice(markerIndex + mediaChunkMarker.length);
+    const spooledChunks = mediaChunkTemporary ? await mediaChunkTemporary.handle.getFile() : null;
+    const htmlParts = [htmlPrefix, ...(spooledChunks ? [spooledChunks] : mediaChunkScriptParts), htmlSuffix];
 
     // 如果加密，包装 HTML
     let outputParts = htmlParts;
@@ -5472,14 +5644,32 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
     }
 
     // 创建并下载文件
-    const blob = new Blob(outputParts, { type: 'text/html;charset=utf-8' });
-    const objectURL = URL.createObjectURL(blob);
-    const aTag = document.createElement('a');
-    aTag.href = objectURL;
-    aTag.download = filename;
-    aTag.click();
-    setTimeout(() => URL.revokeObjectURL(objectURL), 1000);
+    if (selectedFileHandle) {
+        await writePartsToFileHandle(selectedFileHandle, outputParts);
+    } else {
+        let prepared = null;
+        try {
+            prepared = await createTemporaryExport(filename, fileHandle =>
+                writePartsToFileHandle(fileHandle, outputParts)
+            );
+        } catch (err) {
+            console.warn('OPFS webpage export failed, using memory fallback:', err);
+        }
+        const file = prepared
+            ? prepared.file
+            : new File(outputParts, filename, { type: 'text/html;charset=utf-8' });
+        const action = await showPreparedFileActions(file, filename, prepared && prepared.cleanup);
+        if (action === 'cancel') return false;
+    }
+    if (mediaChunkTemporary) {
+        try {
+            await mediaChunkTemporary.directory.removeEntry(mediaChunkTemporary.filename);
+        } catch (err) {
+            console.warn('Unable to remove webpage media spool:', err);
+        }
+    }
     showToast(`已导出${encrypt ? '加密' : ''}网页：${filename}`, 'success', 2500);
+    return true;
 }
 /**
  * 生成加密 HTML 包装器（解密后显示原始网页）

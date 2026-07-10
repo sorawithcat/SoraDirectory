@@ -1049,6 +1049,25 @@
             cursor: pointer;
             font-size: 14px;
             transition: all 0.2s;
+            text-decoration: none;
+            text-align: center;
+        }
+
+        @media (max-width: 600px) {
+            .custom-dialog {
+                width: calc(100vw - 24px);
+                min-width: 0;
+            }
+            .custom-dialog-footer {
+                flex-wrap: wrap;
+            }
+            .custom-dialog-footer .custom-dialog-btn {
+                min-height: 44px;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                flex: 1 1 120px;
+            }
         }
         
         .custom-dialog-btn-primary {
@@ -1801,6 +1820,7 @@
                 <button class="top-toolbar-btn format-toolbar-btn" data-command="method" id="topMethodBtn" title="方法">方法</button>
                 <button class="top-toolbar-btn" id="topImageUploadBtn" title="插入图片">🖼️</button>
                 <button class="top-toolbar-btn" id="topVideoUploadBtn" title="插入视频">🎬</button>
+                <button class="top-toolbar-btn" id="topMediaUploadBtn" title="批量插入图片和视频">媒体</button>
                 <!--<button class="top-toolbar-btn" id="topArchiveUploadBtn" title="插入压缩文件">📦</button>-->
                 <button class="top-toolbar-btn format-toolbar-btn" data-command="unordered-list" title="无序列表">无序列表</button>
                 <button class="top-toolbar-btn format-toolbar-btn" data-command="ordered-list" title="有序列表">有序列表</button>
@@ -1887,6 +1907,7 @@
     </div>
     <input type="file" id="imageFileInput" accept="image/*" multiple style="display: none;">
     <input type="file" id="videoFileInput" accept="video/*" multiple style="display: none;">
+    <input type="file" id="mediaFileInput" accept="image/*,video/*" multiple style="display: none;">
     <input type="file" id="archiveFileInput" accept=".zip,.rar,.7z,.tar,.gz,.tar.gz,.tgz,.bz2,.tar.bz2,.xz,.tar.xz" style="display: none;">
     <div class="rightmousemenu">
         <div class="copyMuluWithChildren">复制目录（含子目录）</div>
@@ -1982,7 +2003,7 @@
     <script>
         (async function() {
             const bootStatus = document.getElementById('bootStatus');
-            const assetVersion = '20260710-directory-level-colors';
+            const assetVersion = '20260710-mobile-stream-export';
             const versionScript = src => src + (src.includes('?') ? '&' : '?') + 'v=' + assetVersion;
             function setBootStatus(message, isError) {
                 if (!bootStatus) return;

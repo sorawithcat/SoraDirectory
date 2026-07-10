@@ -399,6 +399,19 @@ if (videoFileInput) {
         }
     });
 }
+if (mediaFileInput) {
+    mediaFileInput.multiple = true;
+    mediaFileInput.addEventListener('change', async function(e) {
+        try {
+            await importMediaFiles(Array.from(e.target.files || []), {
+                range: getCurrentMarkdownRange(),
+                promptCaption: true
+            });
+        } finally {
+            mediaFileInput.value = '';
+        }
+    });
+}
 // -------------------- 图片查看器 --------------------
 /** 图片查看器遮罩层 */
 let imageViewerOverlay = null;
