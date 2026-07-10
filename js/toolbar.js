@@ -1011,7 +1011,7 @@ function buildHelpPageContents() {
         '</ul>',
         '<h2 id="存储空间">存储空间</h2>',
         '<ul>',
-        '<li>顶部“存储”区域会显示已用/剩余空间。</li>',
+        '<li>顶部“存储”区域显示当前已用空间；详情中可查看浏览器动态分配的配额。</li>',
         '<li><strong>左键</strong>点击存储信息：刷新统计。</li>',
         '<li><strong>右键</strong>点击存储信息：清理孤立媒体数据（不再被任何目录引用的图片/视频/压缩文件）。</li>',
         '<li>存储信息会定期自动刷新（也可手动刷新）。</li>',
@@ -1566,14 +1566,18 @@ async function updateStorageInfo(options = {}) {
             const usedStr = formatStorageSize(used);
             const availableStr = formatStorageSize(available);
             const quotaStr = formatStorageSize(quota);
-            storageInfoElement.textContent = `已用 ${usedStr} / 剩余 ${availableStr}`;
+            storageInfoElement.textContent = quota > 0
+                ? `已用 ${usedStr}`
+                : `已用 ${usedStr} / 配额未知`;
             storageInfoElement.title = `存储空间详情:
 已使用: ${usedStr}
-剩余: ${availableStr}
-总配额: ${quotaStr}
+浏览器当前可用余量: ${availableStr}
+浏览器当前配额: ${quotaStr}
 使用率: ${usagePercent.toFixed(1)}%
 文件缓存: ${cacheStats ? `${cacheStats.valid} 项 / ${cacheStats.totalSizeMB} MB` : '不可用'}
 持久化: ${persisted === null ? '未知' : (persisted ? '已启用' : '未启用')}
+
+说明: SoraDirectory 不设置固定 10GB 上限；实际配额由浏览器和磁盘空间动态决定。
 
 左键刷新 | 右键清理孤立数据`;
             // 根据使用率设置样式

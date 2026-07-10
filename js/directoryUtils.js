@@ -1,5 +1,6 @@
 /** 根目录ID到颜色的映射缓存 */
 const rootColorMap = new Map();
+const rootColorPaletteMap = new Map();
 /**
  * 查找目录的根目录ID
  * @param {HTMLElement} element - 目录元素
@@ -26,6 +27,28 @@ function findRootDirId(element) {
         }
     }
     return currentParentId;
+}
+
+function findRootDirIdFromData(dirId, parentId) {
+    if (!parentId || parentId === 'mulu') {
+        return dirId;
+    }
+    if (typeof getMulufileByDirId !== 'function') {
+        return null;
+    }
+    let currentId = dirId;
+    let currentParentId = parentId;
+    const visited = new Set();
+    while (currentParentId && currentParentId !== 'mulu' && !visited.has(currentParentId)) {
+        visited.add(currentParentId);
+        const parentData = getMulufileByDirId(currentParentId);
+        if (!parentData || parentData.length !== 4) {
+            return null;
+        }
+        currentId = parentData[2];
+        currentParentId = parentData[0];
+    }
+    return currentId;
 }
 /**
  * 根据字符串生成哈希值
@@ -61,18 +84,50 @@ function getRootColor(rootId) {
     rootColorMap.set(rootId, color);
     return color;
 }
+
+function getRootColorPalette(rootId) {
+    if (rootColorPaletteMap.has(rootId)) {
+        return rootColorPaletteMap.get(rootId);
+    }
+    const accent = getRootColor(rootId);
+    const match = accent.match(/hsl\((\d+),\s*(\d+)%,\s*(\d+)%\)/);
+    let palette;
+    if (match) {
+        const hue = Number(match[1]);
+        const saturation = Number(match[2]);
+        palette = {
+            accent,
+            bg: `hsl(${hue}, ${Math.max(28, saturation - 18)}%, 96%)`,
+            hover: `hsl(${hue}, ${Math.max(32, saturation - 12)}%, 92%)`,
+            selected: `hsl(${hue}, ${Math.max(36, saturation - 8)}%, 86%)`
+        };
+    } else {
+        palette = {
+            accent,
+            bg: '#f8fafc',
+            hover: '#edf3fa',
+            selected: '#e8f0fe'
+        };
+    }
+    rootColorPaletteMap.set(rootId, palette);
+    return palette;
+}
 /**
  * 为目录元素设置根目录强调色
  * @param {HTMLElement} element - 目录元素
  */
 function setParentColorBall(element) {
     let parentId = element.getAttribute("data-parent-id");
+    let dirId = element.getAttribute("data-dir-id");
     let rootId = (!parentId || parentId === "mulu")
-        ? element.getAttribute("data-dir-id")
-        : findRootDirId(element);
-    let color = getRootColor(rootId);
+        ? dirId
+        : (findRootDirIdFromData(dirId, parentId) || findRootDirId(element));
+    let palette = getRootColorPalette(rootId);
     element.style.removeProperty('background-color');
-    element.style.setProperty('--root-accent', color);
+    element.style.setProperty('--root-accent', palette.accent);
+    element.style.setProperty('--dir-bg', palette.bg);
+    element.style.setProperty('--dir-hover-bg', palette.hover);
+    element.style.setProperty('--dir-selected-bg', palette.selected);
 }
 /**
  * 更新目录数据（基于 data-dir-id 查找）

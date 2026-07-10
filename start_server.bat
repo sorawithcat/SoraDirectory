@@ -18,7 +18,7 @@ echo [提示] 按 Ctrl+C 可以停止服务器
 echo ========================================
 echo.
 
-start "" cmd /c "timeout /t 1 /nobreak >nul && start http://127.0.0.1:8080/SoraDirectory.html"
+start "" cmd /c "timeout /t 1 /nobreak >nul && start http://127.0.0.1:8080/index.html"
 
 python -m http.server 8080
 

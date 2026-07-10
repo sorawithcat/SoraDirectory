@@ -94,186 +94,309 @@ async function compressImage(base64Data, options = {}) {
         img.src = base64Data;
     });
 }
-// -------------------- 图片上传按钮 --------------------
+const MEDIA_IMAGE_EXT_RE = /\.(jpg|jpeg|png|gif|bmp|webp|svg|ico)$/i;
+const MEDIA_VIDEO_EXT_RE = /\.(mp4|webm|ogg|ogv|avi|mov|wmv|flv|mkv|m4v)$/i;
+let mediaImportActive = false;
+
+function isSupportedImageFile(file) {
+    return !!file && (file.type.startsWith('image/') || MEDIA_IMAGE_EXT_RE.test(file.name || ''));
+}
+
+function isSupportedVideoFile(file) {
+    return !!file && (file.type.startsWith('video/') || MEDIA_VIDEO_EXT_RE.test(file.name || ''));
+}
+
+function readFileAsDataURL(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = e => resolve(e.target.result);
+        reader.onerror = () => reject(new Error('读取文件失败'));
+        reader.readAsDataURL(file);
+    });
+}
+
+function getCurrentMarkdownRange() {
+    const selection = window.getSelection();
+    if (selection.rangeCount > 0 && markdownPreview.contains(selection.anchorNode)) {
+        return selection.getRangeAt(0).cloneRange();
+    }
+    return null;
+}
+
+function getDropMarkdownRange(event) {
+    if (document.caretRangeFromPoint) {
+        return document.caretRangeFromPoint(event.clientX, event.clientY);
+    }
+    if (document.caretPositionFromPoint) {
+        const pos = document.caretPositionFromPoint(event.clientX, event.clientY);
+        if (pos) {
+            const range = document.createRange();
+            range.setStart(pos.offsetNode, pos.offset);
+            range.collapse(true);
+            return range;
+        }
+    }
+    return null;
+}
+
+function mediaDisplayName(file) {
+    return file.soraRelativePath || file.webkitRelativePath || file.name || 'media';
+}
+
+function wrapMediaWithCaption(mediaElement, caption) {
+    if (!caption) return mediaElement;
+    const figure = document.createElement('figure');
+    figure.appendChild(mediaElement);
+    const figcaption = document.createElement('figcaption');
+    figcaption.textContent = caption;
+    figure.appendChild(figcaption);
+    return figure;
+}
+
+async function createImageImportNode(file, caption = '') {
+    if (typeof MediaStorage === 'undefined') {
+        throw new Error('MediaStorage 未初始化');
+    }
+    const rawImageData = await readFileAsDataURL(file);
+    const imageData = await compressImage(rawImageData);
+    const useBlobStorage = file.size > 5 * 1024 * 1024;
+    let imageStorageId;
+    try {
+        imageStorageId = useBlobStorage
+            ? await MediaStorage.save(file, 'image')
+            : await MediaStorage.saveImage(imageData);
+        if (useBlobStorage) MediaStorage.hideProgressToast();
+    } catch (err) {
+        if (useBlobStorage && MediaStorage.hideProgressToast) MediaStorage.hideProgressToast();
+        throw err;
+    }
+    const img = document.createElement('img');
+    img.src = imageData;
+    img.setAttribute('data-media-storage-id', imageStorageId);
+    img.alt = mediaDisplayName(file);
+    if (caption) img.title = caption;
+    limitImageSize(img);
+    img.setAttribute('data-click-attached', 'true');
+    img.addEventListener('click', function(ev) {
+        ev.stopPropagation();
+        showImageViewer(imageData);
+    });
+    return wrapMediaWithCaption(img, caption);
+}
+
+async function createVideoImportNode(file, caption = '') {
+    if (typeof MediaStorage === 'undefined') {
+        throw new Error('MediaStorage 未初始化');
+    }
+    let videoStorageId = null;
+    try {
+        videoStorageId = await MediaStorage.save(file, 'video');
+        MediaStorage.hideProgressToast();
+    } catch (err) {
+        if (MediaStorage.hideProgressToast) MediaStorage.hideProgressToast();
+        throw err;
+    }
+    const video = document.createElement('video');
+    video.src = URL.createObjectURL(file);
+    video.controls = true;
+    video.preload = 'none';
+    video.style.maxWidth = '640px';
+    video.style.maxHeight = '360px';
+    video.title = mediaDisplayName(file);
+    if (videoStorageId) {
+        video.setAttribute('data-media-storage-id', videoStorageId);
+    }
+    return wrapMediaWithCaption(video, caption);
+}
+
+function insertMediaFragment(fragment, range) {
+    if (!fragment || fragment.childNodes.length === 0) return;
+    if (range && markdownPreview.contains(range.startContainer)) {
+        const lastNode = fragment.lastChild;
+        try {
+            range.deleteContents();
+            range.insertNode(fragment);
+            if (lastNode && lastNode.parentNode) {
+                range.setStartAfter(lastNode);
+                range.collapse(true);
+            }
+            return;
+        } catch (err) {
+            console.warn('按光标位置插入媒体失败，改为追加到末尾:', err);
+        }
+    }
+    markdownPreview.appendChild(fragment);
+}
+
+async function importMediaFiles(files, options = {}) {
+    if (!markdownPreview || !files || files.length === 0) return;
+    if (mediaImportActive) {
+        showToast('已有媒体正在导入，请稍后再试', 'warning', 2000);
+        return;
+    }
+    const mediaItems = [];
+    let ignoredCount = 0;
+    Array.from(files).forEach(file => {
+        if (isSupportedImageFile(file)) {
+            mediaItems.push({ file, type: 'image' });
+        } else if (isSupportedVideoFile(file)) {
+            mediaItems.push({ file, type: 'video' });
+        } else {
+            ignoredCount++;
+        }
+    });
+    if (mediaItems.length === 0) {
+        if (ignoredCount > 0) {
+            showToast('没有可导入的图片或视频，其他文件已忽略', 'info', 2200);
+        }
+        return;
+    }
+    mediaItems.sort((a, b) => mediaDisplayName(a.file).localeCompare(mediaDisplayName(b.file), 'zh-Hans'));
+    let singleCaption = '';
+    if (mediaItems.length === 1 && options.promptCaption !== false) {
+        const promptText = mediaItems[0].type === 'video'
+            ? '输入视频标题（可选，直接按确定跳过，取消则不上传）:'
+            : '输入图片图注（可选，直接按确定跳过，取消则不上传）:';
+        singleCaption = await customPrompt(promptText, '');
+        if (singleCaption === null) return;
+    }
+
+    mediaImportActive = true;
+    const fragment = document.createDocumentFragment();
+    let importedCount = 0;
+    let failedCount = 0;
+    try {
+        for (let i = 0; i < mediaItems.length; i++) {
+            const item = mediaItems[i];
+            showToast(`正在导入媒体 ${i + 1}/${mediaItems.length}`, 'info', 1200);
+            try {
+                const node = item.type === 'video'
+                    ? await createVideoImportNode(item.file, singleCaption)
+                    : await createImageImportNode(item.file, singleCaption);
+                fragment.appendChild(node);
+                fragment.appendChild(document.createElement('br'));
+                importedCount++;
+            } catch (err) {
+                failedCount++;
+                console.error('导入媒体失败:', mediaDisplayName(item.file), err);
+            }
+            if (i % 3 === 2) {
+                await new Promise(resolve => setTimeout(resolve, 0));
+            }
+        }
+        insertMediaFragment(fragment, options.range || getCurrentMarkdownRange());
+        if (importedCount > 0) {
+            syncPreviewToTextarea();
+            if (!currentMuluName) {
+                showToast('提示：请先选择一个目录，否则媒体无法保存', 'warning', 3000);
+            }
+            if (typeof updateStorageInfo === 'function') {
+                updateStorageInfo();
+            }
+        }
+        const ignoredText = ignoredCount > 0 ? `，忽略 ${ignoredCount} 个非媒体文件` : '';
+        const failedText = failedCount > 0 ? `，失败 ${failedCount} 个` : '';
+        showToast(`已导入 ${importedCount} 个媒体${ignoredText}${failedText}`, failedCount > 0 ? 'warning' : 'success', 3000);
+    } finally {
+        mediaImportActive = false;
+    }
+}
+
+function readDirectoryEntries(reader) {
+    return new Promise((resolve, reject) => {
+        const entries = [];
+        const readBatch = () => {
+            reader.readEntries(batch => {
+                if (!batch || batch.length === 0) {
+                    resolve(entries);
+                    return;
+                }
+                entries.push(...batch);
+                readBatch();
+            }, reject);
+        };
+        readBatch();
+    });
+}
+
+function readFileEntry(entry, pathPrefix = '') {
+    return new Promise((resolve, reject) => {
+        entry.file(file => {
+            const relativePath = pathPrefix + file.name;
+            try {
+                Object.defineProperty(file, 'soraRelativePath', { value: relativePath, configurable: true });
+            } catch (err) {
+                file.soraRelativePath = relativePath;
+            }
+            resolve([file]);
+        }, reject);
+    });
+}
+
+async function readEntryFiles(entry, pathPrefix = '') {
+    if (!entry) return [];
+    if (entry.isFile) {
+        return readFileEntry(entry, pathPrefix);
+    }
+    if (!entry.isDirectory) return [];
+    const reader = entry.createReader();
+    const entries = await readDirectoryEntries(reader);
+    entries.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans'));
+    const nextPrefix = pathPrefix + entry.name + '/';
+    const files = [];
+    for (const child of entries) {
+        files.push(...await readEntryFiles(child, nextPrefix));
+    }
+    return files;
+}
+
+async function getFilesFromDataTransfer(dataTransfer) {
+    const items = Array.from(dataTransfer.items || []);
+    const supportsEntries = items.some(item => item.kind === 'file' && typeof item.webkitGetAsEntry === 'function');
+    if (supportsEntries) {
+        const files = [];
+        for (const item of items) {
+            if (item.kind !== 'file') continue;
+            const entry = item.webkitGetAsEntry();
+            files.push(...await readEntryFiles(entry, ''));
+        }
+        if (files.length > 0) return files;
+    }
+    return Array.from(dataTransfer.files || []);
+}
+
+// -------------------- 媒体上传入口 --------------------
 if (imageUploadBtn) {
     imageUploadBtn.addEventListener('click', function(e) {
         e.preventDefault();
         e.stopPropagation();
-        if (imageFileInput) {
-            imageFileInput.click();
-        }
+        if (imageFileInput) imageFileInput.click();
     });
 }
-// -------------------- 文件选择处理 --------------------
 if (imageFileInput) {
-    imageFileInput.addEventListener('change', function(e) {
-        const file = e.target.files[0];
-        if (!file) return;
-        if (!file.type.startsWith('image/')) {
-            customAlert('请选择图片文件');
-            return;
-        }
-        // 在弹出对话框之前保存光标位置
-        const selection = window.getSelection();
-        let savedRange = null;
-        if (selection.rangeCount > 0 && markdownPreview.contains(selection.anchorNode)) {
-            savedRange = selection.getRangeAt(0).cloneRange();
-        }
-        const reader = new FileReader();
-        reader.onload = async function(e) {
-            const rawImageData = e.target.result;
-            const imageName = file.name || 'image';
-            const caption = await customPrompt('输入图片图注（可选，直接按确定跳过，取消则不上传）:', '');
-            // 用户点击取消，中止上传
-            if (caption === null) {
-                imageFileInput.value = '';
-                return;
-            }
-            // 压缩图片（不影响质量）
-            const imageData = await compressImage(rawImageData);
-            // 大图片阈值：超过 5MB 使用 Blob 存储
-            const LARGE_IMAGE_THRESHOLD = 5 * 1024 * 1024;
-            const useBlobStorage = file.size > LARGE_IMAGE_THRESHOLD;
-            // 保存图片到 IndexedDB
-            let imageStorageId;
-            try {
-                if (useBlobStorage) {
-                    // 大图片：直接存储 File（分块）
-                    imageStorageId = await MediaStorage.save(file, 'image');
-                    MediaStorage.hideProgressToast();
-                } else {
-                    // 小图片：存储压缩后的 base64
-                    imageStorageId = await MediaStorage.saveImage(imageData);
-                }
-            } catch (err) {
-                if (useBlobStorage) MediaStorage.hideProgressToast();
-                console.error('保存图片到 IndexedDB 失败:', err);
-                showToast('保存图片失败：' + err.message, 'error', 3000);
-                imageFileInput.value = '';
-                return;
-            }
-            const img = document.createElement('img');
-            img.src = imageData; // 显示时使用压缩后的数据（即使是大图片也用压缩版显示）
-            img.setAttribute('data-media-storage-id', imageStorageId); // 存储引用 ID
-            img.alt = imageName;
-            if (caption) img.title = caption;
-            limitImageSize(img);
-            img.addEventListener('click', function() {
-                showImageViewer(imageData);
+    imageFileInput.multiple = true;
+    imageFileInput.addEventListener('change', async function(e) {
+        try {
+            await importMediaFiles(Array.from(e.target.files || []), {
+                range: getCurrentMarkdownRange(),
+                promptCaption: true
             });
-            let imageContainer;
-            if (caption) {
-                imageContainer = document.createElement('figure');
-                imageContainer.appendChild(img);
-                const figcaption = document.createElement('figcaption');
-                figcaption.textContent = caption;
-                imageContainer.appendChild(figcaption);
-            } else {
-                imageContainer = img;
-            }
-            // 使用保存的光标位置插入
-            if (savedRange) {
-                savedRange.deleteContents();
-                savedRange.insertNode(imageContainer);
-                const br = document.createElement('br');
-                savedRange.setStartAfter(imageContainer);
-                savedRange.insertNode(br);
-            } else {
-                markdownPreview.appendChild(imageContainer);
-                markdownPreview.appendChild(document.createElement('br'));
-            }
-            syncPreviewToTextarea();
-            // 更新存储空间信息
-            if (typeof updateStorageInfo === 'function') {
-                updateStorageInfo();
-            }
+        } finally {
             imageFileInput.value = '';
-        };
-        reader.readAsDataURL(file);
+        }
     });
 }
-// -------------------- 视频文件选择处理 --------------------
 if (videoFileInput) {
+    videoFileInput.multiple = true;
     videoFileInput.addEventListener('change', async function(e) {
-        const file = e.target.files[0];
-        if (!file) return;
-        if (!file.type.startsWith('video/')) {
-            customAlert('请选择视频文件');
-            return;
-        }
-        // 在弹出对话框之前保存光标位置
-        const selection = window.getSelection();
-        let savedRange = null;
-        if (selection.rangeCount > 0 && markdownPreview.contains(selection.anchorNode)) {
-            savedRange = selection.getRangeAt(0).cloneRange();
-        }
-        const videoName = file.name || 'video';
-        const caption = await customPrompt('输入视频标题（可选，直接按确定跳过，取消则不上传）:', '');
-        // 用户点击取消，中止上传
-        if (caption === null) {
+        try {
+            await importMediaFiles(Array.from(e.target.files || []), {
+                range: getCurrentMarkdownRange(),
+                promptCaption: true
+            });
+        } finally {
             videoFileInput.value = '';
-            return;
         }
-        // 处理视频：统一按 Blob 分块存储，避免生成大 base64 字符串
-        let videoBlob = file;
-        // 将视频保存到 IndexedDB
-        let videoStorageId = null;
-        if (typeof MediaStorage !== 'undefined') {
-            try {
-                videoStorageId = await MediaStorage.save(videoBlob, 'video');
-                MediaStorage.hideProgressToast();
-            } catch (err) {
-                MediaStorage.hideProgressToast();
-                console.error('保存视频到 IndexedDB 失败:', err);
-                showToast('保存视频失败：' + err.message, 'error', 3000);
-                videoFileInput.value = '';
-                return;
-            }
-        }
-        // 创建视频元素
-        const video = document.createElement('video');
-        video.src = URL.createObjectURL(videoBlob);
-        video.controls = true;
-        video.style.maxWidth = '640px';
-        video.style.maxHeight = '360px';
-        video.title = videoName;
-        // 添加 IndexedDB 存储 ID
-        if (videoStorageId) {
-            video.setAttribute('data-media-storage-id', videoStorageId);
-        }
-        // 与图片一致：有标题用 figure，无标题直接使用 video 元素
-        let videoContainer;
-        if (caption) {
-            videoContainer = document.createElement('figure');
-            videoContainer.appendChild(video);
-            const figcaption = document.createElement('figcaption');
-            figcaption.textContent = caption;
-            videoContainer.appendChild(figcaption);
-        } else {
-            videoContainer = video;
-        }
-        // 使用保存的光标位置插入
-        if (savedRange) {
-            savedRange.deleteContents();
-            savedRange.insertNode(videoContainer);
-            const br = document.createElement('br');
-            savedRange.setStartAfter(videoContainer);
-            savedRange.insertNode(br);
-        } else {
-            markdownPreview.appendChild(videoContainer);
-            markdownPreview.appendChild(document.createElement('br'));
-        }
-        // 确保同步到数据
-        syncPreviewToTextarea();
-        // 检查是否有选中的目录
-        if (!currentMuluName) {
-            showToast('提示：请先选择一个目录，否则视频无法保存', 'warning', 3000);
-        }
-        // 更新存储空间信息
-        if (typeof updateStorageInfo === 'function') {
-            updateStorageInfo();
-        }
-        videoFileInput.value = '';
     });
 }
 // -------------------- 图片查看器 --------------------
@@ -819,124 +942,23 @@ if (markdownPreview) {
     markdownPreview.addEventListener("dragover", function(e) {
         e.preventDefault();
         e.stopPropagation();
+        if (e.dataTransfer) {
+            e.dataTransfer.dropEffect = 'copy';
+        }
     });
     markdownPreview.addEventListener("drop", async function(e) {
         e.preventDefault();
         e.stopPropagation();
-        let savedRange = null;
-        if (document.caretRangeFromPoint) {
-            savedRange = document.caretRangeFromPoint(e.clientX, e.clientY);
-        } else if (document.caretPositionFromPoint) {
-            const pos = document.caretPositionFromPoint(e.clientX, e.clientY);
-            if (pos) {
-                savedRange = document.createRange();
-                savedRange.setStart(pos.offsetNode, pos.offset);
-                savedRange.collapse(true);
-            }
-        }
-        const files = e.dataTransfer.files;
-        if (files.length > 0) {
-            let imageCount = 0;
-            for (let i = 0; i < files.length; i++) {
-                const file = files[i];
-                const isImage = file.type.startsWith('image/') || 
-                    /\.(jpg|jpeg|png|gif|bmp|webp|svg|ico)$/i.test(file.name);
-                if (isImage) {
-                    imageCount++;
-                }
-            }
-            for (let i = 0; i < files.length; i++) {
-                const file = files[i];
-                const isImage = file.type.startsWith('image/') || 
-                    /\.(jpg|jpeg|png|gif|bmp|webp|svg|ico)$/i.test(file.name);
-                const isVideo = file.type.startsWith('video/') || 
-                    /\.(mp4|webm|ogg|ogv|avi|mov|wmv|flv|mkv|m4v)$/i.test(file.name);
-                if (isImage) {
-                    try {
-                        const rawImageData = await new Promise((resolve, reject) => {
-                            const reader = new FileReader();
-                            reader.onload = (e) => resolve(e.target.result);
-                            reader.onerror = (e) => reject(new Error('读取图片文件失败'));
-                            reader.readAsDataURL(file);
-                        });
-                        const imageName = file.name || '图片';
-                        let caption = '';
-                        if (imageCount === 1) {
-                            caption = await customPrompt('输入图片图注（可选，直接按确定跳过，取消则不上传）:', '');
-                            if (caption === null) {
-                                continue;
-                            }
-                        }
-                        const imageData = await compressImage(rawImageData);
-                        const LARGE_IMAGE_THRESHOLD = 5 * 1024 * 1024;
-                        const useBlobStorage = file.size > LARGE_IMAGE_THRESHOLD;
-                        let imageStorageId;
-                        try {
-                            if (useBlobStorage) {
-                                imageStorageId = await MediaStorage.save(file, 'image');
-                                MediaStorage.hideProgressToast();
-                            } else {
-                                imageStorageId = await MediaStorage.saveImage(imageData);
-                            }
-                        } catch (err) {
-                            if (useBlobStorage) MediaStorage.hideProgressToast();
-                            console.error('保存图片到 IndexedDB 失败:', err);
-                            showToast('保存图片失败：' + err.message, 'error', 3000);
-                            continue;
-                        }
-                        const img = document.createElement('img');
-                        img.src = imageData; 
-                        img.setAttribute('data-media-storage-id', imageStorageId); 
-                        img.alt = imageName;
-                        if (caption) img.title = caption;
-                        limitImageSize(img);
-                        img.setAttribute('data-click-attached', 'true');
-                        img.addEventListener('click', function(ev) {
-                            ev.stopPropagation();
-                            showImageViewer(imageData);
-                        });
-                        let imageContainer;
-                        if (caption) {
-                            imageContainer = document.createElement('figure');
-                            imageContainer.appendChild(img);
-                            const figcaption = document.createElement('figcaption');
-                            figcaption.textContent = caption;
-                            imageContainer.appendChild(figcaption);
-                        } else {
-                            imageContainer = img;
-                        }
-                        if (savedRange && markdownPreview.contains(savedRange.startContainer)) {
-                            savedRange.insertNode(imageContainer);
-                            const br = document.createElement('br');
-                            savedRange.setStartAfter(imageContainer);
-                            savedRange.insertNode(br);
-                        } else {
-                            markdownPreview.appendChild(imageContainer);
-                            markdownPreview.appendChild(document.createElement('br'));
-                        }
-                        syncPreviewToTextarea();
-                        if (typeof updateStorageInfo === 'function') {
-                            updateStorageInfo();
-                        }
-                    } catch (err) {
-                        console.error('处理图片失败:', err);
-                        showToast('处理图片失败：' + (err.message || err), 'error', 3000);
-                        continue;
-                    }
-                } else if (isVideo) {
-                    showToast('已禁止拖拽插入视频文件', 'warning', 2500);
-                    continue;
-                } else {
-                    const allowedArchiveExtensions = ['.zip', '.rar', '.7z', '.tar', '.gz', '.tar.gz', '.tgz', '.bz2', '.tar.bz2', '.xz', '.tar.xz'];
-                    const fileNameLower = file.name.toLowerCase();
-                    const isArchive = allowedArchiveExtensions.some(ext => fileNameLower.endsWith(ext));
-                    if (isArchive) {
-                        showToast('已禁止拖拽插入压缩文件', 'warning', 2500);
-                        continue;
-                    }
-                    continue;
-                }
-            }
+        try {
+            showToast('正在读取拖入内容...', 'info', 1200);
+            const files = await getFilesFromDataTransfer(e.dataTransfer);
+            await importMediaFiles(files, {
+                range: getDropMarkdownRange(e),
+                promptCaption: true
+            });
+        } catch (err) {
+            console.error('拖拽导入失败:', err);
+            showToast('拖拽导入失败：' + (err.message || err), 'error', 3000);
         }
     });
 }

@@ -1631,20 +1631,20 @@
             border: 0;
             border-left: 3px solid var(--root-accent, transparent);
             border-bottom: 1px solid var(--color-border-soft);
-            background: transparent !important;
+            background: var(--dir-bg, transparent) !important;
             color: var(--color-text);
             overflow: hidden;
             text-overflow: ellipsis;
         }
 
         .mulu:hover {
-            background: #edf3fa !important;
+            background: var(--dir-hover-bg, #edf3fa) !important;
         }
 
         .mulu.select,
         .select {
-            background: var(--color-primary-soft) !important;
-            border-left-color: var(--color-primary) !important;
+            background: var(--dir-selected-bg, var(--color-primary-soft)) !important;
+            border-left-color: var(--root-accent, var(--color-primary)) !important;
             color: #123c8c;
             font-weight: 700;
         }
@@ -1866,8 +1866,8 @@
         <button class="format-btn format-btn-selection" data-command="task-list" title="任务列表">任务</button>
         <button class="format-btn format-btn-selection" data-command="quote" title="引用">" 引用</button>
     </div>
-    <input type="file" id="imageFileInput" accept="image/*" style="display: none;">
-    <input type="file" id="videoFileInput" accept="video/*" style="display: none;">
+    <input type="file" id="imageFileInput" accept="image/*" multiple style="display: none;">
+    <input type="file" id="videoFileInput" accept="video/*" multiple style="display: none;">
     <input type="file" id="archiveFileInput" accept=".zip,.rar,.7z,.tar,.gz,.tar.gz,.tgz,.bz2,.tar.bz2,.xz,.tar.xz" style="display: none;">
     <div class="rightmousemenu">
         <div class="copyMuluWithChildren">复制目录（含子目录）</div>
@@ -1960,7 +1960,7 @@
     <script>
         (async function() {
             const bootStatus = document.getElementById('bootStatus');
-            const assetVersion = '20260710-sora-video-package';
+            const assetVersion = '20260710-media-folder-import';
             const versionScript = src => src + (src.includes('?') ? '&' : '?') + 'v=' + assetVersion;
             function setBootStatus(message, isError) {
                 if (!bootStatus) return;
