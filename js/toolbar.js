@@ -322,21 +322,47 @@ if (newBtn) {
                 }
             }
             mulufile = [];
-            if (typeof DraftManager !== 'undefined') DraftManager.clear();
+            if (typeof rebuildMulufileIndex === 'function') rebuildMulufileIndex();
+            if (typeof DraftManager !== 'undefined') await DraftManager.clear();
             if (typeof DirectoryHistory !== 'undefined') DirectoryHistory.clear();
             if (typeof loadDirectoryLevelColors === 'function') {
                 loadDirectoryLevelColors(null);
             }
             currentMuluName = null;
+            if (typeof currentFileHandle !== 'undefined') currentFileHandle = null;
+            if (typeof currentFileName !== 'undefined') currentFileName = 'soralist';
             const firststep = document.querySelector(".firststep");
             if (firststep) firststep.innerHTML = "";
             if (jiedianwords) jiedianwords.value = "";
             if (markdownPreview) markdownPreview.innerHTML = "";
             if (fileNameInput) fileNameInput.value = "soralist";
+            if (typeof DirectoryNavigation !== 'undefined') {
+                DirectoryNavigation.refresh();
+            }
+            if (typeof createNewDirectory === 'function') {
+                const defaultDirectory = createNewDirectory('默认目录', false);
+                if (defaultDirectory) {
+                    const defaultDirId = defaultDirectory.getAttribute('data-dir-id');
+                    const defaultRow = typeof getMulufileByDirId === 'function'
+                        ? getMulufileByDirId(defaultDirId)
+                        : null;
+                    if (defaultRow) defaultRow[3] = '';
+                    if (typeof switchToDirectoryElement === 'function') {
+                        await switchToDirectoryElement(defaultDirectory, {
+                            syncCurrent: false,
+                            scrollPreviewTop: true,
+                            forceRender: true
+                        });
+                    } else if (typeof selectNewDirectory === 'function') {
+                        selectNewDirectory(defaultDirectory);
+                    }
+                }
+            }
+            if (typeof DirectoryHistory !== 'undefined') DirectoryHistory.clear();
             if (typeof updateStorageInfo === 'function') {
                 await updateStorageInfo();
             }
-            customAlert("已新建，存储空间已清理");
+            customAlert("已新建默认目录，存储空间已清理");
         }
     });
 }
@@ -468,8 +494,7 @@ function buildHelpNavHtml() {
         { id: 'mulu_help_search', name: '查找与替换' },
         { id: 'mulu_help_advanced', name: '高级操作' },
         { id: 'mulu_help_export', name: '保存、导出与加密' },
-        { id: 'mulu_help_notes', name: '注意事项与常见问题' },
-        { id: 'mulu_help_decrypt', name: '解密游戏模板' }
+        { id: 'mulu_help_notes', name: '注意事项与常见问题' }
     ];
     let out = '<p>';
     for (let i = 0; i < items.length; i++) {
@@ -500,14 +525,18 @@ function buildHelpPageContents() {
         '<li><strong>Ctrl+S</strong>：保存</li>',
         '<li><strong>Ctrl+F</strong>：查找</li>',
         '<li><strong>Ctrl+H</strong>：替换</li>',
+        '<li><strong>Ctrl+Z / Ctrl+Y</strong>：撤销 / 重做目录操作（焦点不在编辑区时）</li>',
         '<li><strong>Ctrl+B / Ctrl+I / Ctrl+U</strong>：粗体 / 斜体 / 下划线</li>',
         '</ul>',
         '<h2 id="你可以做什么">你可以做什么</h2>',
         '<ul>',
         '<li>用左侧目录组织内容，支持多级目录与一整套复制/粘贴/快速复制操作。</li>',
         '<li>在右侧预览区编辑，并用顶部工具栏或悬浮工具栏插入格式。</li>',
+        '<li>批量插入图片和视频，并在媒体库中查看引用、复用资源或清理孤立资源。</li>',
         '<li>创建链接：外链、页内跳转（#锚点）、目录内跳转（dir:/name:）。</li>',
         '<li>保存为普通文件或加密文件；导出网页或加密网页（需要密码才能查看）。</li>',
+        '<li>用面包屑、最近访问和收藏快速定位目录；未保存修改会生成本地自动草稿。</li>',
+        '<li>导出前检查目录结构、链接、锚点和媒体引用。</li>',
         '</ul>',
         '<h2 id="快速入口">快速入口</h2>',
         '<ul>',
@@ -532,11 +561,12 @@ function buildHelpPageContents() {
         nav,
         '<h2 id="从零开始">从零开始（推荐流程）</h2>',
         '<ol>',
-        '<li>点击顶部工具栏 <strong>文件 / 新建</strong>（会清空当前目录与内容，并清理已存储的媒体数据）。</li>',
-        '<li>点击 <strong>目录 / 添加目录</strong> 创建一级目录，再用 <strong>目录 / 添加节点</strong> 创建子目录。</li>',
+        '<li>点击顶部工具栏 <strong>文件 / 新建</strong>；系统会清空当前内容和媒体数据，并创建、选中一个空白的“默认目录”。</li>',
+        '<li>可双击重命名默认目录；点击 <strong>目录 / 添加目录</strong> 创建同级目录，再用 <strong>目录 / 添加节点</strong> 创建子目录。</li>',
         '<li>左键单击目录，右侧开始编辑内容（可直接粘贴图片/文本）。</li>',
         '<li>选择文字后会出现悬浮工具栏，用于快速加粗/链接/列表等；点击任意按钮后会自动收起。</li>',
-        '<li>按 <strong>Ctrl+S</strong> 保存；或用 <strong>另存为</strong> 导出网页/加密网页。</li>',
+        '<li>需要图片或视频时，可使用顶部插入按钮，也可把媒体文件或文件夹拖入编辑区。</li>',
+        '<li>导出前点击 <strong>导出预检</strong>；再按 <strong>Ctrl+S</strong> 保存，或用 <strong>另存为</strong> 导出 <code>.sora</code> 单文件包或网页。</li>',
         '</ol>',
         '<h2 id="如何组织内容">如何组织内容</h2>',
         '<ul>',
@@ -566,17 +596,25 @@ function buildHelpPageContents() {
         '<ul>',
         '<li><strong>复制目录（含子目录）</strong>：把当前目录以及所有子目录复制到剪贴板。</li>',
         '<li><strong>复制目录（不含子目录）</strong>：只复制当前目录本身。</li>',
-        '<li><strong>粘贴目录</strong>：把剪贴板中的目录粘贴到当前目录同级（插入在当前目录之后）。</li>',
+        '<li><strong>粘贴目录</strong>：把剪贴板中的目录粘贴到当前目录下，作为子目录。</li>',
         '<li><strong>快速复制（含子目录 / 不含子目录）</strong>：等价于复制后立刻粘贴。</li>',
         '<li><strong>删除选中目录</strong>：会递归删除子目录与其内容。</li>',
         '<li><strong>展开此目录 / 收起此目录</strong>：递归展开/收起该目录树。</li>',
         '<li><strong>复制目录ID</strong>：复制 data-dir-id，用于写 <strong>dir:目录ID</strong> 类型的目录内跳转链接。</li>',
+        '<li><strong>修改同级目录颜色 / 恢复同级自动颜色</strong>：调整当前目录所在层级的统一背景色。</li>',
         '</ul>',
         '<h2 id="目录工具栏">目录工具栏</h2>',
         '<ul>',
         '<li><strong>添加目录</strong>：创建与当前目录同级的新目录。</li>',
         '<li><strong>添加节点</strong>：创建当前目录的子目录。</li>',
         '<li><strong>展开全部 / 收起全部</strong>：展开或收起所有有子目录的项。</li>',
+        '</ul>',
+        '<h2 id="目录撤销与导航">撤销、重做与快速导航</h2>',
+        '<ul>',
+        '<li><strong>撤销目录 / 重做目录</strong>：可恢复添加、删除、重命名、移动、粘贴和快速复制等目录操作，最多保留 40 步；也可在焦点不处于编辑区时使用 <strong>Ctrl+Z / Ctrl+Y</strong>。</li>',
+        '<li><strong>面包屑</strong>：编辑区上方显示当前目录路径，点击任一级可直接返回。</li>',
+        '<li><strong>最近访问</strong>：保留最近 12 个有效目录，可从下拉列表快速跳转。</li>',
+        '<li><strong>收藏目录</strong>：点击星标收藏当前目录，再从收藏列表进入。</li>',
         '</ul>',
         '<h2 id="目录ID示例">目录ID 示例</h2>',
         '<p>例如你复制到的目录ID可能类似：<code>abc123xyz</code>。写目录内跳转时使用：</p>',
@@ -628,10 +666,13 @@ function buildHelpPageContents() {
         '<li>对同一段文字叠加多个格式是允许的（例如：高亮 + 粗体）。</li>',
         '<li>代码块是不可直接编辑的块，通常通过点击触发编辑对话框来修改。</li>',
         '</ul>',
-        '<h2 id="插入图片">插入图片</h2>',
+        '<h2 id="插入媒体">插入图片与视频</h2>',
         '<ul>',
-        '<li>顶部工具栏的“插入图片”用于选择图片文件插入到当前目录内容中。</li>',
-        '<li>媒体数据会存储在浏览器本地；导出网页时会一并打包（因此文件可能变大）。</li>',
+        '<li>顶部工具栏提供<strong>插入图片</strong>、<strong>插入视频</strong>和<strong>媒体</strong>；“媒体”可一次选择多张图片和多个视频。</li>',
+        '<li>也可把媒体文件拖入编辑区；浏览器支持文件夹拖入时，系统会递归读取文件夹，并忽略非图片、非视频文件。</li>',
+        '<li>单个媒体导入时可填写图注/标题；右键图片或视频可修改图注/注释或删除。</li>',
+        '<li><strong>媒体库</strong>可按资源、目录或 ID 搜索，查看引用次数，定位引用目录，把已有资源插入当前目录，并删除未被引用的孤立资源。</li>',
+        '<li>媒体数据存储在浏览器本地；导出网页或 <code>.sora</code> 时会一并打包，因此文件可能变大。</li>',
         '</ul>'
     ].join('');
 
@@ -697,6 +738,12 @@ function buildHelpPageContents() {
         '<li><strong>区分大小写</strong>：只匹配大小写完全一致的内容。</li>',
         '<li><strong>全词匹配</strong>：只匹配完整单词（适合查找变量名）。</li>',
         '<li><strong>正则表达式</strong>：使用正则进行高级匹配。</li>',
+        '</ul>',
+        '<h2 id="搜索内容">搜索内容</h2>',
+        '<ul>',
+        '<li>可选择搜索<strong>正文</strong>、<strong>目录名称</strong>，或同时搜索两者。</li>',
+        '<li>所有目录的结果会按目录分组显示；点击结果可跳到对应目录和命中位置。</li>',
+        '<li>最近 12 条关键词会保存在本机，可从<strong>搜索历史</strong>重新选择。</li>',
         '</ul>',
         '<h2 id="搜索范围">搜索范围</h2>',
         '<ul>',
@@ -919,15 +966,15 @@ function buildHelpPageContents() {
         '<li><strong>第一次触发</strong>：建立范围标记（用于后续操作），但<strong>不隐藏</strong>内容，让用户能看到。</li>',
         '<li><strong>后续触发</strong>：按照正常的隐藏逻辑执行（如果是隐藏方法）。</li>',
         '</ol>',
-        '<p><strong>应用场景</strong>：适合解密游戏等场景，先让关卡可见，再通过其他触发方式（如点击按钮）来控制隐藏/显示。如果直接用普通的“隐藏”，<code>open</code> 触发时关卡就立刻隐藏了，用户看不到。</p>',
+        '<p><strong>应用场景</strong>：适合先展示内容、再通过点击等触发方式控制隐藏/显示的分步交互。如果直接用普通的“隐藏”，<code>open</code> 触发时内容会立即隐藏。</p>',
         '<h3 id="更换内容的覆盖问题">更换内容的覆盖问题</h3>',
-        '<p>当使用<strong>更换内容</strong>方法从隐藏答案库调取内容到题目目录时：</p>',
+        '<p>当使用<strong>更换内容</strong>方法从来源目录调取内容到目标目录时：</p>',
         '<ul>',
-        '<li><strong>问题</strong>：如果调取的内容被插入到目录内容中，当下一题更新这个目录的内容时，之前调取的答案会被覆盖。</li>',
-        '<li><strong>建议</u89e3决方案</strong>：</li>',
-        '<li>方案A：将每题的答案分别替换到<strong>不同的锚点范围</strong>，而不是同一个范围。</li>',
-        '<li>方案B：将答案调取到<strong>单独的目录</strong>，而不是题目目录内。</li>',
-        '<li>方案C：使用<strong>显示</strong>方法来显示隐藏的答案区域，而不是替换内容。</li>',
+        '<li><strong>问题</strong>：如果调取的内容被插入到某个范围，后续再次更新同一范围时，之前插入的内容会被覆盖。</li>',
+        '<li><strong>建议解决方案</strong>：</li>',
+        '<li>方案A：把不同内容分别替换到<strong>不同的锚点范围</strong>。</li>',
+        '<li>方案B：把调取结果放到<strong>单独的目录</strong>。</li>',
+        '<li>方案C：使用<strong>显示</strong>方法展示预先隐藏的内容，而不是替换内容。</li>',
         '</ul>',
         '<h3 id="多步骤与级联执行">多步骤与级联执行</h3>',
         '<p>一个方法链接可以包含多个方法配置（<code>data-sora-methods</code> 是数组）：</p>',
@@ -942,6 +989,11 @@ function buildHelpPageContents() {
         '<h1>保存、导出与加密</h1>',
         nav,
 
+        '<h2 id="导出预检">导出预检</h2>',
+        '<ul>',
+        '<li>点击顶部<strong>导出预检</strong>可检查：重复目录 ID、父目录缺失、目录断链、锚点缺失/重复、媒体缺失和空目录。</li>',
+        '<li>预检只报告问题，不会自动修改内容；建议修正后再导出。</li>',
+        '</ul>',
         '<h2 id="保存">保存</h2>',
         '<ul>',
         '<li><strong>保存（Ctrl+S）</strong>：保存到当前已加载的文件句柄（如果浏览器支持）。</li>',
@@ -957,11 +1009,12 @@ function buildHelpPageContents() {
         '<h2 id="另存为">另存为</h2>',
         '<p>点击顶部工具栏 <strong>另存为</strong> 后会先选择保存格式：</p>',
         '<ul>',
-        '<li><strong>Sora 单文件包 (.sora)</strong>：导出为可重新导入的单文件包，媒体按二进制保存；可选择整包加密。</li>',
+        '<li><strong>Sora 单文件包 (.sora)</strong>：保存目录、层级颜色和媒体的可重新导入单文件包；可选择整包加密。</li>',
         '<li><strong>网页 (.html)</strong>：导出为独立可浏览的网页。</li>',
         '</ul>',
         '<p>选择格式后会询问导出范围：可导出全部目录、当前目录及其子目录，或手动勾选部分目录。</p>',
-        '<p>网页导出可选择是否加密；.sora 包用于快速导入与分享。</p>',
+        '<p>网页导出可选择是否加密；<code>.sora</code> 包支持替换或合并加载，加密包需要密码。加载较大的包时会显示进度，目录可先打开，媒体继续在后台导入。</p>',
+        '<p>浏览器无法直接写入文件时，生成完成后会提供<strong>保存到设备</strong>；设备与浏览器支持系统分享时还会显示<strong>分享</strong>。</p>',
         '<h2 id="导出网页">导出网页（不加密）</h2>',
         '<ul>',
         '<li>导出网页后可离线打开浏览，目录与内部跳转都可用。</li>',
@@ -990,6 +1043,7 @@ function buildHelpPageContents() {
         '<li><strong>加密增量</strong>：<code>{文件名}_incremental.encrypted.json</code></li>',
         '<li><strong>加密差异补丁</strong>：<code>{文件名}.patch.encrypted.json</code></li>',
         '<li><strong>加密网页</strong>：<code>{文件名}.encrypted.html</code></li>',
+        '<li><strong>Sora 单文件包</strong>：<code>{文件名}.sora</code>；加密包通常为 <code>{文件名}.encrypted.sora</code></li>',
         '</ul>',
         '<h2 id="差异补丁说明">差异补丁说明</h2>',
         '<ul>',
@@ -999,6 +1053,7 @@ function buildHelpPageContents() {
         '</ul>',
         '<h2 id="支持的导入格式">支持的导入格式</h2>',
         '<ul>',
+        '<li><strong>.sora</strong>：包含目录、层级颜色和媒体的单文件包，也支持加密 <code>.sora</code>。</li>',
         '<li><strong>.json</strong>：推荐格式（可读性好）。</li>',
         '<li><strong>.txt</strong>：文本格式。</li>',
         '<li><strong>.xml</strong>：XML 格式。</li>',
@@ -1042,6 +1097,18 @@ function buildHelpPageContents() {
         '<li><strong>切换侧边栏</strong>：隐藏/显示左侧目录树，右侧编辑区会自动铺满。</li>',
         '<li><strong>拖拽调整宽度</strong>：拖动目录与正文之间的分隔条可调整侧边栏宽度（会自动记住）。</li>',
         '<li><strong>全屏</strong>：进入/退出全屏模式，适合专注写作。</li>',
+        '<li><strong>移动端工具栏</strong>：点击“更多”可执行完整功能，并可星标、排序最多 4 个常用快捷按钮。</li>',
+        '</ul>',
+        '<h2 id="自动草稿">自动草稿</h2>',
+        '<ul>',
+        '<li>有未保存修改时，系统会把最新草稿保存在当前浏览器本地，顶部会显示草稿状态。</li>',
+        '<li>再次打开时可选择恢复最近 30 天内的草稿；选择忽略会删除该草稿。</li>',
+        '<li>自动草稿不能替代正式保存或备份，清理浏览器站点数据后可能丢失。</li>',
+        '</ul>',
+        '<h2 id="媒体资源管理">媒体资源管理</h2>',
+        '<ul>',
+        '<li><strong>媒体库</strong>用于查看资源大小、引用次数和引用目录，也可复用资源或定位引用。</li>',
+        '<li>仍被正文引用的资源不能在媒体库直接删除；孤立资源可逐项删除，也可右键顶部存储信息批量清理。</li>',
         '</ul>',
         '<h2 id="存储空间">存储空间</h2>',
         '<ul>',
@@ -1052,8 +1119,8 @@ function buildHelpPageContents() {
         '</ul>',
         '<h2 id="新建会清空什么">新建会清空什么</h2>',
         '<ul>',
-        '<li>“文件 / 新建”会清空当前目录与内容。</li>',
-        '<li>同时会清空已存储的媒体数据（图片/视频/压缩文件等）。如果你还需要这些媒体，请先导出网页或另存为文件备份。</li>',
+        '<li>“文件 / 新建”会清空当前目录与内容，再创建并选中一个空白的“默认目录”。</li>',
+        '<li>同时会清空已存储的媒体数据（图片/视频/压缩文件等），并断开原文件的直接保存关联。如果你还需要这些数据，请先导出网页或另存为文件备份。</li>',
         '</ul>',
         '<h2 id="导出相关">导出相关</h2>',
         '<ul>',
@@ -1076,9 +1143,7 @@ function buildHelpPageContents() {
         mulu_help_search: search,
         mulu_help_advanced: advanced,
         mulu_help_export: exportPage,
-        mulu_help_notes: notes,
-        mulu_help_decrypt: buildDecryptGameTemplateHtml('mulu_help_decrypt'),
-        mulu_help_decrypt_hidden: buildDecryptHiddenAnswersHtml('mulu_help_decrypt_hidden')
+        mulu_help_notes: notes
     };
 }
 
@@ -1093,9 +1158,7 @@ function buildHelpManualMulufile() {
         ['mulu_help_root', '查找与替换', 'mulu_help_search', pages.mulu_help_search],
         ['mulu_help_root', '高级操作', 'mulu_help_advanced', pages.mulu_help_advanced],
         ['mulu_help_root', '保存、导出与加密', 'mulu_help_export', pages.mulu_help_export],
-        ['mulu_help_root', '注意事项与常见问题', 'mulu_help_notes', pages.mulu_help_notes],
-        ['mulu_help_root', '解密游戏模板', 'mulu_help_decrypt', pages.mulu_help_decrypt],
-        ['mulu_help_decrypt', '隐藏答案库', 'mulu_help_decrypt_hidden', pages.mulu_help_decrypt_hidden]
+        ['mulu_help_root', '注意事项与常见问题', 'mulu_help_notes', pages.mulu_help_notes]
     ];
 }
 
@@ -1114,6 +1177,8 @@ async function loadHelpManual(options = {}) {
 
     const helpMulufile = buildHelpManualMulufile();
     const helpDirIds = new Set(helpMulufile.map(row => row[2]));
+    helpDirIds.add('mulu_help_decrypt');
+    helpDirIds.add('mulu_help_decrypt_hidden');
 
     if (!hasExistingData) {
         if (typeof currentFileHandle !== 'undefined') {
@@ -1614,7 +1679,7 @@ async function updateStorageInfo(options = {}) {
 文件缓存: ${cacheStats ? `${cacheStats.valid} 项 / ${cacheStats.totalSizeMB} MB` : '不可用'}
 持久化: ${persisted === null ? '未知' : (persisted ? '已启用' : '未启用')}
 
-说明: SoraDirectory 不设置固定 10GB 上限；实际配额由浏览器和磁盘空间动态决定。
+说明: 实际配额由浏览器和磁盘空间动态决定。
 
 左键刷新 | 右键清理孤立数据`;
             // 根据使用率设置样式
