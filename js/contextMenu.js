@@ -60,22 +60,7 @@ async function copyTextToClipboard(text) {
         console.warn('写入剪贴板失败，将尝试使用降级方案:', err);
     }
 
-    try {
-        const textarea = document.createElement('textarea');
-        textarea.value = val;
-        textarea.setAttribute('readonly', 'readonly');
-        textarea.style.position = 'fixed';
-        textarea.style.left = '-9999px';
-        textarea.style.top = '0';
-        document.body.appendChild(textarea);
-        textarea.select();
-        const ok = document.execCommand('copy');
-        textarea.remove();
-        return !!ok;
-    } catch (err) {
-        console.error('复制失败:', err);
-        return false;
-    }
+    return false;
 }
 
 function markDirectoryStructureChanged() {
@@ -166,7 +151,22 @@ if (typeof copyMuluId !== 'undefined' && copyMuluId) {
     });
 }
 deleteMulu.addEventListener("click", function () {
-    customConfirm("是否删除此目录？").then(result => {
+    const selectedElement = currentMuluName ? document.getElementById(currentMuluName) : null;
+    const selectedDirId = selectedElement ? selectedElement.getAttribute('data-dir-id') : '';
+    let confirmMessage = "是否删除此目录及其子目录？";
+    if (selectedDirId && window.SoraReferenceGraph && typeof window.SoraReferenceGraph.getDeleteImpact === 'function') {
+        const impact = window.SoraReferenceGraph.getDeleteImpact(selectedDirId);
+        if (impact.incoming.length > 0) {
+            const sourceNames = Array.from(new Set(impact.incoming.map(edge => {
+                const row = impact.graph.rowsById.get(edge.sourceDirId);
+                return row ? (row[1] || row[2]) : edge.sourceDirId;
+            }))).slice(0, 5);
+            confirmMessage += `\n\n影响：将删除 ${impact.removedIds.size} 个目录，并使 ${impact.incoming.length} 处外部引用断开。\n引用来源：${sourceNames.join('、')}${sourceNames.length < new Set(impact.incoming.map(edge => edge.sourceDirId)).size ? '等' : ''}`;
+        } else {
+            confirmMessage += `\n\n影响：将删除 ${impact.removedIds.size} 个目录，未发现来自删除范围外的引用。`;
+        }
+    }
+    customConfirm(confirmMessage, '删除', '取消', '删除目录').then(result => {
         if (!result) {
             hideRightMouseMenu();
             return;
@@ -195,6 +195,8 @@ function deleteAllChildren(parentId) {
                 if (childId) {
                     deleteAllChildren(childId);
                 }
+                if (childId && window.DirectoryViewState) window.DirectoryViewState.forget(childId);
+                if (childId && window.DirectoryMetadata) window.DirectoryMetadata.remove(childId, { markUnsaved: false });
                 for (let j = mulufile.length - 1; j >= 0; j--) {
                     let item = mulufile[j];
                     if (item.length === 4 && item[2] === childId) {
@@ -207,6 +209,8 @@ function deleteAllChildren(parentId) {
         }
         if (currentDirId) {
             deleteAllChildren(currentDirId);
+            if (window.DirectoryViewState) window.DirectoryViewState.forget(currentDirId);
+            if (window.DirectoryMetadata) window.DirectoryMetadata.remove(currentDirId, { markUnsaved: false });
         }
         for (let i = mulufile.length - 1; i >= 0; i--) {
             let item = mulufile[i];
@@ -245,6 +249,7 @@ expandThisMulu.addEventListener("click", function () {
 function expandRecursively(mulu) {
         if (mulu.classList.contains("has-children")) {
             mulu.classList.add("expanded");
+            mulu.setAttribute('aria-expanded', 'true');
             let dirId = mulu.getAttribute("data-dir-id");
             if (dirId) {
                 toggleChildDirectories(dirId, true);
@@ -275,6 +280,7 @@ collapseThisMulu.addEventListener("click", function () {
 function collapseRecursively(mulu) {
         if (mulu.classList.contains("has-children")) {
             mulu.classList.remove("expanded");
+            mulu.setAttribute('aria-expanded', 'false');
             let dirId = mulu.getAttribute("data-dir-id");
             if (dirId) {
                 toggleChildDirectories(dirId, false);
@@ -296,6 +302,7 @@ function expandAllDirectories() {
     for (let i = 0; i < allMulus.length; i++) {
         let mulu = allMulus[i];
         mulu.classList.add("expanded");
+        mulu.setAttribute('aria-expanded', 'true');
         let dirId = mulu.getAttribute("data-dir-id");
         if (dirId) {
             toggleChildDirectories(dirId, true);
@@ -310,6 +317,7 @@ function collapseAllDirectories() {
     for (let i = 0; i < allMulus.length; i++) {
         let mulu = allMulus[i];
         mulu.classList.remove("expanded");
+        mulu.setAttribute('aria-expanded', 'false');
         let dirId = mulu.getAttribute("data-dir-id");
         if (dirId) {
             toggleChildDirectories(dirId, false);

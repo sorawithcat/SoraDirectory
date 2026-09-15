@@ -142,6 +142,10 @@ function LoadMulu() {
         newMulu.textContent = dirData.name;
         const level = levelCache.get(dirData.dirId) || 0;
         newMulu.setAttribute("data-level", level);
+        newMulu.setAttribute("role", "treeitem");
+        newMulu.setAttribute("tabindex", "-1");
+        newMulu.setAttribute("aria-level", String(level + 1));
+        newMulu.setAttribute("aria-selected", "false");
         setLevelPadding(newMulu, level);
         newMulu.setAttribute("data-dir-id", dirData.dirId);
         newMulu.setAttribute("data-parent-id", dirData.parentId);
@@ -150,6 +154,7 @@ function LoadMulu() {
         if (hasChildren) {
             newMulu.classList.add("has-children");
             newMulu.classList.add("expanded");
+            newMulu.setAttribute("aria-expanded", "true");
         }
         bindMuluEvents(newMulu, dirData.index);
         fragment.appendChild(newMulu);
@@ -163,7 +168,7 @@ function LoadMulu() {
         DirectoryNavigation.refresh();
     }
     if (error === 0 && warning === 0) {
-        console.log(`加载完成 - 错误: ${error}, 警告: ${warning}`);
+        window.SoraDiagnostics?.info('目录加载完成', { error, warning });
     } else {
         console.warn(`加载完成 - 错误: ${error}, 警告: ${warning}`);
     }

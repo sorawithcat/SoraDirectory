@@ -305,6 +305,7 @@ function expandParentDirectories(targetMulu) {
         parent.style.display = 'block';
         if (parent.classList.contains('has-children')) {
             parent.classList.add('expanded');
+            parent.setAttribute('aria-expanded', 'true');
         }
         if (dirId) {
             toggleChildDirectories(dirId, true);

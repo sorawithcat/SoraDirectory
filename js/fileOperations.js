@@ -434,6 +434,9 @@ async function collectSoraPackageMediaParts(source, preferStreaming = false) {
 }
 
 function createSoraPackageManifest(directories, mediaEntries, exportScope = null) {
+    const directoryIds = new Set(directories
+        .filter(row => Array.isArray(row) && row.length === 4)
+        .map(row => String(row[2])));
     return {
         type: 'SoraDirectoryPackage',
         version: 1,
@@ -443,9 +446,13 @@ function createSoraPackageManifest(directories, mediaEntries, exportScope = null
             count: exportScope.count || directories.length,
             label: exportScope.label || ''
         } : null,
+        documentId: window.SoraDocumentIdentity ? window.SoraDocumentIdentity.get().id : '',
         directories,
         directoryLevelColors: typeof serializeDirectoryLevelColors === 'function'
             ? serializeDirectoryLevelColors()
+            : {},
+        directoryMetadata: window.DirectoryMetadata
+            ? window.DirectoryMetadata.serialize(directoryIds)
             : {},
         media: mediaEntries
     };
@@ -1032,6 +1039,9 @@ async function openSoraPackageFile(file, fileHandle = null) {
         if (typeof loadDirectoryLevelColors === 'function') {
             loadDirectoryLevelColors(manifest.directoryLevelColors, { merge: true });
         }
+        if (window.DirectoryMetadata) {
+            window.DirectoryMetadata.load(manifest.directoryMetadata, { merge: true });
+        }
         rebuildMulufileIndex();
         LoadMulu();
         markUnsavedChanges();
@@ -1054,9 +1064,15 @@ async function openSoraPackageFile(file, fileHandle = null) {
 
     currentFileHandle = fileHandle;
     currentFileName = originalFile.name;
+    if (window.SoraDocumentIdentity) {
+        window.SoraDocumentIdentity.adoptFile(originalFile, manifest.documentId);
+    }
     mulufile = parsedData;
     if (typeof loadDirectoryLevelColors === 'function') {
         loadDirectoryLevelColors(manifest.directoryLevelColors);
+    }
+    if (window.DirectoryMetadata) {
+        window.DirectoryMetadata.load(manifest.directoryMetadata);
     }
     LoadMulu();
     if (typeof scheduleHashBaselineUpdate === 'function') {
@@ -1114,7 +1130,7 @@ async function openFileWithFSAPI() {
             parsedData = await FileCache.get(file);
             if (parsedData) {
                 fromCache = true;
-                console.log('FileCache: 从缓存加载文件', file.name);
+                window.SoraDiagnostics?.debug('从文件缓存加载', file.name);
             }
         }
         // 如果缓存中没有，则解析文件内容
@@ -1133,7 +1149,7 @@ async function openFileWithFSAPI() {
             // 将解析结果保存到缓存（仅对非加密文件）
             if (!isEncrypted && typeof FileCache !== 'undefined' && Array.isArray(parsedData)) {
                 FileCache.set(file, parsedData)
-                    .then(() => console.log('FileCache: 已缓存文件', file.name))
+                    .then(() => window.SoraDiagnostics?.debug('文件已缓存', file.name))
                     .catch(err => console.warn('FileCache: 缓存保存失败', err));
             }
         }
@@ -1213,8 +1229,10 @@ async function openFileWithFSAPI() {
         // 保存文件句柄
         currentFileHandle = fileHandle;
         currentFileName = file.name;
+        if (window.SoraDocumentIdentity) window.SoraDocumentIdentity.adoptFile(file);
         // 更新数据
         mulufile = parsedData;
+        if (window.DirectoryMetadata) window.DirectoryMetadata.reset();
         if (typeof loadDirectoryLevelColors === 'function') {
             loadDirectoryLevelColors(null);
         }
@@ -2515,6 +2533,94 @@ function buildPartialExportData(selectedIds, data = mulufile) {
     return exportRows;
 }
 
+async function writePartsToDirectoryHandle(directoryHandle, fileName, parts) {
+    const fileHandle = await directoryHandle.getFileHandle(fileName, { create: true });
+    await writePartsToFileHandle(fileHandle, parts);
+    return fileHandle;
+}
+
+function isSafeExportUrl(value, attributeName) {
+    const raw = String(value || '').replace(/[\u0000-\u001F\u007F\s]+/g, '').trim();
+    if (!raw) return true;
+    const lower = raw.toLowerCase();
+    if (lower.startsWith('#') || lower.startsWith('dir:') || lower.startsWith('name:') || lower.startsWith('sora-dir:')) {
+        return attributeName === 'href' || attributeName === 'xlink:href';
+    }
+    if (/^(https?:|mailto:|tel:)/i.test(raw)) return true;
+    if (/^(\.\.?\/|\/)/.test(raw) || !/^[a-z][a-z0-9+.-]*:/i.test(raw)) return true;
+    if (/^data:/i.test(raw)) {
+        return attributeName === 'src' && /^data:(image|video|audio)\/[a-z0-9.+-]+(?:;|,)/i.test(raw);
+    }
+    return false;
+}
+
+function collectUnsafeExportContent(root) {
+    if (!root || typeof root.querySelectorAll !== 'function') return [];
+    const findings = [];
+    root.querySelectorAll('script, iframe, object, embed, base, meta, link, style').forEach(element => {
+        findings.push(`包含不允许导出的 <${element.tagName.toLowerCase()}> 元素`);
+    });
+    root.querySelectorAll('*').forEach(element => {
+        Array.from(element.attributes || []).forEach(attribute => {
+            const name = attribute.name.toLowerCase();
+            if (/^on/i.test(name) || name === 'srcdoc' || name === 'formaction' || name === 'action') {
+                findings.push(`包含不允许的 ${attribute.name} 属性`);
+            } else if (['href', 'src', 'xlink:href'].includes(name) && !isSafeExportUrl(attribute.value, name)) {
+                findings.push(`包含不安全的 ${attribute.name} 协议`);
+            } else if (name === 'style' && /(?:expression\s*\(|url\s*\(|@import|behavior\s*:|-moz-binding)/i.test(attribute.value)) {
+                findings.push('包含不安全的内联样式');
+            }
+        });
+        if (element.matches('input[type="password"], input[type="file"]')) {
+            findings.push(`包含不允许的 ${element.getAttribute('type')} 输入框`);
+        }
+    });
+    return Array.from(new Set(findings));
+}
+
+function sanitizeExportContent(root) {
+    if (!root || typeof root.querySelectorAll !== 'function') return 0;
+    let changed = 0;
+    root.querySelectorAll('script, iframe, object, embed, base, meta, link, style').forEach(element => {
+        element.remove();
+        changed++;
+    });
+    root.querySelectorAll('form').forEach(form => {
+        const replacement = document.createElement('div');
+        replacement.className = form.className || '';
+        replacement.setAttribute('data-sora-sanitized-form', 'true');
+        while (form.firstChild) replacement.appendChild(form.firstChild);
+        form.replaceWith(replacement);
+        changed++;
+    });
+    root.querySelectorAll('*').forEach(element => {
+        Array.from(element.attributes || []).forEach(attribute => {
+            const name = attribute.name.toLowerCase();
+            const unsafeAttribute = /^on/i.test(name) || name === 'srcdoc' || name === 'formaction' || name === 'action';
+            const unsafeUrl = ['href', 'src', 'xlink:href'].includes(name) && !isSafeExportUrl(attribute.value, name);
+            const unsafeStyle = name === 'style' && /(?:expression\s*\(|url\s*\(|@import|behavior\s*:|-moz-binding)/i.test(attribute.value);
+            if (unsafeAttribute || unsafeUrl || unsafeStyle) {
+                element.removeAttribute(attribute.name);
+                changed++;
+            }
+        });
+        if (element.matches('input[type="password"], input[type="file"]')) {
+            element.setAttribute('type', 'text');
+            element.setAttribute('disabled', '');
+            element.setAttribute('aria-label', '已禁用的导出输入框');
+            changed++;
+        }
+        if (element.matches('a[href]')) {
+            const href = element.getAttribute('href') || '';
+            if (/^https?:/i.test(href)) {
+                element.setAttribute('rel', 'noopener noreferrer');
+                if (element.getAttribute('target') === '_blank') element.setAttribute('referrerpolicy', 'no-referrer');
+            }
+        }
+    });
+    return changed;
+}
+
 function collectMethodPreflightIssues(rows, parsedById, issues) {
     const picker = window.SoraReferencePicker;
     const registry = window.SoraMethodRegistry;
@@ -2672,6 +2778,7 @@ function collectMethodPreflightIssues(rows, parsedById, issues) {
 
 async function collectExportPreflightIssues(data = mulufile) {
     const rows = Array.isArray(data) ? data.filter(row => row && row.length === 4) : [];
+    const inventory = window.SoraPerformance ? await window.SoraPerformance.analyze(rows) : null;
     const rowById = new Map();
     const rowsByName = new Map();
     const issues = {
@@ -2684,15 +2791,23 @@ async function collectExportPreflightIssues(data = mulufile) {
         missingMethodTargets: [],
         duplicateMethodIds: [],
         missingMedia: [],
-        emptyDirectories: []
+        emptyDirectories: [],
+        unsafeContent: [],
+        headingJumps: [],
+        duplicateHeadings: [],
+        missingAltText: [],
+        longParagraphs: []
     };
     rows.forEach(row => {
-        if (rowById.has(row[2])) issues.duplicateDirectoryIds.push(row[2]);
+        if (!inventory && rowById.has(row[2])) issues.duplicateDirectoryIds.push(row[2]);
         rowById.set(row[2], row);
         if (!rowsByName.has(row[1])) rowsByName.set(row[1], []);
         rowsByName.get(row[1]).push(row);
     });
-    rows.forEach(row => {
+    if (inventory) {
+        issues.duplicateDirectoryIds.push(...inventory.duplicateDirectoryIds);
+        issues.missingParents.push(...inventory.missingParents);
+    } else rows.forEach(row => {
         if (row[0] && row[0] !== 'mulu' && !rowById.has(row[0])) {
             issues.missingParents.push(`${row[1]} → ${row[0]}`);
         }
@@ -2704,6 +2819,33 @@ async function collectExportPreflightIssues(data = mulufile) {
     rows.forEach(row => {
         const template = document.createElement('template');
         template.innerHTML = String(row[3] || '');
+        collectUnsafeExportContent(template.content).forEach(finding => {
+            issues.unsafeContent.push(`${row[1] || row[2]}：${finding}`);
+        });
+        let previousHeadingLevel = 0;
+        const headingCounts = new Map();
+        template.content.querySelectorAll('h1, h2, h3, h4, h5, h6').forEach(heading => {
+            const level = Number(heading.tagName.slice(1)) || 0;
+            const label = String(heading.textContent || '').replace(/\s+/g, ' ').trim() || '未命名标题';
+            if (previousHeadingLevel && level > previousHeadingLevel + 1) {
+                issues.headingJumps.push(`${row[1] || row[2]}：${'H' + previousHeadingLevel} 直接跳到 ${'H' + level}（${label}）`);
+            }
+            previousHeadingLevel = level;
+            const key = label.toLocaleLowerCase();
+            headingCounts.set(key, { label, count: (headingCounts.get(key)?.count || 0) + 1 });
+        });
+        headingCounts.forEach(item => {
+            if (item.count > 1) issues.duplicateHeadings.push(`${row[1] || row[2]}：${item.label}（${item.count} 次）`);
+        });
+        template.content.querySelectorAll('img').forEach((image, imageIndex) => {
+            if (!String(image.getAttribute('alt') || '').trim()) {
+                issues.missingAltText.push(`${row[1] || row[2]}：第 ${imageIndex + 1} 张图片缺少替代文本`);
+            }
+        });
+        template.content.querySelectorAll('p').forEach((paragraph, paragraphIndex) => {
+            const length = String(paragraph.textContent || '').replace(/\s+/g, '').length;
+            if (length > 500) issues.longParagraphs.push(`${row[1] || row[2]}：第 ${paragraphIndex + 1} 段约 ${length} 字`);
+        });
         if (typeof ensureAnchorElements === 'function') ensureAnchorElements(template.content);
         if (typeof assignHeadingAutoIds === 'function') assignHeadingAutoIds(template.content);
         parsedById.set(row[2], template);
@@ -2786,9 +2928,14 @@ function buildExportPreflightHtml(issues) {
             ['重复目录ID', issues.duplicateDirectoryIds], ['父目录缺失', issues.missingParents],
             ['目录链接失效', issues.brokenLinks], ['锚点缺失', issues.missingAnchors],
             ['方法配置无效', issues.invalidMethods], ['方法目标缺失', issues.missingMethodTargets],
-            ['方法ID重复', issues.duplicateMethodIds], ['媒体缺失', issues.missingMedia]
+            ['方法ID重复', issues.duplicateMethodIds], ['媒体缺失', issues.missingMedia],
+            ['不安全的发布内容', issues.unsafeContent]
         ]],
-        ['风险警告', '#b45309', [['重复锚点', issues.duplicateAnchors]]],
+        ['风险警告', '#b45309', [
+            ['重复锚点', issues.duplicateAnchors], ['标题层级跳跃', issues.headingJumps],
+            ['重复标题', issues.duplicateHeadings], ['图片缺少替代文本', issues.missingAltText],
+            ['过长段落', issues.longParagraphs]
+        ]],
         ['信息提示', '#475569', [['空目录', issues.emptyDirectories]]]
     ];
     const counts = groups.map(([, , sections]) => sections.reduce((sum, section) => sum + section[1].length, 0));
@@ -3204,10 +3351,41 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
     // 移除可能的扩展名
     baseName = baseName.replace(/\.(json|txt|xml|csv|html|encrypted)$/i, '');
     const sourceData = Array.isArray(exportData) ? exportData : mulufile;
+    const publicationSettings = window.PublicationSettings && typeof window.PublicationSettings.resolve === 'function'
+        ? window.PublicationSettings.resolve(sourceData, typeof currentMuluName !== 'undefined' ? currentMuluName : '', baseName)
+        : {
+            title: baseName,
+            description: '',
+            icon: '',
+            language: 'zh-CN',
+            theme: 'system',
+            defaultDirId: sourceData.length && sourceData[0].length === 4 ? sourceData[0][2] : '',
+            initialTreeState: 'expanded',
+            navigationMode: 'sidebar',
+            capabilityLevel: 'standard',
+            searchEnabled: true,
+            mediaPolicy: 'balanced',
+            deploymentMode: 'single-html',
+            debugEnabled: false
+        };
+    if (encrypt && publicationSettings.deploymentMode === 'pwa-folder') {
+        publicationSettings.deploymentMode = 'static-folder';
+        showToast('加密网页无法注册 PWA，已改为静态网站目录', 'warning', 3200);
+    }
     const partialSuffix = exportScope && exportScope.mode === 'partial' ? '_partial' : '';
     let filename = encrypt ? `${baseName}${partialSuffix}.encrypted.html` : `${baseName}${partialSuffix}.html`;
     let selectedFileHandle = null;
-    if (isSavePickerSupported()) {
+    let deploymentDirectoryHandle = null;
+    if (publicationSettings.deploymentMode !== 'single-html' && typeof window.showDirectoryPicker === 'function') {
+        try {
+            deploymentDirectoryHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+            filename = 'index.html';
+        } catch (err) {
+            if (err.name === 'AbortError') return false;
+            console.warn('Deployment directory picker failed, using single HTML fallback:', err);
+        }
+    }
+    if (!deploymentDirectoryHandle && isSavePickerSupported()) {
         try {
             selectedFileHandle = await window.showSaveFilePicker({
                 suggestedName: filename,
@@ -3273,13 +3451,18 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             const hasChildren = item.children && item.children.length > 0;
             const indent = 20 + (level * 20);
             // 有子目录时添加可点击的三角形图标，点击三角形才切换折叠/展开
-            const toggleIcon = hasChildren 
-                ? `<span class="toggle-icon"></span>` 
-                : `<span class="bullet-icon"></span>`;
+            const toggleIcon = hasChildren
+                ? `<span class="toggle-icon" aria-hidden="true"></span>`
+                : `<span class="bullet-icon" aria-hidden="true"></span>`;
             const palette = getDirectoryLevelPalette(level);
             html += `<div class="mulu${hasChildren ? ' has-children expanded' : ''}" 
                          data-dir-id="${escapeHtml(item.id)}" 
                          data-level="${level}"
+                         role="treeitem"
+                         tabindex="-1"
+                         aria-level="${level + 1}"
+                         aria-selected="false"
+                         ${hasChildren ? 'aria-expanded="true"' : ''}
                          style="padding-left: ${indent}px; --dir-bg: ${palette.bg}; --dir-hover-bg: ${palette.hover}; --dir-selected-bg: ${palette.selected}; --dir-text: ${palette.text};"
                          >
                         ${toggleIcon}<span class="mulu-text">${escapeHtml(item.name)}</span>
@@ -3307,65 +3490,6 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             const hex = ch.charCodeAt(0).toString(16);
             return backslash + hex + ' ';
         });
-    }
-
-    // 构建目录树结构
-    function buildDirectoryTree(muluData) {
-        const tree = [];
-        const idMap = {};
-        // 创建ID到索引的映射
-        muluData.forEach((item, index) => {
-            if (item.length === 4) {
-                idMap[item[2]] = {
-                    parentId: item[0],
-                    name: item[1],
-                    id: item[2],
-                    content: item[3],
-                    children: []
-                };
-            }
-        });
-        // 构建树形结构
-        Object.values(idMap).forEach(item => {
-            if (item.parentId === 'mulu') {
-                tree.push(item);
-            } else if (idMap[item.parentId]) {
-                idMap[item.parentId].children.push(item);
-            }
-        });
-        return tree;
-    }
-
-    // 递归生成目录HTML，同层级目录共享背景色
-    function generateDirectoryHTML(items, level = 0) {
-        let html = '';
-        items.forEach((item, index) => {
-            const safeDirId = String(item.id)
-                .replace(/\\/g, '\\\\')
-                .replace(/'/g, "\\'")
-                .replace(/\r/g, '\\r')
-                .replace(/\n/g, '\\n')
-                .replace(/\u2028/g, '\\u2028')
-                .replace(/\u2029/g, '\\u2029');
-            const hasChildren = item.children && item.children.length > 0;
-            const indent = 20 + (level * 20);
-            // 有子目录时添加可点击的三角形图标，点击三角形才切换折叠/展开
-            const toggleIcon = hasChildren 
-                ? `<span class="toggle-icon"></span>` 
-                : `<span class="bullet-icon"></span>`;
-            const palette = getDirectoryLevelPalette(level);
-            html += `<div class="mulu${hasChildren ? ' has-children expanded' : ''}" 
-                         data-dir-id="${escapeHtml(item.id)}" 
-                         data-level="${level}"
-                         style="padding-left: ${indent}px; --dir-bg: ${palette.bg}; --dir-hover-bg: ${palette.hover}; --dir-selected-bg: ${palette.selected}; --dir-text: ${palette.text};"
-                         >
-                        ${toggleIcon}<span class="mulu-text">${escapeHtml(item.name)}</span>
-                    </div>`;
-            if (hasChildren) {
-                html += generateDirectoryHTML(item.children, level + 1);
-            }
-        });
-        return html;
     }
 
     async function generateContentScripts(muluData, chunkWriter = null) {
@@ -3491,6 +3615,8 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             try {
                 const temp = document.createElement('div');
                 temp.innerHTML = String(content);
+                if (window.SoraReusableBlocks) window.SoraReusableBlocks.expandTemplate(temp, sourceData);
+                sanitizeExportContent(temp);
 
                 const images = Array.from(temp.querySelectorAll('img'));
                 for (let j = 0; j < images.length; j++) {
@@ -3576,7 +3702,9 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
     const directoryHTML = generateDirectoryHTML(directoryTree);
     let generatedContent;
     try {
-        generatedContent = await generateContentScripts(sourceData, mediaChunkWriter);
+        generatedContent = window.SoraPerformance
+            ? await window.SoraPerformance.measure('exportPrepare', () => generateContentScripts(sourceData, mediaChunkWriter), window.SoraPerformance.BUDGETS.exportPrepareMs)
+            : await generateContentScripts(sourceData, mediaChunkWriter);
         if (mediaChunkTemporary) await mediaChunkTemporary.writable.close();
     } catch (err) {
         if (mediaChunkTemporary && typeof mediaChunkTemporary.writable.abort === 'function') {
@@ -3612,40 +3740,198 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                 '目录右键动作': 'directory_action'
             }
     ).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
-    // 获取第一个目录的ID作为默认选中
-    const firstDirId = sourceData.length > 0 && sourceData[0].length === 4 ? sourceData[0][2] : '';
+    const hasMethodRuntime = sourceData.some(row => Array.isArray(row) && /data-sora-(?:link=["']method|methods=)/i.test(String(row[3] || '')));
+    const methodRuntimeCoreSource = hasMethodRuntime && window.SoraMethodRuntimeCore && typeof window.SoraMethodRuntimeCore.toInlineScript === 'function'
+        ? window.SoraMethodRuntimeCore.toInlineScript('SoraMethodRuntimeCore')
+        : 'const SoraMethodRuntimeCore={redactTimelineEntry:function(value){return value||{}}};';
+    const firstDirId = publicationSettings.defaultDirId || (sourceData.length > 0 && sourceData[0].length === 4 ? sourceData[0][2] : '');
+    const publicationSettingsJson = JSON.stringify(publicationSettings)
+        .replace(/</g, '\\u003c')
+        .replace(/\u2028/g, '\\u2028')
+        .replace(/\u2029/g, '\\u2029');
+    const publicationAttribute = value => escapeHtml(value).replace(/"/g, '&quot;');
     const mediaChunkMarker = '<!--SORA_MEDIA_CHUNKS-->';
     // 生成完整的HTML页面
-    const htmlContent = `<!DOCTYPE html>
-<html lang="zh-CN">
+    let htmlContent = `<!DOCTYPE html>
+<html lang="${publicationAttribute(publicationSettings.language)}" data-theme="${publicationAttribute(publicationSettings.theme)}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>${escapeHtml(baseName)} - SoraList</title>
+    <title>${escapeHtml(publicationSettings.title)} - SoraDirectory</title>
+    ${publicationSettings.description ? `<meta name="description" content="${publicationAttribute(publicationSettings.description)}">` : ''}
+    ${publicationSettings.icon ? `<link rel="icon" href="${publicationAttribute(publicationSettings.icon)}">` : ''}
+    ${publicationSettings.deploymentMode === 'pwa-folder' ? '<link rel="manifest" href="./manifest.webmanifest">' : ''}
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            color-scheme: light;
+            --page-bg: #ffffff;
+            --panel-bg: #f5f5f5;
+            --elevated-bg: #ffffff;
+            --text: #1f2933;
+            --muted: #526170;
+            --border: #d8dee6;
+            --accent: #075bbd;
+            --accent-soft: #e8eef6;
+            --code-bg: #f6f8fa;
+        }
+        html[data-theme="dark"] {
+            color-scheme: dark;
+            --page-bg: #111827;
+            --panel-bg: #172033;
+            --elevated-bg: #1f2937;
+            --text: #e5edf7;
+            --muted: #a9b7c8;
+            --border: #46556a;
+            --accent: #7db7ff;
+            --accent-soft: #243d5c;
+            --code-bg: #182234;
+        }
+        html[data-theme="high-contrast"] {
+            color-scheme: light;
+            --page-bg: #ffffff;
+            --panel-bg: #ffffff;
+            --elevated-bg: #ffffff;
+            --text: #000000;
+            --muted: #202020;
+            --border: #000000;
+            --accent: #003cff;
+            --accent-soft: #fff200;
+            --code-bg: #ffffff;
+        }
+        @media (prefers-color-scheme: dark) {
+            html[data-theme="system"] {
+                color-scheme: dark;
+                --page-bg: #111827;
+                --panel-bg: #172033;
+                --elevated-bg: #1f2937;
+                --text: #e5edf7;
+                --muted: #a9b7c8;
+                --border: #46556a;
+                --accent: #7db7ff;
+                --accent-soft: #243d5c;
+                --code-bg: #182234;
+            }
+        }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
             display: flex;
             height: 100vh;
+            height: 100dvh;
             overflow: hidden;
+            color: var(--text);
+            background: var(--page-bg);
+        }
+        .skip-link {
+            position: fixed;
+            left: 12px;
+            top: 8px;
+            z-index: 10050;
+            padding: 8px 12px;
+            border-radius: 6px;
+            color: #fff;
+            background: #075bbd;
+            transform: translateY(-160%);
+        }
+        .skip-link:focus { transform: translateY(0); }
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+        :focus-visible {
+            outline: 3px solid var(--accent);
+            outline-offset: 2px;
         }
         .sidebar {
             width: 280px;
             min-width: 200px;
             max-width: 400px;
-            background-color: #f5f5f5;
-            border-right: 1px solid #ddd;
+            background-color: var(--panel-bg);
+            border-right: 1px solid var(--border);
             display: flex;
             flex-direction: column;
             overflow: hidden;
         }
         .sidebar-header {
             padding: 15px;
-            background-color: #fff;
-            border-bottom: 1px solid #ddd;
+            background-color: var(--elevated-bg);
+            border-bottom: 1px solid var(--border);
             font-weight: bold;
-            color: #333;
+            color: var(--text);
+            overflow-wrap: anywhere;
+        }
+        .export-search {
+            position: relative;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 6px;
+            padding: 10px;
+            border-bottom: 1px solid var(--border);
+            background: var(--elevated-bg);
+        }
+        .export-search input {
+            width: 100%;
+            min-width: 0;
+            min-height: 38px;
+            padding: 7px 10px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            background: var(--page-bg);
+            font: inherit;
+            font-size: 16px;
+        }
+        .export-search button {
+            min-height: 38px;
+            padding: 6px 9px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            background: var(--page-bg);
+            cursor: pointer;
+        }
+        .export-search-status {
+            grid-column: 1 / -1;
+            min-height: 18px;
+            color: var(--muted);
+            font-size: 12px;
+            line-height: 1.5;
+        }
+        .export-search-results {
+            grid-column: 1 / -1;
+            display: grid;
+            gap: 4px;
+            max-height: min(48vh, 420px);
+            overflow: auto;
+        }
+        .export-search-results[hidden] { display: none; }
+        .export-search-result {
+            display: grid;
+            gap: 2px;
+            width: 100%;
+            padding: 8px 9px;
+            border: 0;
+            border-radius: 5px;
+            text-align: left;
+            color: var(--text);
+            background: var(--panel-bg);
+            cursor: pointer;
+        }
+        .export-search-result:hover { background: var(--accent-soft); }
+        .export-search-result strong { overflow-wrap: anywhere; }
+        .export-search-result small {
+            overflow: hidden;
+            color: var(--muted);
+            font-weight: 400;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
         .sidebar-content {
             flex: 1;
@@ -3670,6 +3956,9 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         }
         .mulu:hover {
             background-color: var(--dir-hover-bg, #eef1f4);
+        }
+        .mulu:focus-visible {
+            z-index: 1;
         }
         .mulu.selected {
             background-color: var(--dir-selected-bg, #dfe8f4);
@@ -3732,19 +4021,61 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         }
         .content-header {
             padding: 15px 20px;
-            background-color: #fff;
-            border-bottom: 1px solid #ddd;
+            background-color: var(--elevated-bg);
+            border-bottom: 1px solid var(--border);
             font-size: 18px;
             font-weight: bold;
-            color: #333;
+            color: var(--text);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-width: 0;
+        }
+        .reading-actions { display:flex; align-items:center; gap:6px; margin-left:auto; }
+        .reading-actions button, .content-outline summary { min-height:36px; padding:6px 10px; border:1px solid var(--border); border-radius:7px; background:var(--elevated-bg); color:var(--text); cursor:pointer; }
+        .content-outline { position:relative; }
+        .content-outline[open] .content-outline-menu { display:grid; }
+        .content-outline-menu { position:absolute; right:0; top:calc(100% + 6px); z-index:20; display:none; width:min(360px,82vw); max-height:55vh; overflow:auto; padding:8px; border:1px solid var(--border); border-radius:9px; background:var(--elevated-bg); box-shadow:0 12px 28px rgba(15,23,42,.18); }
+        .content-outline-menu button { min-height:34px; border:0; background:transparent; text-align:left; }
+        .reading-progress { position:fixed; inset:0 0 auto 0; z-index:10020; height:3px; background:transparent; pointer-events:none; }
+        .reading-progress span { display:block; width:0; height:100%; background:var(--accent); transition:width .1s linear; }
+        body.reading-mode .sidebar { transform:translateX(-105%); }
+        body.reading-mode .content-area { width:100%; }
+        body.reading-mode .content-body { padding-inline:max(20px,calc((100vw - 82ch)/2)); }
+        #contentTitle {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .mobile-nav-toggle {
+            display: none;
+            min-height: 36px;
+            padding: 6px 10px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            background: var(--page-bg);
+            font: inherit;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        .sidebar-backdrop {
+            display: none;
         }
         .content-body {
             flex: 1;
             padding: 20px;
             overflow-y: auto;
-            background-color: #fff;
+            background-color: var(--page-bg);
             line-height: 1.6;
+            overflow-wrap: anywhere;
         }
+        .content-body > * { max-width: 75ch; margin-inline: auto; }
+        .content-body > table,
+        .content-body > pre,
+        .content-body > figure,
+        .content-body > .archive-attachment { max-width: 100%; }
         .content-body h1, .content-body h2, .content-body h3,
         .content-body h4, .content-body h5, .content-body h6 {
             margin-top: 1em;
@@ -3776,19 +4107,19 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         }
         .content-body pre {
             position: relative;
-            background-color: #f6f8fa;
+            background-color: var(--code-bg);
             padding: 1em;
             padding-top: 2.2em;
             border-radius: 8px;
             overflow-x: auto;
             margin: 1em 0;
             min-height: 3em;
-            border: 1px solid #d0d7de;
+            border: 1px solid var(--border);
         }
         .content-body pre code {
             background-color: transparent;
             padding: 0;
-            color: #24292f;
+            color: var(--text);
             font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
             font-size: 14px;
             line-height: 1.6;
@@ -3837,7 +4168,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         .content-body img {
             width: auto;
             height: auto;
-            max-width: none;
+            max-width: 100%;
             max-height: none;
             border-radius: 5px;
             display: block;
@@ -3851,7 +4182,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         .content-body video {
             display: block;
             margin: 1em auto;
-            max-width: 640px;
+            max-width: min(100%, 640px);
             max-height: 360px;
             width: auto;
             height: auto;
@@ -3866,10 +4197,10 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             min-height: 180px;
             margin: 1em auto;
             padding: 20px;
-            color: #57606a;
+            color: var(--muted);
             text-align: center;
-            background: #f6f8fa;
-            border: 1px solid #d0d7de;
+            background: var(--code-bg);
+            border: 1px solid var(--border);
             border-radius: 5px;
         }
         .video-load-shell.is-error {
@@ -3946,6 +4277,11 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             cursor: pointer;
             z-index: 10000;
             line-height: 1;
+            width: 48px;
+            height: 48px;
+            border: 0;
+            border-radius: 6px;
+            background: rgba(0, 0, 0, 0.45);
         }
         .image-viewer-close:hover {
             color: #ccc;
@@ -4027,6 +4363,18 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             user-select: none;
         }
         .content-body spoiler:hover {
+            background-color: #f0f0f0;
+            color: inherit;
+            user-select: text;
+        }
+        .content-body mark.export-search-hit {
+            color: #1f2933;
+            background: #fde047;
+            outline: 2px solid #a16207;
+            outline-offset: 1px;
+        }
+        .content-body spoiler:focus,
+        .content-body spoiler[data-revealed="true"] {
             background-color: #f0f0f0;
             color: inherit;
             user-select: text;
@@ -4129,6 +4477,16 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         .sora-method-dialog-actions button.primary { border-color:#2563eb; background:#2563eb; color:#fff; }
         .sora-component { display:block; margin:10px 0; padding:10px; border:1px solid #dbe3ee; border-radius:8px; }
         .sora-component input[type="text"] { display:block; width:100%; margin-top:6px; padding:8px; border:1px solid #cbd5e1; border-radius:5px; }
+        .sora-component-tabs [role="tablist"] { display:flex; flex-wrap:wrap; gap:5px; border-bottom:1px solid var(--border); }
+        .sora-component-tabs [role="tab"] { min-height:38px; padding:7px 11px; border:1px solid transparent; border-radius:7px 7px 0 0; background:transparent; color:var(--text); cursor:pointer; }
+        .sora-component-tabs [role="tab"][aria-selected="true"] { border-color:var(--border); border-bottom-color:var(--elevated-bg); background:var(--elevated-bg); color:var(--accent); }
+        .sora-component-tabs [role="tabpanel"] { padding:12px 4px 4px; }
+        .sora-component-steps { padding-left:24px; }
+        .sora-component-steps > li { padding:6px 0 12px 8px; }
+        .sora-component-faq { display:grid; gap:8px; }
+        .sora-component-faq details { border:1px solid var(--border); border-radius:7px; padding:9px 11px; }
+        .sora-component-gallery { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(180px,100%),1fr)); gap:10px; }
+        .sora-component-gallery img, .sora-component-gallery figure { width:100%; max-width:100%; margin:0; }
         .sora-style-accent { padding:2px 5px; border-left:4px solid #2563eb; background:#eff6ff; }
         .sora-style-muted { opacity:.58; }
         .sora-style-success { color:#047857; background:#ecfdf5; }
@@ -4150,46 +4508,126 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         @media (prefers-reduced-motion: reduce) {
             .sora-animation-fade, .sora-animation-expand, .sora-animation-slide, .sora-animation-emphasis { animation:none; }
         }
+        body.content-first .sidebar {
+            position: fixed;
+            inset: 0 auto 0 0;
+            z-index: 10010;
+            height: 100vh;
+            height: 100dvh;
+            border-right: none;
+            box-shadow: 12px 0 32px rgba(15, 23, 42, 0.22);
+            transform: translateX(-105%);
+            transition: transform 0.2s ease-out;
+        }
+        body.content-first.sidebar-open .sidebar { transform: translateX(0); }
+        body.content-first .sidebar-backdrop {
+            position: fixed;
+            inset: 0;
+            z-index: 10000;
+            display: none;
+            width: 100%;
+            height: 100%;
+            border: 0;
+            background: rgba(15, 23, 42, 0.42);
+            cursor: pointer;
+        }
+        body.content-first.sidebar-open .sidebar-backdrop { display: block; }
+        body.content-first .mobile-nav-toggle { display: inline-flex; align-items: center; }
         @media (max-width: 768px) {
-            body {
-                flex-direction: column;
-            }
             .sidebar {
-                width: 100%;
+                position: fixed;
+                inset: 0 auto 0 0;
+                z-index: 10010;
+                width: min(86vw, 320px);
+                min-width: 0;
                 max-width: none;
-                height: 40vh;
+                height: 100vh;
+                height: 100dvh;
                 border-right: none;
-                border-bottom: 1px solid #ddd;
+                box-shadow: 12px 0 32px rgba(15, 23, 42, 0.22);
+                transform: translateX(-105%);
+                transition: transform 0.2s ease-out;
             }
+            body.sidebar-open .sidebar { transform: translateX(0); }
+            .sidebar-backdrop {
+                position: fixed;
+                inset: 0;
+                z-index: 10000;
+                width: 100%;
+                height: 100%;
+                border: 0;
+                background: rgba(15, 23, 42, 0.42);
+                cursor: pointer;
+            }
+            body.sidebar-open .sidebar-backdrop { display: block; }
             .content-area {
-                height: 60vh;
+                width: 100%;
+                height: 100vh;
+                height: 100dvh;
             }
+            .content-header { padding: 10px 12px; }
+            .mobile-nav-toggle { display: inline-flex; align-items: center; }
+            .content-body { padding: 18px 16px 32px; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .sidebar { transition: none; }
+            .reading-progress span { transition:none; }
+        }
+        @media print {
+            @page { size:auto; margin:16mm 14mm; }
+            .sidebar, .sidebar-backdrop, .content-header, .reading-progress, .image-viewer-overlay, .sora-method-debug-button, .sora-method-dialog-overlay, #soraExportToast { display:none !important; }
+            html, body, .app-container, .content-area, .content-body { display:block !important; width:auto !important; height:auto !important; min-height:0 !important; overflow:visible !important; background:#fff !important; color:#000 !important; }
+            .content-body { padding:0 !important; }
+            .content-body > * { max-width:none !important; }
+            pre, table, figure, blockquote { break-inside:avoid; }
+            h1, h2, h3, h4, h5, h6 { break-after:avoid; }
+            a { color:#000 !important; text-decoration:underline; }
         }
     </style>
 </head>
-<body>
-    <div class="sidebar">
-        <div class="sidebar-header">${escapeHtml(baseName)}</div>
+<body class="${publicationSettings.navigationMode === 'content-first' ? 'content-first' : ''}">
+    <a class="skip-link" href="#contentBody">跳到正文</a>
+    <div class="reading-progress" aria-hidden="true"><span id="readingProgressBar"></span></div>
+    <nav class="sidebar" id="exportSidebar" aria-label="目录导航">
+        <div class="sidebar-header">${escapeHtml(publicationSettings.title)}</div>
+        ${publicationSettings.searchEnabled ? `<div class="export-search" role="search">
+            <label class="sr-only" for="exportSearchInput">搜索导出内容</label>
+            <input type="search" id="exportSearchInput" placeholder="搜索目录和正文" autocomplete="off" aria-describedby="exportSearchStatus">
+            <button type="button" id="exportSearchClear" hidden>清除</button>
+            <div class="export-search-status" id="exportSearchStatus" role="status" aria-live="polite">正在准备搜索索引…</div>
+            <div class="export-search-results" id="exportSearchResults" role="list" hidden></div>
+        </div>` : ''}
         <div class="sidebar-content">
-            <div class="sidebar-content-inner">
+            <div class="sidebar-content-inner" role="tree" aria-label="文档目录">
                 ${directoryHTML}
             </div>
         </div>
-    </div>
+    </nav>
+    <button type="button" class="sidebar-backdrop" id="sidebarBackdrop" aria-label="关闭目录导航"></button>
     <div class="content-area">
-        <div class="content-header" id="contentTitle">选择一个目录查看内容</div>
-        <div class="content-body" id="contentBody">
+        <header class="content-header">
+            <button type="button" class="mobile-nav-toggle" id="mobileNavToggle" aria-controls="exportSidebar" aria-expanded="false">目录</button>
+            <span id="contentTitle">选择一个目录查看内容</span>
+            <div class="reading-actions">
+                <details class="content-outline" id="contentOutline"><summary>本页大纲</summary><div class="content-outline-menu" id="contentOutlineMenu"></div></details>
+                <button type="button" id="readingModeBtn" aria-pressed="false">阅读模式</button>
+                <button type="button" id="printPageBtn">打印</button>
+            </div>
+        </header>
+        <main class="content-body" id="contentBody" tabindex="-1">
             <div class="empty-state">点击左侧目录查看内容</div>
-        </div>
+        </main>
     </div>
-    <div class="image-viewer-overlay" id="imageViewer">
-        <span class="image-viewer-close" id="imageViewerClose">&times;</span>
+    <div class="image-viewer-overlay" id="imageViewer" role="dialog" aria-modal="true" aria-label="图片查看器">
+        <button type="button" class="image-viewer-close" id="imageViewerClose" aria-label="关闭图片查看器">&times;</button>
         <img id="imageViewerImg" alt="放大查看">
     </div>
     ${contentScripts}
     ${mediaDataScripts}
     ${mediaChunkMarker}
     <script>
+        ${methodRuntimeCoreSource}
+        const SORA_PUBLICATION = ${publicationSettingsJson};
         const contentCache = {};
         let mediaDataMap = {};
         const directoryLevelColors = ${directoryLevelColorsJson};
@@ -4205,12 +4643,13 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         const soraMethodDebounceTimers = new Map();
         const soraPageVariables = {};
         const soraDirectoryHistory = [];
+        const soraDirectoryViewStates = new Map();
         const soraMethodExecutionLog = [];
         const soraMethodHoverCooldownMap = new WeakMap();
         let soraVisibleObserver = null;
         let soraHistoryNavigation = false;
         let soraDirClipboard = null;
-        const SORA_METHOD_DEBUG = false;
+        const SORA_METHOD_DEBUG = SORA_PUBLICATION.debugEnabled === true && SORA_PUBLICATION.capabilityLevel === 'full';
 
         function methodDebugLog() {
             if (!SORA_METHOD_DEBUG) return;
@@ -4261,9 +4700,9 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
 
         function scrollToAnchorInContent(anchorId) {
             const contentBody = document.getElementById('contentBody');
-            if (!contentBody) return;
+            if (!contentBody) return false;
             const id = normalizeAnchorId(anchorId);
-            if (!id) return;
+            if (!id) return false;
             let el = contentBody.querySelector('#' + escapeCssSelectorValue(id));
             if (!el) {
                 el = contentBody.querySelector('.sora-anchor[data-sora-anchor="true"][data-anchor-name="' + escapeCssSelectorValue(id) + '"]');
@@ -4279,11 +4718,68 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             }
             if (el && typeof el.scrollIntoView === 'function') {
                 el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                return true;
+            }
+            return false;
+        }
+
+        function readExportRoute() {
+            const raw = String(location.hash || '').replace(/^#/, '');
+            if (!raw.startsWith('sora-dir=')) return null;
+            try {
+                const params = new URLSearchParams(raw);
+                return {
+                    dirId: params.get('sora-dir') || '',
+                    anchorId: normalizeAnchorId(params.get('sora-anchor') || '')
+                };
+            } catch (_) {
+                return null;
             }
         }
 
-        function selectDirectory(dirId, toggleExpand = false) {
+        function writeExportRoute(dirId, anchorId, mode) {
+            if (!dirId || mode === 'none') return;
+            const params = new URLSearchParams();
+            params.set('sora-dir', dirId);
+            const normalizedAnchor = normalizeAnchorId(anchorId || '');
+            if (normalizedAnchor) params.set('sora-anchor', normalizedAnchor);
+            const nextHash = '#' + params.toString();
+            if (location.hash === nextHash) return;
+            try {
+                const url = location.href.split('#')[0] + nextHash;
+                if (mode === 'replace') history.replaceState({ soraDirId: dirId, soraAnchorId: normalizedAnchor }, '', url);
+                else history.pushState({ soraDirId: dirId, soraAnchorId: normalizedAnchor }, '', url);
+            } catch (_) {
+                location.hash = nextHash;
+            }
+        }
+
+        function captureExportDirectoryView(dirId) {
+            const contentBody = document.getElementById('contentBody');
+            if (!contentBody || !dirId) return;
+            soraDirectoryViewStates.set(dirId, {
+                scrollTop: Math.max(0, contentBody.scrollTop || 0),
+                updatedAt: Date.now()
+            });
+        }
+
+        function restoreExportDirectoryView(dirId, mode) {
+            const contentBody = document.getElementById('contentBody');
+            if (!contentBody || mode === 'preserve') return;
+            if (mode === 'top') {
+                contentBody.scrollTop = 0;
+                return;
+            }
+            const state = soraDirectoryViewStates.get(dirId);
+            contentBody.scrollTop = state ? Math.max(0, Number(state.scrollTop) || 0) : 0;
+        }
+
+        function selectDirectory(dirId, toggleExpand = false, options = {}) {
             methodDebugLog('[Sora方法] selectDirectory被调用, dirId:', dirId);
+            const previousDirId = currentDirId;
+            const viewMode = options.viewMode || (previousDirId === dirId ? 'preserve' : 'restore');
+            const anchorId = normalizeAnchorId(options.anchorId || '');
+            if (previousDirId) captureExportDirectoryView(previousDirId);
             if (currentDirId && currentDirId !== dirId) {
                 handleSoraMethodTriggersCascade('leave_dir');
                 if (!soraHistoryNavigation) {
@@ -4294,15 +4790,20 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             releaseActiveMedia();
             if (currentSelected) {
                 currentSelected.classList.remove('selected');
+                currentSelected.setAttribute('aria-selected', 'false');
+                currentSelected.setAttribute('tabindex', '-1');
             }
             const element = document.querySelector('[data-dir-id="' + escapeCssSelectorValue(dirId) + '"]');
 
             currentDirId = dirId;
             if (element) {
                 element.classList.add('selected');
+                element.setAttribute('aria-selected', 'true');
+                element.setAttribute('tabindex', '0');
                 currentSelected = element;
                 if (toggleExpand && element.classList.contains('has-children')) {
                     element.classList.toggle('expanded');
+                    element.setAttribute('aria-expanded', element.classList.contains('expanded') ? 'true' : 'false');
                     updateChildrenVisibility(dirId, element.classList.contains('expanded'));
                 }
             }
@@ -4312,14 +4813,29 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             const title = nameMap[dirId] || '未命名';
             document.getElementById('contentTitle').textContent = title;
             document.getElementById('contentBody').innerHTML = content || '<div class="empty-state">此目录暂无内容</div>';
+            document.title = title + ' · ' + ${JSON.stringify(baseName)};
             assignHeadingAutoIds(document.getElementById('contentBody'));
+            buildContentOutline();
+            updateReadingProgress();
             initCodeBlocks();
             initImageViewer();
+            initSpoilers();
             initArchiveDownloads();
             setTimeout(() => {
                 loadLazyMedia();
                 initVisibleMethodTriggers();
             }, 100);
+
+            if (anchorId) {
+                document.getElementById('contentBody').scrollTop = 0;
+                requestAnimationFrame(function() { scrollToAnchorInContent(anchorId); });
+            } else {
+                restoreExportDirectoryView(dirId, viewMode);
+            }
+            writeExportRoute(dirId, anchorId, options.historyMode || 'push');
+            if (window.matchMedia && window.matchMedia('(max-width: 768px)').matches) {
+                setExportSidebarOpen(false, false);
+            }
 
             methodDebugLog('[Sora方法] 开始执行enter_dir触发');
             handleSoraMethodTriggersCascade('enter_dir');
@@ -4398,6 +4914,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             }
         }
 
+        /* SORA_OPTIONAL_METHOD_RUNTIME_START */
         function stringToHash(str) {
             let hash = 0;
             const s = String(str || '');
@@ -4587,6 +5104,49 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             showExportToast('方法触发次数过多，已停止继续执行');
         }
 
+        function updateReadingProgress() {
+            const contentBody = document.getElementById('contentBody');
+            const bar = document.getElementById('readingProgressBar');
+            if (!contentBody || !bar) return;
+            const maximum = Math.max(1, contentBody.scrollHeight - contentBody.clientHeight);
+            bar.style.width = Math.max(0, Math.min(100, contentBody.scrollTop / maximum * 100)) + '%';
+        }
+
+        function buildContentOutline() {
+            const contentBody = document.getElementById('contentBody');
+            const menu = document.getElementById('contentOutlineMenu');
+            const details = document.getElementById('contentOutline');
+            if (!contentBody || !menu || !details) return;
+            const headings = Array.from(contentBody.querySelectorAll('h1, h2, h3, h4, h5, h6')).filter(function(heading) { return heading.id; });
+            menu.innerHTML = '';
+            details.hidden = headings.length === 0;
+            headings.forEach(function(heading) {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.textContent = heading.textContent || heading.id;
+                button.style.paddingLeft = (8 + (Number(heading.tagName.slice(1)) - 1) * 10) + 'px';
+                button.addEventListener('click', function() {
+                    heading.scrollIntoView({ block: 'start', behavior: 'smooth' });
+                    details.open = false;
+                    writeExportRoute(currentDirId, heading.id, 'replace');
+                });
+                menu.appendChild(button);
+            });
+        }
+
+        function initReadingTools() {
+            const contentBody = document.getElementById('contentBody');
+            const readingButton = document.getElementById('readingModeBtn');
+            const printButton = document.getElementById('printPageBtn');
+            if (contentBody) contentBody.addEventListener('scroll', updateReadingProgress, { passive: true });
+            if (readingButton) readingButton.addEventListener('click', function() {
+                const active = document.body.classList.toggle('reading-mode');
+                readingButton.setAttribute('aria-pressed', active ? 'true' : 'false');
+                readingButton.textContent = active ? '退出阅读' : '阅读模式';
+            });
+            if (printButton) printButton.addEventListener('click', function() { window.print(); });
+        }
+
         function readVariableStore(scope) {
             if (scope === 'page') return soraPageVariables;
             const storage = scope === 'local' ? localStorage : sessionStorage;
@@ -4621,13 +5181,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         }
 
         function compareMethodValue(actual, operator, expected) {
-            if (operator === 'truthy') return !!actual;
-            if (operator === 'falsy') return !actual;
-            if (operator === 'contains') return String(actual ?? '').includes(String(expected ?? ''));
-            if (operator === 'greater') return Number(actual) > Number(expected);
-            if (operator === 'less') return Number(actual) < Number(expected);
-            if (operator === 'not_equals') return String(actual ?? '') !== String(expected ?? '');
-            return String(actual ?? '') === String(expected ?? '');
+            return SoraMethodRuntimeCore.compareValue(actual, operator, expected);
         }
 
         function evaluateMethodCondition(condition, cfg) {
@@ -4651,22 +5205,35 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         }
 
         function evaluateMethodConditions(cfg) {
-            const conditions = Array.isArray(cfg.conditions) ? cfg.conditions : [];
-            if (!conditions.length) return true;
-            let result = evaluateMethodCondition(conditions[0], cfg);
-            for (let i = 1; i < conditions.length; i++) {
-                const value = evaluateMethodCondition(conditions[i], cfg);
-                result = conditions[i].join === 'OR' ? (result || value) : (result && value);
-            }
-            return result;
+            return SoraMethodRuntimeCore.evaluateConditions(cfg, function(condition) {
+                const type = condition.type || 'variable';
+                let actual = '';
+                if (type === 'variable') actual = getMethodVariable(condition.key, condition.scope || 'session');
+                if (type === 'execution_count') actual = soraMethodExecutionCounts.get(cfg.methodId) || 0;
+                if (type === 'current_dir') actual = currentDirId || '';
+                if (type === 'visible') {
+                    const ref = parseAnchorRef(condition.key);
+                    const dirId = resolveDirIdFromRef(ref);
+                    const element = dirId ? document.querySelector('[data-dir-id="' + escapeCssSelectorValue(dirId) + '"]') : null;
+                    actual = !!(element && element.style.display !== 'none' && element.dataset.soraHidden !== 'true');
+                }
+                if (type === 'checkbox' || type === 'input_value') {
+                    const key = String(condition.key || '').replace(/^#/, '');
+                    const element = document.querySelector('#' + escapeCssSelectorValue(key) + ', [name="' + escapeCssSelectorValue(key) + '"]');
+                    actual = type === 'checkbox' ? !!(element && element.checked) : (element ? element.value : '');
+                }
+                return actual;
+            });
         }
 
-        function recordMethodExecution(cfg, status, detail) {
+        function recordMethodExecution(cfg, status, detail, durationMs) {
             soraMethodExecutionLog.unshift({
                 time: new Date().toLocaleTimeString(),
                 methodId: cfg.methodId || '',
                 type: cfg.methodType || '',
+                trigger: cfg.trigger || 'click',
                 status: status,
+                durationMs: Math.max(0, Number(durationMs) || 0),
                 detail: detail || '',
                 dirId: soraMethodContextDirId || currentDirId || ''
             });
@@ -4702,6 +5269,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                 return false;
             }
             const run = function() {
+                const startedAt = performance.now();
                 soraMethodDebounceTimers.delete(id);
                 soraMethodLastRun.set(id, Date.now());
                 let ok = false;
@@ -4717,9 +5285,9 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                 if (ok) {
                     const nextCount = (soraMethodExecutionCounts.get(id) || 0) + 1;
                     soraMethodExecutionCounts.set(id, nextCount);
-                    recordMethodExecution(cfg, 'success', '第 ' + nextCount + ' 次执行');
+                    recordMethodExecution(cfg, 'success', '第 ' + nextCount + ' 次执行', performance.now() - startedAt);
                 } else {
-                    recordMethodExecution(cfg, 'failed', '动作未完成');
+                    recordMethodExecution(cfg, 'failed', '动作未完成', performance.now() - startedAt);
                     if (cfg.failureMode === 'fallback') executeMethodArray(cfg.elseMethods, cfg.executionMode);
                 }
             };
@@ -4741,57 +5309,49 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         function executeSingleMethod(cfg) {
             if (!cfg || typeof cfg !== 'object') return false;
             const type = cfg.methodType || '';
-            const handler = soraMethodRuntimeHandlers[type] || '';
             methodDebugLog('[Sora方法] 执行单个方法, 类型:', type, '配置:', cfg);
-            if (handler === 'change_content') {
-                if (cfg.renameTo && String(cfg.renameTo).trim()) {
-                    return executeRenameDirectoryMethod(cfg);
+            const result = SoraMethodRuntimeCore.dispatchAction(cfg, soraMethodRuntimeHandlers, function(handler) {
+                if (handler === 'change_content') {
+                    if (cfg.renameTo && String(cfg.renameTo).trim()) {
+                        return executeRenameDirectoryMethod(cfg);
+                    }
+                    return executeChangeContentMethod(cfg);
                 }
-                return executeChangeContentMethod(cfg);
+                if (handler === 'visibility_hide') return executeVisibilityMethod(cfg, 'hide');
+                if (handler === 'visibility_hide_initially_visible') return executeVisibilityMethod(cfg, 'hide_init_visible');
+                if (handler === 'visibility_show') return executeVisibilityMethod(cfg, 'show');
+                if (handler === 'visibility_toggle') return executeVisibilityMethod(cfg, 'toggle');
+                if (handler === 'add_format') return executeAddFormatMethod(cfg);
+                if (handler === 'directory_action') return executeDirActionMethod(cfg);
+                if (handler === 'navigate') return executeNavigateMethod(cfg, false);
+                if (handler === 'navigate_back') return executeNavigateBackMethod();
+                if (handler === 'navigate_sibling') return executeNavigateSiblingMethod(cfg);
+                if (handler === 'expand_navigate') return executeNavigateMethod(cfg, true);
+                if (handler === 'insert_content') return executeInsertContentMethod(cfg);
+                if (handler === 'clear_range') return executeClearRangeMethod(cfg, false);
+                if (handler === 'delete_range') return executeClearRangeMethod(cfg, true);
+                if (handler === 'transfer_range') return executeTransferRangeMethod(cfg);
+                if (handler === 'template_content') return executeTemplateContentMethod(cfg);
+                if (handler === 'variable_set') return executeVariableMethod(cfg, 'set');
+                if (handler === 'variable_adjust') return executeVariableMethod(cfg, 'adjust');
+                if (handler === 'variable_toggle') return executeVariableMethod(cfg, 'toggle');
+                if (handler === 'state_display') return executeStateDisplayMethod(cfg);
+                if (handler === 'toast') {
+                    showExportToast(interpolateMethodTemplate(cfg.message || '', cfg), 2500, cfg.tone || 'info');
+                    return true;
+                }
+                if (handler === 'confirm') return executeConfirmMethod(cfg);
+                if (handler === 'panel') return executePanelMethod(cfg);
+                if (handler === 'component') return executeComponentMethod(cfg);
+                if (handler === 'class_control') return executeClassControlMethod(cfg);
+                if (handler === 'animation') return executeAnimationMethod(cfg);
+                return false;
+            });
+            if (!result.ok && result.reason === 'unsupported') {
+                console.warn('[Sora方法] 未支持的方法类型:', type);
+                showExportToast('未支持的方法类型：' + type);
             }
-            if (handler === 'visibility_hide') {
-                return executeVisibilityMethod(cfg, 'hide');
-            }
-            if (handler === 'visibility_hide_initially_visible') {
-                return executeVisibilityMethod(cfg, 'hide_init_visible');
-            }
-            if (handler === 'visibility_show') {
-                return executeVisibilityMethod(cfg, 'show');
-            }
-            if (handler === 'visibility_toggle') {
-                return executeVisibilityMethod(cfg, 'toggle');
-            }
-            if (handler === 'add_format') {
-                return executeAddFormatMethod(cfg);
-            }
-            if (handler === 'directory_action') {
-                return executeDirActionMethod(cfg);
-            }
-            if (handler === 'navigate') return executeNavigateMethod(cfg, false);
-            if (handler === 'navigate_back') return executeNavigateBackMethod();
-            if (handler === 'navigate_sibling') return executeNavigateSiblingMethod(cfg);
-            if (handler === 'expand_navigate') return executeNavigateMethod(cfg, true);
-            if (handler === 'insert_content') return executeInsertContentMethod(cfg);
-            if (handler === 'clear_range') return executeClearRangeMethod(cfg, false);
-            if (handler === 'delete_range') return executeClearRangeMethod(cfg, true);
-            if (handler === 'transfer_range') return executeTransferRangeMethod(cfg);
-            if (handler === 'template_content') return executeTemplateContentMethod(cfg);
-            if (handler === 'variable_set') return executeVariableMethod(cfg, 'set');
-            if (handler === 'variable_adjust') return executeVariableMethod(cfg, 'adjust');
-            if (handler === 'variable_toggle') return executeVariableMethod(cfg, 'toggle');
-            if (handler === 'state_display') return executeStateDisplayMethod(cfg);
-            if (handler === 'toast') {
-                showExportToast(interpolateMethodTemplate(cfg.message || '', cfg), 2500, cfg.tone || 'info');
-                return true;
-            }
-            if (handler === 'confirm') return executeConfirmMethod(cfg);
-            if (handler === 'panel') return executePanelMethod(cfg);
-            if (handler === 'component') return executeComponentMethod(cfg);
-            if (handler === 'class_control') return executeClassControlMethod(cfg);
-            if (handler === 'animation') return executeAnimationMethod(cfg);
-            console.warn('[Sora方法] 未支持的方法类型:', type);
-            showExportToast('未支持的方法类型：' + type);
-            return false;
+            return result.ok;
         }
 
         function removeDirFromNameIndex(name, dirId) {
@@ -4826,21 +5386,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                 }
             } catch (err) {
             }
-            try {
-                const textarea = document.createElement('textarea');
-                textarea.value = val;
-                textarea.setAttribute('readonly', 'readonly');
-                textarea.style.position = 'fixed';
-                textarea.style.left = '-9999px';
-                textarea.style.top = '0';
-                document.body.appendChild(textarea);
-                textarea.select();
-                const ok = document.execCommand('copy');
-                textarea.remove();
-                return !!ok;
-            } catch (err) {
-                return false;
-            }
+            return false;
         }
 
         function getMuluList() {
@@ -5540,6 +6086,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                 if (node.classList.contains('has-children')) {
                     if (expanded) node.classList.add('expanded');
                     else node.classList.remove('expanded');
+                    node.setAttribute('aria-expanded', expanded ? 'true' : 'false');
                 }
             }
             refreshMuluVisibility();
@@ -5790,10 +6337,10 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                 return false;
             }
             if (expand) expandDirectoryAncestors(target.dirId);
-            selectDirectory(target.dirId, false);
-            if (target.frontId) {
-                requestAnimationFrame(function() { scrollToAnchorInContent(target.frontId); });
-            }
+            selectDirectory(target.dirId, false, {
+                viewMode: target.frontId ? 'top' : 'restore',
+                anchorId: target.frontId || ''
+            });
             return true;
         }
 
@@ -5805,7 +6352,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             }
             soraHistoryNavigation = true;
             try {
-                selectDirectory(previous, false);
+                selectDirectory(previous, false, { viewMode: 'restore' });
             } finally {
                 soraHistoryNavigation = false;
             }
@@ -5827,7 +6374,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                 showExportToast(cfg.siblingDirection === 'previous' ? '已经是第一个同级目录' : '已经是最后一个同级目录');
                 return false;
             }
-            selectDirectory(siblings[nextIndex].dataset.dirId, false);
+            selectDirectory(siblings[nextIndex].dataset.dirId, false, { viewMode: 'restore' });
             return true;
         }
 
@@ -5841,6 +6388,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                 const candidate = all[index];
                 if (getMuluLevel(candidate) === level - 1) {
                     candidate.classList.add('expanded');
+                    candidate.setAttribute('aria-expanded', 'true');
                     level--;
                 }
                 index--;
@@ -5990,10 +6538,53 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             overlay = document.createElement('div');
             overlay.id = 'soraMethodDialog';
             overlay.className = 'sora-method-dialog-overlay';
-            overlay.innerHTML = '<section class="sora-method-dialog" role="dialog" aria-modal="true"><button type="button" class="sora-method-dialog-close" aria-label="关闭">×</button><div class="sora-method-dialog-content"></div><div class="sora-method-dialog-actions"></div></section>';
+            overlay.setAttribute('aria-hidden', 'true');
+            overlay.innerHTML = '<section class="sora-method-dialog" role="dialog" aria-modal="true" aria-labelledby="soraMethodDialogTitle"><h2 class="sr-only" id="soraMethodDialogTitle">交互提示</h2><button type="button" class="sora-method-dialog-close" aria-label="关闭">×</button><div class="sora-method-dialog-content"></div><div class="sora-method-dialog-actions"></div></section>';
             document.body.appendChild(overlay);
-            overlay.querySelector('.sora-method-dialog-close').addEventListener('click', function() { overlay.classList.remove('active'); });
-            overlay.addEventListener('click', function(event) { if (event.target === overlay) overlay.classList.remove('active'); });
+            overlay._soraClose = function(runDismiss) {
+                if (!overlay.classList.contains('active')) return;
+                overlay.classList.remove('active');
+                overlay.setAttribute('aria-hidden', 'true');
+                if (runDismiss && typeof overlay._soraOnDismiss === 'function') overlay._soraOnDismiss();
+                overlay._soraOnDismiss = null;
+                const target = overlay._soraReturnFocus;
+                overlay._soraReturnFocus = null;
+                if (target && target.isConnected && typeof target.focus === 'function') target.focus();
+            };
+            overlay._soraOpen = function(title, onDismiss) {
+                overlay._soraReturnFocus = document.activeElement;
+                overlay._soraOnDismiss = onDismiss || null;
+                overlay.querySelector('#soraMethodDialogTitle').textContent = title || '交互提示';
+                overlay.setAttribute('aria-hidden', 'false');
+                overlay.classList.add('active');
+                requestAnimationFrame(function() {
+                    const focusTarget = overlay.querySelector('.primary, .sora-method-dialog-actions button, .sora-method-dialog-close');
+                    if (focusTarget) focusTarget.focus();
+                });
+            };
+            overlay.querySelector('.sora-method-dialog-close').addEventListener('click', function() { overlay._soraClose(true); });
+            overlay.addEventListener('click', function(event) { if (event.target === overlay) overlay._soraClose(true); });
+            overlay.addEventListener('keydown', function(event) {
+                if (event.key === 'Escape') {
+                    event.preventDefault();
+                    overlay._soraClose(true);
+                    return;
+                }
+                if (event.key !== 'Tab') return;
+                const focusable = Array.from(overlay.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')).filter(function(item) {
+                    return !item.disabled && item.offsetParent !== null;
+                });
+                if (!focusable.length) return;
+                const first = focusable[0];
+                const last = focusable[focusable.length - 1];
+                if (event.shiftKey && document.activeElement === first) {
+                    event.preventDefault();
+                    last.focus();
+                } else if (!event.shiftKey && document.activeElement === last) {
+                    event.preventDefault();
+                    first.focus();
+                }
+            });
             return overlay;
         }
 
@@ -6006,12 +6597,12 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             actions.onclick = function(event) {
                 const button = event.target.closest('[data-choice]');
                 if (!button) return;
-                overlay.classList.remove('active');
+                overlay._soraClose(false);
                 if (button.dataset.choice === 'confirm') {
                     if (onConfirm) onConfirm();
                 } else if (onCancel) onCancel();
             };
-            overlay.classList.add('active');
+            overlay._soraOpen('请确认', onCancel);
         }
 
         function executeConfirmMethod(cfg) {
@@ -6025,7 +6616,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             if (timeout > 0) {
                 setTimeout(function() {
                     if (!overlay.classList.contains('active')) return;
-                    overlay.classList.remove('active');
+                    overlay._soraClose(false);
                     executeMethodArray(cfg.confirmDefault === 'confirm' ? cfg.confirmMethods : cfg.cancelMethods, cfg.executionMode);
                 }, timeout);
             }
@@ -6037,8 +6628,8 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             overlay.querySelector('.sora-method-dialog').className = 'sora-method-dialog mode-' + (cfg.panelMode || 'modal');
             overlay.querySelector('.sora-method-dialog-content').textContent = interpolateMethodTemplate(cfg.message || '', cfg);
             overlay.querySelector('.sora-method-dialog-actions').innerHTML = '<button type="button" data-close-panel>关闭</button>';
-            overlay.querySelector('[data-close-panel]').onclick = function() { overlay.classList.remove('active'); };
-            overlay.classList.add('active');
+            overlay.querySelector('[data-close-panel]').onclick = function() { overlay._soraClose(false); };
+            overlay._soraOpen('内容面板');
             return true;
         }
 
@@ -6053,8 +6644,90 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                 else if (cfg.componentType === 'input') html = '<label class="sora-component">' + label + '<input type="text"></label>';
                 else if (cfg.componentType === 'radio') html = '<label class="sora-component"><input type="radio" name="sora-' + stringToHash(label) + '"> ' + label + '</label>';
                 else if (cfg.componentType === 'checkbox') html = '<label class="sora-component"><input type="checkbox"> ' + label + '</label>';
-                else html = '<section class="sora-component sora-component-' + escapeHtmlAttr(cfg.componentType || 'steps') + '"><h3>' + label + '</h3>' + content + '</section>';
+                else if (cfg.componentType === 'tabs') html = buildTabsComponent(label, content);
+                else if (cfg.componentType === 'faq') html = buildFaqComponent(label, content);
+                else if (cfg.componentType === 'gallery') html = buildGalleryComponent(label, content);
+                else html = buildStepsComponent(label, content);
                 return replaceHtmlBetweenAnchors(root, target.frontId, target.backId, html);
+            });
+        }
+
+        function componentSegments(content) {
+            const holder = document.createElement('div');
+            holder.innerHTML = content;
+            const segments = [];
+            let current = null;
+            Array.from(holder.childNodes).forEach(function(node) {
+                if (node.nodeType === Node.ELEMENT_NODE && /^H[1-6]$/.test(node.tagName)) {
+                    current = { title: node.textContent || '内容', html: '' };
+                    segments.push(current);
+                    return;
+                }
+                if (!current) {
+                    current = { title: '内容', html: '' };
+                    segments.push(current);
+                }
+                const box = document.createElement('div');
+                box.appendChild(node.cloneNode(true));
+                current.html += box.innerHTML;
+            });
+            return segments.length ? segments : [{ title: '内容', html: content }];
+        }
+
+        function buildTabsComponent(label, content) {
+            const segments = componentSegments(content);
+            const base = 'sora-tabs-' + stringToHash(label + content.length + Date.now());
+            const tabs = segments.map(function(segment, index) {
+                return '<button type="button" role="tab" aria-selected="' + (index === 0 ? 'true' : 'false') + '" aria-controls="' + base + '-panel-' + index + '" id="' + base + '-tab-' + index + '" tabindex="' + (index === 0 ? '0' : '-1') + '">' + escapeHtml(segment.title) + '</button>';
+            }).join('');
+            const panels = segments.map(function(segment, index) {
+                return '<section role="tabpanel" id="' + base + '-panel-' + index + '" aria-labelledby="' + base + '-tab-' + index + '"' + (index === 0 ? '' : ' hidden') + '>' + segment.html + '</section>';
+            }).join('');
+            return '<section class="sora-component sora-component-tabs" aria-label="' + escapeHtmlAttr(label) + '"><div role="tablist">' + tabs + '</div>' + panels + '</section>';
+        }
+
+        function buildStepsComponent(label, content) {
+            const segments = componentSegments(content);
+            return '<section class="sora-component"><h3>' + label + '</h3><ol class="sora-component-steps">' + segments.map(function(segment) { return '<li><strong>' + escapeHtml(segment.title) + '</strong><div>' + segment.html + '</div></li>'; }).join('') + '</ol></section>';
+        }
+
+        function buildFaqComponent(label, content) {
+            const segments = componentSegments(content);
+            return '<section class="sora-component"><h3>' + label + '</h3><div class="sora-component-faq">' + segments.map(function(segment) { return '<details><summary>' + escapeHtml(segment.title) + '</summary><div>' + segment.html + '</div></details>'; }).join('') + '</div></section>';
+        }
+
+        function buildGalleryComponent(label, content) {
+            const holder = document.createElement('div');
+            holder.innerHTML = content;
+            const items = Array.from(holder.querySelectorAll('figure, img')).filter(function(item) { return !item.closest('figure') || item.matches('figure'); });
+            return '<section class="sora-component"><h3>' + label + '</h3><div class="sora-component-gallery">' + items.map(function(item) { return item.outerHTML; }).join('') + '</div></section>';
+        }
+
+        function initComponentInteractions() {
+            document.addEventListener('click', function(event) {
+                const tab = event.target.closest('.sora-component-tabs [role="tab"]');
+                if (!tab) return;
+                const tablist = tab.closest('[role="tablist"]');
+                const component = tab.closest('.sora-component-tabs');
+                tablist.querySelectorAll('[role="tab"]').forEach(function(item) {
+                    const active = item === tab;
+                    item.setAttribute('aria-selected', active ? 'true' : 'false');
+                    item.setAttribute('tabindex', active ? '0' : '-1');
+                    const panel = component.querySelector('#' + escapeCssSelectorValue(item.getAttribute('aria-controls')));
+                    if (panel) panel.hidden = !active;
+                });
+            });
+            document.addEventListener('keydown', function(event) {
+                const tab = event.target.closest && event.target.closest('.sora-component-tabs [role="tab"]');
+                if (!tab || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+                const tabs = Array.from(tab.closest('[role="tablist"]').querySelectorAll('[role="tab"]'));
+                let index = tabs.indexOf(tab);
+                if (event.key === 'Home') index = 0;
+                else if (event.key === 'End') index = tabs.length - 1;
+                else index = (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+                event.preventDefault();
+                tabs[index].focus();
+                tabs[index].click();
             });
         }
 
@@ -6154,6 +6827,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                     assignHeadingAutoIds(contentBody);
                     initCodeBlocks();
                     initImageViewer();
+                    initSpoilers();
                     initArchiveDownloads();
                     setTimeout(() => {
                         loadLazyMedia();
@@ -6237,19 +6911,37 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                 '<details><summary>页面变量</summary><pre>' + escapeHtml(pageVars) + '</pre></details>' +
                 '<details><summary>会话变量</summary><pre>' + escapeHtml(sessionVars) + '</pre></details>' +
                 '<ul class="sora-method-debug-list">' + soraMethodExecutionLog.map(function(item) {
-                    return '<li><strong>' + escapeHtml(item.status) + '</strong> · ' + escapeHtml(item.time + ' ' + item.type) + '<br><small>' + escapeHtml(item.detail + ' · ' + item.methodId) + '</small></li>';
+                    return '<li><strong>' + escapeHtml(item.status) + '</strong> · ' + escapeHtml(item.time + ' ' + item.type) + '<br><small>' + escapeHtml(item.detail + ' · ' + item.methodId + ' · ' + Math.round(item.durationMs || 0) + 'ms') + '</small></li>';
                 }).join('') + '</ul>';
-            overlay.querySelector('.sora-method-dialog-actions').innerHTML = '<button type="button" data-debug-reset>重置执行状态</button><button type="button" data-debug-close>关闭</button>';
+            overlay.querySelector('.sora-method-dialog-actions').innerHTML = '<button type="button" data-debug-copy>复制脱敏诊断摘要</button><button type="button" data-debug-reset>重置执行状态</button><button type="button" data-debug-close>关闭</button>';
+            overlay.querySelector('[data-debug-copy]').onclick = async function() {
+                const summary = {
+                    app: 'SoraDirectory export',
+                    time: new Date().toISOString(),
+                    publication: { capabilityLevel: SORA_PUBLICATION.capabilityLevel, theme: SORA_PUBLICATION.theme, mediaPolicy: SORA_PUBLICATION.mediaPolicy },
+                    environment: { protocol: location.protocol, online: navigator.onLine, language: navigator.language },
+                    currentDirId: currentDirId || '',
+                    executionLog: soraMethodExecutionLog.slice(0, 100).map(function(item) {
+                        return SoraMethodRuntimeCore.redactTimelineEntry(item);
+                    })
+                };
+                try {
+                    await navigator.clipboard.writeText(JSON.stringify(summary, null, 2));
+                    showExportToast('已复制脱敏诊断摘要', 1800, 'success');
+                } catch (_) {
+                    showExportToast('当前环境不能写入剪贴板', 2200, 'error');
+                }
+            };
             overlay.querySelector('[data-debug-reset]').onclick = function() {
                 soraExecutedMethodIds.clear();
                 soraMethodExecutionCounts.clear();
                 soraMethodExecutionLog.length = 0;
                 Object.keys(soraPageVariables).forEach(function(key) { delete soraPageVariables[key]; });
                 showExportToast('方法执行状态已重置');
-                overlay.classList.remove('active');
+                overlay._soraClose(false);
             };
-            overlay.querySelector('[data-debug-close]').onclick = function() { overlay.classList.remove('active'); };
-            overlay.classList.add('active');
+            overlay.querySelector('[data-debug-close]').onclick = function() { overlay._soraClose(false); };
+            overlay._soraOpen('方法调试');
         }
 
         function initMethodDebugButton() {
@@ -6260,6 +6952,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             button.addEventListener('click', showMethodDebugPanel);
             document.body.appendChild(button);
         }
+        /* SORA_OPTIONAL_METHOD_RUNTIME_END */
 
         function findAnchorElementInRoot(root, anchorId) {
             if (!root || !anchorId) return null;
@@ -6357,7 +7050,11 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             if (href.startsWith('#') || soraType === 'anchor') {
                 e.preventDefault();
                 e.stopPropagation();
-                scrollToAnchorInContent(href);
+                const anchorId = normalizeAnchorId(href);
+                if (scrollToAnchorInContent(anchorId)) {
+                    writeExportRoute(currentDirId, anchorId, 'push');
+                }
+                return;
             }
 
             if (href.toLowerCase().startsWith('sora-dir:') || soraType === 'dir') {
@@ -6393,12 +7090,10 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                 }
                 if (!dirId) return;
 
-                selectDirectory(dirId, false);
-                if (anchorId) {
-                    requestAnimationFrame(() => {
-                        scrollToAnchorInContent(anchorId);
-                    });
-                }
+                selectDirectory(dirId, false, {
+                    viewMode: anchorId ? 'top' : 'restore',
+                    anchorId: anchorId || ''
+                });
                 return;
             }
         }
@@ -6410,6 +7105,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             const element = document.querySelector('[data-dir-id="' + escapeCssSelectorValue(dirId) + '"]');
             if (element && element.classList.contains('has-children')) {
                 element.classList.toggle('expanded');
+                element.setAttribute('aria-expanded', element.classList.contains('expanded') ? 'true' : 'false');
                 updateChildrenVisibility(dirId, element.classList.contains('expanded'));
             }
         }
@@ -6486,11 +7182,188 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             return '';
         }
 
+        const exportSearchIndex = [];
+        let exportSearchIndexedCount = 0;
+        let exportSearchTotalCount = 0;
+        let exportSearchReady = false;
+        let exportSearchTimer = null;
+
+        function normalizeExportSearchText(value) {
+            return String(value || '').replace(/\s+/g, ' ').trim().toLocaleLowerCase();
+        }
+
+        function buildExportSearchEntry(element) {
+            const dirId = element.dataset.dirId || '';
+            const title = nameMap[dirId] || '未命名';
+            const temp = document.createElement('div');
+            temp.innerHTML = getContent(dirId) || '';
+            temp.querySelectorAll('script, style, template').forEach(function(item) { item.remove(); });
+            const text = String(temp.textContent || '').replace(/\s+/g, ' ').trim();
+            return {
+                dirId: dirId,
+                title: title,
+                text: text,
+                normalizedTitle: normalizeExportSearchText(title),
+                normalizedText: normalizeExportSearchText(text)
+            };
+        }
+
+        function updateExportSearchStatus(message) {
+            const status = document.getElementById('exportSearchStatus');
+            if (status) status.textContent = message;
+        }
+
+        function scheduleExportSearchIndexBuild() {
+            const elements = Array.from(document.querySelectorAll('.mulu'));
+            exportSearchIndex.length = 0;
+            exportSearchIndexedCount = 0;
+            exportSearchTotalCount = elements.length;
+            exportSearchReady = elements.length === 0;
+            updateExportSearchStatus(exportSearchReady ? '没有可搜索的目录' : '正在准备搜索索引…');
+
+            const schedule = function(callback) {
+                if (typeof requestIdleCallback === 'function') requestIdleCallback(callback, { timeout: 180 });
+                else setTimeout(function() { callback({ timeRemaining: function() { return 0; } }); }, 0);
+            };
+            const work = function(deadline) {
+                let processed = 0;
+                while (exportSearchIndexedCount < elements.length &&
+                    (processed < 12 || (deadline.timeRemaining && deadline.timeRemaining() > 4))) {
+                    exportSearchIndex.push(buildExportSearchEntry(elements[exportSearchIndexedCount]));
+                    exportSearchIndexedCount++;
+                    processed++;
+                }
+                const input = document.getElementById('exportSearchInput');
+                const query = input ? input.value.trim() : '';
+                if (exportSearchIndexedCount < elements.length) {
+                    updateExportSearchStatus('正在准备搜索索引：' + exportSearchIndexedCount + ' / ' + elements.length);
+                    if (query) renderExportSearchResults(query);
+                    schedule(work);
+                    return;
+                }
+                exportSearchReady = true;
+                updateExportSearchStatus(query ? '' : '可搜索 ' + elements.length + ' 个目录');
+                if (query) renderExportSearchResults(query);
+            };
+            if (!exportSearchReady) schedule(work);
+        }
+
+        function getExportSearchSnippet(text, normalizedText, query) {
+            const index = normalizedText.indexOf(query);
+            if (index < 0) return text.slice(0, 90);
+            const start = Math.max(0, index - 32);
+            const end = Math.min(text.length, index + query.length + 58);
+            return (start > 0 ? '…' : '') + text.slice(start, end) + (end < text.length ? '…' : '');
+        }
+
+        function highlightExportSearchTerm(query) {
+            const contentBody = document.getElementById('contentBody');
+            const normalizedQuery = normalizeExportSearchText(query);
+            if (!contentBody || !normalizedQuery) return false;
+            const walker = document.createTreeWalker(contentBody, NodeFilter.SHOW_TEXT, {
+                acceptNode: function(node) {
+                    const parent = node.parentElement;
+                    if (!parent || parent.closest('script, style, .code-lang-label')) return NodeFilter.FILTER_REJECT;
+                    return normalizeExportSearchText(node.textContent).includes(normalizedQuery)
+                        ? NodeFilter.FILTER_ACCEPT
+                        : NodeFilter.FILTER_SKIP;
+                }
+            });
+            const node = walker.nextNode();
+            if (!node) return false;
+            const source = node.textContent || '';
+            const index = source.toLocaleLowerCase().indexOf(normalizedQuery);
+            if (index < 0) return false;
+            const mark = document.createElement('mark');
+            mark.className = 'export-search-hit';
+            mark.textContent = source.slice(index, index + query.length);
+            const after = node.splitText(index);
+            after.deleteData(0, query.length);
+            after.parentNode.insertBefore(mark, after);
+            mark.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            return true;
+        }
+
+        function renderExportSearchResults(rawQuery) {
+            const resultsContainer = document.getElementById('exportSearchResults');
+            const clearButton = document.getElementById('exportSearchClear');
+            if (!resultsContainer) return;
+            const query = normalizeExportSearchText(rawQuery);
+            if (clearButton) clearButton.hidden = !query;
+            resultsContainer.innerHTML = '';
+            resultsContainer.hidden = !query;
+            if (!query) {
+                updateExportSearchStatus(exportSearchReady
+                    ? '可搜索 ' + exportSearchTotalCount + ' 个目录'
+                    : '正在准备搜索索引：' + exportSearchIndexedCount + ' / ' + exportSearchTotalCount);
+                return;
+            }
+            const matches = exportSearchIndex.map(function(item) {
+                const titleIndex = item.normalizedTitle.indexOf(query);
+                const textIndex = item.normalizedText.indexOf(query);
+                if (titleIndex < 0 && textIndex < 0) return null;
+                return {
+                    item: item,
+                    score: titleIndex === 0 ? 300 : (titleIndex > 0 ? 220 : 100),
+                    snippet: getExportSearchSnippet(item.text, item.normalizedText, query)
+                };
+            }).filter(Boolean).sort(function(a, b) {
+                return b.score - a.score || a.item.title.localeCompare(b.item.title);
+            }).slice(0, 50);
+            matches.forEach(function(match) {
+                const item = document.createElement('div');
+                item.setAttribute('role', 'listitem');
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'export-search-result';
+                button.dataset.exportSearchDir = match.item.dirId;
+                const title = document.createElement('strong');
+                title.textContent = match.item.title;
+                const snippet = document.createElement('small');
+                snippet.textContent = match.snippet || '目录名匹配';
+                button.appendChild(title);
+                button.appendChild(snippet);
+                item.appendChild(button);
+                resultsContainer.appendChild(item);
+            });
+            const suffix = exportSearchReady ? '' : '（索引仍在构建）';
+            updateExportSearchStatus(matches.length ? '找到 ' + matches.length + ' 项' + suffix : '未找到匹配项' + suffix);
+        }
+
+        function initExportSearch() {
+            const input = document.getElementById('exportSearchInput');
+            const clearButton = document.getElementById('exportSearchClear');
+            const results = document.getElementById('exportSearchResults');
+            if (!input || !results) return;
+            input.addEventListener('input', function() {
+                clearTimeout(exportSearchTimer);
+                exportSearchTimer = setTimeout(function() { renderExportSearchResults(input.value); }, 160);
+            });
+            input.addEventListener('keydown', function(event) {
+                if (event.key !== 'Escape') return;
+                input.value = '';
+                renderExportSearchResults('');
+                input.blur();
+            });
+            if (clearButton) clearButton.addEventListener('click', function() {
+                input.value = '';
+                renderExportSearchResults('');
+                input.focus();
+            });
+            results.addEventListener('click', function(event) {
+                const button = event.target.closest('[data-export-search-dir]');
+                if (!button) return;
+                const query = input.value.trim();
+                selectDirectory(button.dataset.exportSearchDir, false, { viewMode: 'top' });
+                requestAnimationFrame(function() { highlightExportSearchTerm(query); });
+            });
+        }
+
         let mediaObserver = null;
         let mediaLoadEpoch = 0;
         let videoLoadQueue = Promise.resolve();
         const activeMediaUrls = new Set();
-        const MANUAL_VIDEO_LOAD_SIZE = 64 * 1024 * 1024;
+        const MANUAL_VIDEO_LOAD_SIZE = SORA_PUBLICATION.mediaPolicy === 'manual' ? 0 : 64 * 1024 * 1024;
 
         function createVideoPlaceholder(placeholderId, message = '准备视频', isError = false) {
             const placeholder = document.createElement('div');
@@ -6679,6 +7552,10 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             contentBody.querySelectorAll('.lazy-media[data-loading="true"]').forEach(media => {
                 const placeholderId = media.getAttribute('data-placeholder-id');
                 const mediaInfo = placeholderId ? mediaDataMap[placeholderId] : null;
+                if (mediaInfo && mediaInfo.type === 'video' && SORA_PUBLICATION.mediaPolicy === 'blocked') {
+                    showMediaError(media, placeholderId, '发布设置已禁止加载视频');
+                    return;
+                }
                 if (mediaInfo && mediaInfo.type === 'video' && Number(mediaInfo.size) >= MANUAL_VIDEO_LOAD_SIZE) {
                     initManualVideoLoad(media, mediaInfo);
                     return;
@@ -6733,6 +7610,10 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             const automaticMedia = Array.from(lazyMedias).filter(media => {
                 const placeholderId = media.getAttribute('data-placeholder-id');
                 const mediaInfo = placeholderId ? mediaDataMap[placeholderId] : null;
+                if (mediaInfo && mediaInfo.type === 'video' && SORA_PUBLICATION.mediaPolicy === 'blocked') {
+                    showMediaError(media, placeholderId, '发布设置已禁止加载视频');
+                    return false;
+                }
                 if (mediaInfo && mediaInfo.type === 'video' && Number(mediaInfo.size) >= MANUAL_VIDEO_LOAD_SIZE) {
                     initManualVideoLoad(media, mediaInfo);
                     return false;
@@ -6859,6 +7740,27 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             nameIndex[name].push(dirId);
         });
 
+        const mobileNavToggle = document.getElementById('mobileNavToggle');
+        const sidebarBackdrop = document.getElementById('sidebarBackdrop');
+        function setExportSidebarOpen(open, restoreFocus = true) {
+            document.body.classList.toggle('sidebar-open', !!open);
+            if (mobileNavToggle) mobileNavToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+            if (open) {
+                const target = currentSelected || document.querySelector('.mulu');
+                if (target) requestAnimationFrame(function() { target.focus(); });
+            } else if (restoreFocus && mobileNavToggle) {
+                mobileNavToggle.focus();
+            }
+        }
+        if (mobileNavToggle) {
+            mobileNavToggle.addEventListener('click', function() {
+                setExportSidebarOpen(!document.body.classList.contains('sidebar-open'));
+            });
+        }
+        if (sidebarBackdrop) {
+            sidebarBackdrop.addEventListener('click', function() { setExportSidebarOpen(false); });
+        }
+
         (function() {
             const container = document.querySelector('.sidebar-content-inner') || document.querySelector('.sidebar-content') || document.querySelector('.sidebar');
             if (!container) return;
@@ -6874,9 +7776,69 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                 const muluEl = e.target && e.target.closest ? e.target.closest('.mulu') : null;
                 if (!muluEl) return;
                 const id = muluEl.dataset ? (muluEl.dataset.dirId || '') : '';
-                selectDirectory(id, false);
+                selectDirectory(id, false, {
+                    viewMode: currentDirId === id ? 'preserve' : 'restore'
+                });
+            });
+
+            container.addEventListener('keydown', function(e) {
+                const current = e.target && e.target.closest ? e.target.closest('.mulu') : null;
+                if (!current) return;
+                const visible = Array.from(container.querySelectorAll('.mulu')).filter(function(item) {
+                    return item.style.display !== 'none' && !item.classList.contains('collapsed-child');
+                });
+                const index = visible.indexOf(current);
+                let focusTarget = null;
+                if (e.key === 'ArrowDown') focusTarget = visible[Math.min(visible.length - 1, index + 1)];
+                else if (e.key === 'ArrowUp') focusTarget = visible[Math.max(0, index - 1)];
+                else if (e.key === 'Home') focusTarget = visible[0];
+                else if (e.key === 'End') focusTarget = visible[visible.length - 1];
+                else if (e.key === 'ArrowRight' && current.classList.contains('has-children')) {
+                    if (!current.classList.contains('expanded')) toggleDirectory(current.dataset.dirId, e);
+                    else focusTarget = visible[index + 1];
+                } else if (e.key === 'ArrowLeft') {
+                    if (current.classList.contains('has-children') && current.classList.contains('expanded')) {
+                        toggleDirectory(current.dataset.dirId, e);
+                    } else {
+                        const level = Number(current.dataset.level) || 0;
+                        for (let i = index - 1; i >= 0; i--) {
+                            if ((Number(visible[i].dataset.level) || 0) < level) {
+                                focusTarget = visible[i];
+                                break;
+                            }
+                        }
+                    }
+                } else if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    selectDirectory(current.dataset.dirId, false, {
+                        viewMode: currentDirId === current.dataset.dirId ? 'preserve' : 'restore'
+                    });
+                    return;
+                } else {
+                    return;
+                }
+                e.preventDefault();
+                if (focusTarget) focusTarget.focus();
             });
         })();
+
+        window.addEventListener('popstate', function() {
+            const route = readExportRoute();
+            if (!route || !route.dirId) return;
+            const target = document.querySelector('[data-dir-id="' + escapeCssSelectorValue(route.dirId) + '"]');
+            if (!target) return;
+            expandDirectoryAncestors(route.dirId);
+            soraHistoryNavigation = true;
+            try {
+                selectDirectory(route.dirId, false, {
+                    viewMode: route.anchorId ? 'top' : 'restore',
+                    anchorId: route.anchorId,
+                    historyMode: 'none'
+                });
+            } finally {
+                soraHistoryNavigation = false;
+            }
+        });
 
         (function() {
             const contentBody = document.getElementById('contentBody');
@@ -6923,6 +7885,20 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         })();
 
         document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape' && document.body.classList.contains('sidebar-open')) {
+                setExportSidebarOpen(false);
+                return;
+            }
+            const searchInput = document.getElementById('exportSearchInput');
+            const target = event.target;
+            const isTextInput = target && target.matches && target.matches('input, textarea, [contenteditable="true"]');
+            if (searchInput && (((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') || (event.key === '/' && !isTextInput))) {
+                event.preventDefault();
+                if (window.matchMedia && window.matchMedia('(max-width: 768px)').matches) setExportSidebarOpen(true, false);
+                searchInput.focus();
+                searchInput.select();
+                return;
+            }
             const shortcut = normalizeShortcut(event);
             const contentBody = document.getElementById('contentBody');
             if (!contentBody) return;
@@ -6975,35 +7951,41 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                             langLabel.classList.remove('copied');
                         }, 2000);
                     } catch (err) {
-                        const textArea = document.createElement('textarea');
-                        textArea.value = code;
-                        textArea.style.position = 'fixed';
-                        textArea.style.left = '-9999px';
-                        document.body.appendChild(textArea);
-                        textArea.select();
-                        try {
-                            document.execCommand('copy');
-                            langLabel.textContent = '已复制!';
-                            langLabel.classList.add('copied');
-                            setTimeout(() => {
-                                langLabel.textContent = langLabel.dataset.lang;
-                                langLabel.classList.remove('copied');
-                            }, 2000);
-                        } catch (e) {
-                            langLabel.textContent = '复制失败';
-                            setTimeout(() => {
-                                langLabel.textContent = langLabel.dataset.lang;
-                            }, 2000);
-                        }
-                        document.body.removeChild(textArea);
+                        langLabel.textContent = '复制失败';
+                        setTimeout(() => {
+                            langLabel.textContent = langLabel.dataset.lang;
+                        }, 2000);
                     }
                 });
                 pre.appendChild(langLabel);
             });
         }
+        function initSpoilers() {
+            const contentBody = document.getElementById('contentBody');
+            if (!contentBody) return;
+            contentBody.querySelectorAll('spoiler').forEach(function(spoiler) {
+                if (spoiler.dataset.soraSpoilerInit === 'true') return;
+                spoiler.dataset.soraSpoilerInit = 'true';
+                spoiler.setAttribute('role', 'button');
+                spoiler.setAttribute('tabindex', '0');
+                spoiler.setAttribute('aria-expanded', 'false');
+                const toggle = function() {
+                    const revealed = spoiler.getAttribute('data-revealed') === 'true';
+                    spoiler.setAttribute('data-revealed', revealed ? 'false' : 'true');
+                    spoiler.setAttribute('aria-expanded', revealed ? 'false' : 'true');
+                };
+                spoiler.addEventListener('click', toggle);
+                spoiler.addEventListener('keydown', function(event) {
+                    if (event.key !== 'Enter' && event.key !== ' ') return;
+                    event.preventDefault();
+                    toggle();
+                });
+            });
+        }
         const imageViewer = document.getElementById('imageViewer');
         const imageViewerImg = document.getElementById('imageViewerImg');
         const imageViewerClose = document.getElementById('imageViewerClose');
+        let imageViewerOpener = null;
         function initImageViewer() {
             const contentBody = document.getElementById('contentBody');
             if (!contentBody) return;
@@ -7011,9 +7993,20 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             images.forEach(img => {
                 if (img.dataset.viewerInit) return;
                 img.dataset.viewerInit = 'true';
-                img.addEventListener('click', () => {
+                img.setAttribute('tabindex', '0');
+                img.setAttribute('role', 'button');
+                const openViewer = () => {
+                    imageViewerOpener = img;
                     imageViewerImg.src = img.src;
+                    imageViewerImg.alt = img.alt ? '放大查看：' + img.alt : '放大查看';
                     imageViewer.classList.add('active');
+                    imageViewerClose.focus();
+                };
+                img.addEventListener('click', openViewer);
+                img.addEventListener('keydown', function(event) {
+                    if (event.key !== 'Enter' && event.key !== ' ') return;
+                    event.preventDefault();
+                    openViewer();
                 });
             });
         }
@@ -7059,6 +8052,8 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         function closeImageViewer() {
             imageViewer.classList.remove('active');
             imageViewerImg.removeAttribute('src');
+            if (imageViewerOpener && imageViewerOpener.isConnected) imageViewerOpener.focus();
+            imageViewerOpener = null;
         }
         imageViewerClose.addEventListener('click', closeImageViewer);
         imageViewer.addEventListener('click', (e) => {
@@ -7074,22 +8069,100 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         window.addEventListener('beforeunload', releaseActiveMedia);
         window.selectDirectory = selectDirectory;
         window.toggleDirectory = toggleDirectory;
+        initReadingTools();
+        initComponentInteractions();
+        if (SORA_PUBLICATION.searchEnabled) {
+            initExportSearch();
+            scheduleExportSearchIndexBuild();
+        }
         
         const defaultDirId = ${JSON.stringify(firstDirId || '').replace(/<\/script>/gi, '<\\/script')};
-        if (defaultDirId) {
-            methodDebugLog('[Sora方法] 即将调用selectDirectory, dirId:', defaultDirId);
-            selectDirectory(defaultDirId, false);
+        const initialRoute = readExportRoute();
+        const initialRouteTarget = initialRoute && initialRoute.dirId
+            ? document.querySelector('[data-dir-id="' + escapeCssSelectorValue(initialRoute.dirId) + '"]')
+            : null;
+        const initialDirId = initialRouteTarget ? initialRoute.dirId : defaultDirId;
+        const initialAnchorId = initialRouteTarget ? initialRoute.anchorId : '';
+        (function applyInitialTreeState() {
+            const mode = SORA_PUBLICATION.initialTreeState || 'expanded';
+            document.querySelectorAll('.mulu.has-children').forEach(function(node) {
+                const expanded = mode === 'expanded';
+                node.classList.toggle('expanded', expanded);
+                node.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+            });
+            refreshMuluVisibility();
+            if (mode === 'current-path' && initialDirId) expandDirectoryAncestors(initialDirId);
+        })();
+        if (initialDirId) {
+            methodDebugLog('[Sora方法] 即将调用selectDirectory, dirId:', initialDirId);
+            if (initialRouteTarget) expandDirectoryAncestors(initialDirId);
+            selectDirectory(initialDirId, false, {
+                viewMode: 'top',
+                anchorId: initialAnchorId,
+                historyMode: 'replace'
+            });
             methodDebugLog('[Sora方法] selectDirectory调用完成');
         }
         
         methodDebugLog('[Sora方法] 网页加载完成，开始执行open触发');
         handleSoraMethodTriggersCascade('open');
         scheduleTimeMethodTriggers();
-        initMethodDebugButton();
+        if (SORA_METHOD_DEBUG) initMethodDebugButton();
+        if (SORA_PUBLICATION.deploymentMode === 'pwa-folder' && 'serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+            navigator.serviceWorker.register('./sora-service-worker.js').catch(function() {
+                showExportToast('离线缓存未启用，基础阅读仍可使用', 2600, 'warning');
+            });
+        }
     </script>
 </body>
 </html>`;
 
+    if (!hasMethodRuntime) {
+        const optionalStart = '/* SORA_OPTIONAL_METHOD_RUNTIME_START */';
+        const optionalEnd = '/* SORA_OPTIONAL_METHOD_RUNTIME_END */';
+        const startIndex = htmlContent.indexOf(optionalStart);
+        const endIndex = htmlContent.indexOf(optionalEnd);
+        if (startIndex >= 0 && endIndex > startIndex) {
+            const noMethodRuntime = `
+        function executeMethodsForElement() { return false; }
+        function handleSoraMethodTriggersCascade() {}
+        function scheduleTimeMethodTriggers() {}
+        function initMethodDebugButton() {}
+        function initComponentInteractions() {}
+        function getMuluList() { return Array.from(document.querySelectorAll('.mulu')); }
+        function getMuluLevel(element) { const value = parseInt(element && element.dataset.level, 10); return Number.isNaN(value) ? 0 : value; }
+        function refreshMuluVisibility() {
+            const visibleByLevel = [];
+            const expandedByLevel = [];
+            getMuluList().forEach(function(element) {
+                const level = getMuluLevel(element);
+                let visible = element.dataset.soraHidden !== 'true';
+                if (level > 0) visible = visible && visibleByLevel[level - 1] !== false && expandedByLevel[level - 1] === true;
+                element.style.display = visible ? '' : 'none';
+                visibleByLevel[level] = visible;
+                expandedByLevel[level] = element.classList.contains('expanded');
+            });
+        }
+        function expandDirectoryAncestors(dirId) {
+            const all = getMuluList();
+            const target = document.querySelector('[data-dir-id="' + escapeCssSelectorValue(dirId) + '"]');
+            if (!target) return;
+            let level = getMuluLevel(target);
+            let index = all.indexOf(target) - 1;
+            while (level > 0 && index >= 0) {
+                if (getMuluLevel(all[index]) === level - 1) {
+                    all[index].classList.add('expanded');
+                    all[index].setAttribute('aria-expanded', 'true');
+                    level--;
+                }
+                index--;
+            }
+            refreshMuluVisibility();
+        }
+        `;
+            htmlContent = htmlContent.slice(0, startIndex) + noMethodRuntime + htmlContent.slice(endIndex + optionalEnd.length);
+        }
+    }
     const markerIndex = htmlContent.indexOf(mediaChunkMarker);
     if (markerIndex < 0) {
         throw new Error('网页媒体分块插入点缺失');
@@ -7107,7 +8180,25 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
     }
 
     // 创建并下载文件
-    if (selectedFileHandle) {
+    if (deploymentDirectoryHandle) {
+        await writePartsToDirectoryHandle(deploymentDirectoryHandle, 'index.html', outputParts);
+        if (publicationSettings.deploymentMode === 'pwa-folder') {
+            const manifest = {
+                name: publicationSettings.title,
+                short_name: publicationSettings.title.slice(0, 24),
+                description: publicationSettings.description,
+                start_url: './index.html',
+                scope: './',
+                display: 'standalone',
+                background_color: publicationSettings.theme === 'dark' ? '#111827' : '#ffffff',
+                theme_color: publicationSettings.theme === 'dark' ? '#111827' : '#075bbd',
+                icons: publicationSettings.icon ? [{ src: publicationSettings.icon, sizes: 'any', purpose: 'any' }] : []
+            };
+            const serviceWorker = `const CACHE='sora-directory-v1';const FILES=['./','./index.html','./manifest.webmanifest'];self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(FILES)).then(()=>self.skipWaiting())));self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim())));self.addEventListener('fetch',event=>{if(event.request.method!=='GET')return;event.respondWith(caches.match(event.request).then(hit=>hit||fetch(event.request).then(response=>{const copy=response.clone();caches.open(CACHE).then(cache=>cache.put(event.request,copy));return response;}).catch(()=>caches.match('./index.html'))));});`;
+            await writePartsToDirectoryHandle(deploymentDirectoryHandle, 'manifest.webmanifest', [JSON.stringify(manifest, null, 2)]);
+            await writePartsToDirectoryHandle(deploymentDirectoryHandle, 'sora-service-worker.js', [serviceWorker]);
+        }
+    } else if (selectedFileHandle) {
         await writePartsToFileHandle(selectedFileHandle, outputParts);
     } else {
         let prepared = null;
@@ -7131,7 +8222,9 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             console.warn('Unable to remove webpage media spool:', err);
         }
     }
-    showToast(`已导出${encrypt ? '加密' : ''}网页：${filename}`, 'success', 2500);
+    showToast(deploymentDirectoryHandle
+        ? `已导出${publicationSettings.deploymentMode === 'pwa-folder' ? ' PWA' : ''}网站目录：${filename}`
+        : `已导出${encrypt ? '加密' : ''}网页：${filename}`, 'success', 2500);
     return true;
 }
 /**

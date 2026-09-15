@@ -79,7 +79,7 @@
         confirmTimeoutMs: { label: '自动选择等待', type: 'number', defaultValue: 0, min: 0, max: 600000, suffix: '毫秒，0 表示一直等待' },
         confirmDefault: { label: '超时默认结果', type: 'select', defaultValue: 'cancel', options: [['cancel', '取消'], ['confirm', '确认']] },
         panelMode: { label: '面板形式', type: 'select', defaultValue: 'modal', options: [['modal', '弹层'], ['drawer', '抽屉'], ['sidebar', '侧栏']] },
-        componentType: { label: '组件类型', type: 'select', defaultValue: 'collapse', options: [['collapse', '折叠区'], ['tabs', '标签页'], ['steps', '步骤内容'], ['progress', '进度条'], ['radio', '单选'], ['checkbox', '多选'], ['input', '文本输入']] },
+        componentType: { label: '组件类型', type: 'select', defaultValue: 'collapse', options: [['collapse', '折叠区'], ['tabs', '标签页'], ['steps', '步骤条'], ['faq', '问答列表'], ['gallery', '图库'], ['progress', '进度条'], ['radio', '单选'], ['checkbox', '多选'], ['input', '文本输入']] },
         componentLabel: { label: '组件标题', type: 'text' },
         classOperation: { label: '样式操作', type: 'select', defaultValue: 'toggle', options: [['add', '添加'], ['remove', '移除'], ['toggle', '切换']] },
         classToken: { label: '受控样式', type: 'select', defaultValue: 'accent', options: [['accent', '强调'], ['muted', '弱化'], ['success', '成功'], ['warning', '警告'], ['danger', '危险'], ['compact', '紧凑'], ['hidden', '隐藏']] },

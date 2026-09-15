@@ -1719,14 +1719,7 @@ async function applyFormat(command) {
         selection.addRange(newRange);
         // 确保预览区域获得焦点
         markdownPreview.focus();
-        // 使用 execCommand 清除格式状态，避免后续输入继承格式
-        // 这会清除浏览器的格式状态，但不会影响已插入的HTML元素
-        try {
-            document.execCommand('removeFormat', false, null);
-        } catch (e) {
-            // 如果 execCommand 失败，忽略错误
-        }
-        // 再次确保光标位置正确（因为 removeFormat 可能会改变光标位置）
+        // 光标已经移动到格式节点之外，不再依赖浏览器的隐式格式状态。
         setTimeout(() => {
             const currentSelection = window.getSelection();
             if (currentSelection.rangeCount > 0) {
@@ -1785,17 +1778,9 @@ function copyCodeBlock(btn) {
         }, 2000);
     }).catch(err => {
         console.error('复制失败:', err);
-        const textarea = document.createElement('textarea');
-        textarea.value = code;
-        document.body.appendChild(textarea);
-        textarea.select();
-        document.execCommand('copy');
-        document.body.removeChild(textarea);
-        btn.textContent = '已复制!';
-        btn.classList.add('copied');
+        btn.textContent = '复制失败';
         setTimeout(() => {
             btn.textContent = '复制';
-            btn.classList.remove('copied');
         }, 2000);
     });
 }
@@ -1995,27 +1980,10 @@ function addCopyButtonToCodeBlock(pre) {
                 langLabel.classList.remove('copied');
             }, 2000);
         } catch (err) {
-            const textArea = document.createElement('textarea');
-            textArea.value = code;
-            textArea.style.position = 'fixed';
-            textArea.style.left = '-9999px';
-            document.body.appendChild(textArea);
-            textArea.select();
-            try {
-                document.execCommand('copy');
-                langLabel.textContent = '已复制!';
-                langLabel.classList.add('copied');
-                setTimeout(() => {
-                    langLabel.textContent = langLabel.dataset.lang;
-                    langLabel.classList.remove('copied');
-                }, 2000);
-            } catch (e) {
-                langLabel.textContent = '复制失败';
-                setTimeout(() => {
-                    langLabel.textContent = langLabel.dataset.lang;
-                }, 2000);
-            }
-            document.body.removeChild(textArea);
+            langLabel.textContent = '复制失败';
+            setTimeout(() => {
+                langLabel.textContent = langLabel.dataset.lang;
+            }, 2000);
         }
     });
     pre.appendChild(langLabel);

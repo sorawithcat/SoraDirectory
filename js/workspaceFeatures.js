@@ -2,6 +2,7 @@ const FeatureDialog = (function() {
     let overlay = null;
     let titleElement = null;
     let bodyElement = null;
+    let returnFocus = null;
 
     function ensure() {
         if (overlay) return;
@@ -14,7 +15,8 @@ const FeatureDialog = (function() {
             .workspace-breadcrumb button:last-child { color: #0f172a; font-weight: 700; }
             .workspace-breadcrumb-separator { color: #94a3b8; }
             .workspace-nav-btn, .workspace-nav-select { min-height: 28px; border: 1px solid #cbd5e1; border-radius: 5px; background: #fff; color: #334155; }
-            .workspace-nav-btn { min-width: 30px; cursor: pointer; font-size: 18px; }
+            .workspace-nav-btn { min-width: 30px; padding: 3px 7px; cursor: pointer; font-size: 18px; }
+            .workspace-nav-btn.workspace-nav-text { font-size: 12px; white-space: nowrap; }
             .workspace-nav-select { max-width: 150px; padding: 3px 6px; }
             .feature-dialog-overlay { position: fixed; inset: 0; z-index: 12000; display: none; align-items: center; justify-content: center; padding: 18px; background: rgba(15, 23, 42, 0.42); }
             .feature-dialog-overlay.active { display: flex; }
@@ -76,10 +78,11 @@ const FeatureDialog = (function() {
 
         overlay = document.createElement('div');
         overlay.className = 'feature-dialog-overlay';
+        overlay.setAttribute('aria-hidden', 'true');
         overlay.innerHTML = `
-            <section class="feature-dialog" role="dialog" aria-modal="true">
+            <section class="feature-dialog" role="dialog" aria-modal="true" aria-labelledby="soraFeatureDialogTitle">
                 <header class="feature-dialog-header">
-                    <h2 class="feature-dialog-title"></h2>
+                    <h2 class="feature-dialog-title" id="soraFeatureDialogTitle"></h2>
                     <button type="button" class="feature-dialog-close" aria-label="关闭">×</button>
                 </header>
                 <div class="feature-dialog-body"></div>
@@ -90,6 +93,26 @@ const FeatureDialog = (function() {
         overlay.querySelector('.feature-dialog-close').addEventListener('click', close);
         overlay.addEventListener('click', event => {
             if (event.target === overlay) close();
+        });
+        overlay.addEventListener('keydown', event => {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                close();
+                return;
+            }
+            if (event.key !== 'Tab') return;
+            const focusable = Array.from(overlay.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'))
+                .filter(element => !element.disabled && element.offsetParent !== null);
+            if (!focusable.length) return;
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first.focus();
+            }
         });
     }
 
@@ -102,13 +125,24 @@ const FeatureDialog = (function() {
         } else if (content) {
             bodyElement.appendChild(content);
         }
+        returnFocus = document.activeElement;
+        overlay.setAttribute('aria-hidden', 'false');
         overlay.classList.add('active');
+        requestAnimationFrame(() => {
+            const target = bodyElement.querySelector('input, select, textarea, button, [href]')
+                || overlay.querySelector('.feature-dialog-close');
+            if (target) target.focus();
+        });
     }
 
     function close() {
         if (!overlay) return;
         overlay.classList.remove('active');
+        overlay.setAttribute('aria-hidden', 'true');
         if (bodyElement) bodyElement.innerHTML = '';
+        const target = returnFocus;
+        returnFocus = null;
+        if (target && target.isConnected && typeof target.focus === 'function') target.focus();
     }
 
     ensure();
@@ -119,7 +153,6 @@ window.FeatureDialog = FeatureDialog;
 const DraftManager = (function() {
     const DB_NAME = 'SoraDirectoryDraftDB';
     const STORE_NAME = 'drafts';
-    const DRAFT_ID = 'latest';
     const MAX_AGE = 30 * 24 * 60 * 60 * 1000;
     let dbPromise = null;
     let saveTimer = null;
@@ -128,6 +161,18 @@ const DraftManager = (function() {
     let lastSnapshotHash = '';
     const SNAPSHOT_INTERVAL = 5 * 60 * 1000;
     const SNAPSHOT_LIMIT = 20;
+
+    function documentIdentity() {
+        return window.SoraDocumentIdentity ? window.SoraDocumentIdentity.get() : { id: 'legacy', label: '当前文档' };
+    }
+
+    function draftId() {
+        return `latest:${documentIdentity().id}`;
+    }
+
+    function snapshotPrefix() {
+        return `snapshot:${documentIdentity().id}:`;
+    }
 
     function setStatus(text, title = '') {
         const status = document.getElementById('draftStatus');
@@ -156,7 +201,7 @@ const DraftManager = (function() {
         try {
             const db = await openDB();
             return await new Promise((resolve, reject) => {
-                const request = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).get(DRAFT_ID);
+                const request = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).get(draftId());
                 request.onsuccess = () => resolve(request.result || null);
                 request.onerror = () => reject(request.error);
             });
@@ -174,7 +219,8 @@ const DraftManager = (function() {
                 request.onsuccess = () => resolve(request.result || []);
                 request.onerror = () => reject(request.error);
             });
-            return records.filter(record => String(record.id || '').startsWith('snapshot_'))
+            const prefix = snapshotPrefix();
+            return records.filter(record => String(record.id || '').startsWith(prefix))
                 .sort((a, b) => Number(b.updatedAt) - Number(a.updatedAt));
         } catch (error) {
             console.warn('读取草稿快照失败:', error);
@@ -212,13 +258,17 @@ const DraftManager = (function() {
         if (restoring || typeof hasUnsavedChanges === 'undefined' || !hasUnsavedChanges || !Array.isArray(mulufile)) return false;
         try {
             if (typeof syncPreviewToTextarea === 'function') syncPreviewToTextarea();
+            const identity = documentIdentity();
             const draft = {
-                id: DRAFT_ID,
+                id: draftId(),
+                documentId: identity.id,
+                documentLabel: identity.label,
                 updatedAt: Date.now(),
                 fileName: typeof currentFileName !== 'undefined' ? currentFileName : '',
                 displayName: fileNameInput ? fileNameInput.value : '',
                 selectedDirId: getSelectedDirId(),
                 directoryLevelColors: typeof serializeDirectoryLevelColors === 'function' ? serializeDirectoryLevelColors() : null,
+                directoryMetadata: window.DirectoryMetadata ? window.DirectoryMetadata.serialize() : null,
                 data: mulufile.map(row => Array.isArray(row) ? row.slice() : row)
             };
             const db = await openDB();
@@ -226,9 +276,9 @@ const DraftManager = (function() {
                 const transaction = db.transaction(STORE_NAME, 'readwrite');
                 const store = transaction.objectStore(STORE_NAME);
                 store.put(draft);
-                const nextHash = fingerprint(draft.data);
+                const nextHash = fingerprint([draft.data, draft.directoryMetadata]);
                 if (nextHash !== lastSnapshotHash && Date.now() - lastSnapshotAt >= SNAPSHOT_INTERVAL) {
-                    store.put({ ...draft, id: `snapshot_${draft.updatedAt}`, kind: 'snapshot' });
+                    store.put({ ...draft, id: `${snapshotPrefix()}${draft.updatedAt}`, kind: 'snapshot' });
                     lastSnapshotHash = nextHash;
                     lastSnapshotAt = draft.updatedAt;
                 }
@@ -259,7 +309,7 @@ const DraftManager = (function() {
         try {
             const db = await openDB();
             await new Promise((resolve, reject) => {
-                const request = db.transaction(STORE_NAME, 'readwrite').objectStore(STORE_NAME).delete(DRAFT_ID);
+                const request = db.transaction(STORE_NAME, 'readwrite').objectStore(STORE_NAME).delete(draftId());
                 request.onsuccess = resolve;
                 request.onerror = () => reject(request.error);
             });
@@ -273,9 +323,13 @@ const DraftManager = (function() {
         restoring = true;
         try {
             mulufile = draft.data.map(row => Array.isArray(row) ? row.slice() : row);
+            if (window.SoraDocumentIdentity && draft.documentId) {
+                window.SoraDocumentIdentity.adopt(draft.documentId, draft.documentLabel || draft.displayName || draft.fileName, 'draft');
+            }
             if (typeof loadDirectoryLevelColors === 'function') {
                 loadDirectoryLevelColors(draft.directoryLevelColors || null);
             }
+            if (window.DirectoryMetadata) window.DirectoryMetadata.load(draft.directoryMetadata);
             if (typeof currentFileHandle !== 'undefined') currentFileHandle = null;
             if (typeof currentFileName !== 'undefined') currentFileName = draft.fileName || '恢复的草稿';
             if (fileNameInput) fileNameInput.value = draft.displayName || draft.fileName || '恢复的草稿';
@@ -328,6 +382,11 @@ const DraftManager = (function() {
                 if (ids.has(row[2]) && !emitted.has(row[2])) next.push(row.slice());
             });
             mulufile = next;
+            if (window.DirectoryMetadata && draft.directoryMetadata) {
+                ids.forEach(id => {
+                    if (draft.directoryMetadata[id]) window.DirectoryMetadata.set(id, draft.directoryMetadata[id], { markUnsaved: false });
+                });
+            }
             rebuildMulufileIndex();
             LoadMulu();
             const target = document.querySelector('.mulu');
@@ -342,13 +401,38 @@ const DraftManager = (function() {
         }
     }
 
+    function plainSnapshotText(html) {
+        const template = document.createElement('template');
+        template.innerHTML = String(html || '');
+        return String(template.content.textContent || '').replace(/\s+/g, ' ').trim();
+    }
+
+    function snapshotTextPreview(currentHtml, snapshotHtml) {
+        const currentText = plainSnapshotText(currentHtml);
+        const snapshotText = plainSnapshotText(snapshotHtml);
+        if (currentText === snapshotText) return null;
+        let prefix = 0;
+        while (prefix < currentText.length && prefix < snapshotText.length && currentText[prefix] === snapshotText[prefix]) prefix++;
+        const start = Math.max(0, prefix - 60);
+        const clip = (value) => `${start ? '…' : ''}${value.slice(start, start + 240)}${value.length > start + 240 ? '…' : ''}` || '（空）';
+        return { current: clip(currentText), snapshot: clip(snapshotText) };
+    }
+
     function snapshotDiff(snapshot) {
         const currentById = new Map(mulufile.map(row => [row[2], row]));
         const snapshotById = new Map(snapshot.data.map(row => [row[2], row]));
         const changed = [];
         snapshotById.forEach((row, id) => {
             const current = currentById.get(id);
-            if (!current || JSON.stringify(current) !== JSON.stringify(row)) changed.push({ id, name: row[1], type: current ? '已修改' : '快照中新增' });
+            const metadataChanged = JSON.stringify(window.DirectoryMetadata ? window.DirectoryMetadata.get(id) : null) !== JSON.stringify((snapshot.directoryMetadata || {})[id] || null);
+            if (!current || JSON.stringify(current) !== JSON.stringify(row) || metadataChanged) {
+                changed.push({
+                    id,
+                    name: row[1],
+                    type: current ? (metadataChanged ? '内容或字段已修改' : '已修改') : '快照中新增',
+                    preview: current ? snapshotTextPreview(current[3], row[3]) : null
+                });
+            }
         });
         currentById.forEach((row, id) => {
             if (!snapshotById.has(id)) changed.push({ id, name: row[1], type: '当前新增' });
@@ -362,17 +446,34 @@ const DraftManager = (function() {
         FeatureDialog.open('草稿与恢复', wrapper);
         const snapshots = await listSnapshots();
         wrapper.innerHTML = '';
+        const identity = documentIdentity();
+        const controls = document.createElement('div');
+        controls.className = 'method-workbench-actions';
+        controls.innerHTML = `<input type="text" maxlength="60" aria-label="快照名称" placeholder="快照名称（可选）"><button type="button" data-create-snapshot>立即建立命名快照</button>`;
+        const estimate = document.createElement('p');
+        estimate.className = 'media-summary';
+        estimate.textContent = `当前文档：${identity.label} · ${snapshots.length}/${SNAPSHOT_LIMIT} 个历史快照`;
+        wrapper.append(controls, estimate);
+        controls.querySelector('[data-create-snapshot]').addEventListener('click', async () => {
+            const name = controls.querySelector('input').value.trim();
+            await createNamedSnapshot(name);
+            FeatureDialog.close();
+            openManager();
+        });
         if (!snapshots.length) {
-            wrapper.innerHTML = '<div class="command-empty">尚无历史快照。编辑内容后会自动保留快照。</div>';
+            const empty = document.createElement('div');
+            empty.className = 'command-empty';
+            empty.textContent = '尚无历史快照。编辑内容后会自动保留，也可立即建立命名快照。';
+            wrapper.appendChild(empty);
             return;
         }
         snapshots.forEach((snapshot, snapshotIndex) => {
             const diff = snapshotDiff(snapshot);
             const section = document.createElement('section');
             section.className = 'issue-section';
-            section.innerHTML = `<h3>${new Date(snapshot.updatedAt).toLocaleString()} · ${escapeHtml(snapshot.displayName || snapshot.fileName || '未命名')}</h3>
+            section.innerHTML = `<h3>${new Date(snapshot.updatedAt).toLocaleString()} · ${escapeHtml(snapshot.snapshotName || snapshot.displayName || snapshot.fileName || '未命名')}</h3>
                 <div style="padding:10px"><p class="media-summary">${snapshot.data.length} 个目录，与当前相比 ${diff.length} 项变化</p>
-                <div>${diff.length ? diff.map(item => `<label style="display:block;padding:5px"><input type="checkbox" value="${encodeURIComponent(item.id)}"> ${escapeHtml(item.name || item.id)} <small>(${item.type})</small></label>`).join('') : '<p>与当前内容相同。</p>'}</div>
+                <div>${diff.length ? diff.map(item => `<div class="snapshot-diff-item"><label style="display:block;padding:5px"><input type="checkbox" value="${encodeURIComponent(item.id)}"> ${escapeHtml(item.name || item.id)} <small>(${item.type})</small></label>${item.preview ? `<details><summary>查看文本变化片段</summary><div class="snapshot-text-diff"><p><strong>当前：</strong>${escapeHtml(item.preview.current)}</p><p><strong>快照：</strong>${escapeHtml(item.preview.snapshot)}</p></div></details>` : ''}</div>`).join('') : '<p>与当前内容相同。</p>'}</div>
                 <div class="method-workbench-actions"><button type="button" data-select-all="${snapshotIndex}">全选变化</button><button type="button" data-restore-selected="${snapshotIndex}"${diff.length ? '' : ' disabled'}>恢复所选目录</button><button type="button" data-restore-all="${snapshotIndex}">恢复整个快照</button></div></div>`;
             wrapper.appendChild(section);
         });
@@ -398,6 +499,35 @@ const DraftManager = (function() {
         });
     }
 
+    async function createNamedSnapshot(name = '') {
+        if (typeof syncPreviewToTextarea === 'function') syncPreviewToTextarea();
+        const identity = documentIdentity();
+        const updatedAt = Date.now();
+        const record = {
+            id: `${snapshotPrefix()}${updatedAt}`,
+            kind: 'snapshot',
+            snapshotName: String(name || '').trim().slice(0, 60) || `快照 ${new Date(updatedAt).toLocaleString()}`,
+            documentId: identity.id,
+            documentLabel: identity.label,
+            updatedAt,
+            fileName: typeof currentFileName !== 'undefined' ? currentFileName : '',
+            displayName: fileNameInput ? fileNameInput.value : '',
+            selectedDirId: getSelectedDirId(),
+            directoryLevelColors: typeof serializeDirectoryLevelColors === 'function' ? serializeDirectoryLevelColors() : null,
+            directoryMetadata: window.DirectoryMetadata ? window.DirectoryMetadata.serialize() : null,
+            data: mulufile.map(row => Array.isArray(row) ? row.slice() : row)
+        };
+        const db = await openDB();
+        await new Promise((resolve, reject) => {
+            const request = db.transaction(STORE_NAME, 'readwrite').objectStore(STORE_NAME).put(record);
+            request.onsuccess = resolve;
+            request.onerror = () => reject(request.error);
+        });
+        await trimSnapshots();
+        showToast(`已建立命名快照“${record.snapshotName}”`, 'success', 2200);
+        return record;
+    }
+
     async function offerRestore() {
         const draft = await read();
         if (!draft || !Array.isArray(draft.data) || draft.data.length === 0) return false;
@@ -419,7 +549,7 @@ const DraftManager = (function() {
     });
 
     document.getElementById('draftManagerBtn')?.addEventListener('click', openManager);
-    return { schedule, saveNow, clear, resetAfterLoad: clear, offerRestore, listSnapshots, openManager };
+    return { schedule, saveNow, clear, resetAfterLoad: clear, offerRestore, listSnapshots, openManager, createNamedSnapshot };
 })();
 window.DraftManager = DraftManager;
 
@@ -440,7 +570,8 @@ const DirectoryHistory = (function() {
             label,
             data: mulufile.map(row => Array.isArray(row) ? row.slice() : row),
             selectedDirId: selectedDirId(),
-            directoryLevelColors: typeof serializeDirectoryLevelColors === 'function' ? serializeDirectoryLevelColors() : null
+            directoryLevelColors: typeof serializeDirectoryLevelColors === 'function' ? serializeDirectoryLevelColors() : null,
+            directoryMetadata: window.DirectoryMetadata ? window.DirectoryMetadata.serialize() : null
         };
     }
 
@@ -472,6 +603,7 @@ const DirectoryHistory = (function() {
             if (typeof loadDirectoryLevelColors === 'function') {
                 loadDirectoryLevelColors(state.directoryLevelColors || null);
             }
+            if (window.DirectoryMetadata) window.DirectoryMetadata.load(state.directoryMetadata);
             LoadMulu();
             const target = Array.from(document.querySelectorAll('.mulu')).find(el => el.getAttribute('data-dir-id') === state.selectedDirId)
                 || document.querySelector('.mulu');
@@ -630,14 +762,24 @@ const DirectoryNavigation = (function() {
         refresh(dirId);
     }
 
-    async function open(dirId) {
+    async function open(dirId, options = {}) {
         if (!dirId) return false;
         const target = Array.from(document.querySelectorAll('.mulu')).find(el => el.getAttribute('data-dir-id') === dirId);
         if (!target) return false;
         if (typeof expandParentDirectories === 'function') expandParentDirectories(target);
-        await switchToDirectoryElement(target, { syncCurrent: true, scrollPreviewTop: true, forceRender: false });
+        await switchToDirectoryElement(target, {
+            syncCurrent: true,
+            viewMode: options.viewMode || 'restore',
+            forceRender: false
+        });
         target.scrollIntoView({ block: 'nearest' });
         return true;
+    }
+
+    async function openCurrentAtTop() {
+        const dirId = currentDirId();
+        if (!dirId) return false;
+        return open(dirId, { viewMode: 'top' });
     }
 
     function toggleFavorite() {
@@ -655,6 +797,7 @@ const DirectoryNavigation = (function() {
     }
 
     document.getElementById('favoriteDirectoryBtn')?.addEventListener('click', toggleFavorite);
+    document.getElementById('openDirectoryAtTopBtn')?.addEventListener('click', openCurrentAtTop);
     document.getElementById('recentDirectorySelect')?.addEventListener('change', event => {
         if (event.target.value) open(event.target.value);
         event.target.value = '';
@@ -668,6 +811,7 @@ const DirectoryNavigation = (function() {
         track,
         refresh,
         open,
+        openCurrentAtTop,
         toggleFavorite,
         getCurrentDirId: currentDirId,
         getFavorites: () => favorites.slice(),
@@ -1180,9 +1324,11 @@ const IssueCenter = (function() {
     const labels = {
         duplicateDirectoryIds: '重复目录 ID', missingParents: '父目录缺失', brokenLinks: '目录链接失效',
         missingAnchors: '锚点缺失', duplicateAnchors: '重复锚点', invalidMethods: '方法配置无效',
-        missingMethodTargets: '方法目标缺失', duplicateMethodIds: '方法 ID 重复', missingMedia: '媒体缺失', emptyDirectories: '空目录'
+        missingMethodTargets: '方法目标缺失', duplicateMethodIds: '方法 ID 重复', missingMedia: '媒体缺失', emptyDirectories: '空目录',
+        unsafeContent: '不安全的发布内容', headingJumps: '标题层级跳跃', duplicateHeadings: '重复标题',
+        missingAltText: '图片缺少替代文本', longParagraphs: '过长段落'
     };
-    const warningKeys = new Set(['duplicateAnchors', 'emptyDirectories']);
+    const warningKeys = new Set(['duplicateAnchors', 'emptyDirectories', 'headingJumps', 'duplicateHeadings', 'missingAltText', 'longParagraphs']);
     let latestIssues = null;
     let timer = null;
     let idleHandle = null;
@@ -1397,6 +1543,23 @@ const DirectoryFilter = (function() {
 window.DirectoryFilter = DirectoryFilter;
 
 const GlobalCommandPalette = (function() {
+    const RECENTS_KEY = 'sora_command_recents_v1';
+
+    function loadRecents() {
+        try {
+            const value = JSON.parse(localStorage.getItem(RECENTS_KEY) || '[]');
+            return Array.isArray(value) ? value.slice(0, 12) : [];
+        } catch (_) {
+            return [];
+        }
+    }
+
+    function recordRecent(key) {
+        if (!key) return;
+        const next = [key, ...loadRecents().filter(item => item !== key)].slice(0, 12);
+        try { localStorage.setItem(RECENTS_KEY, JSON.stringify(next)); } catch (_) {}
+    }
+
     function captureEditorRange() {
         const selection = window.getSelection();
         if (!selection || !selection.rangeCount || !markdownPreview) return null;
@@ -1441,13 +1604,32 @@ const GlobalCommandPalette = (function() {
     function createItems(savedRange) {
         const items = [];
         const seen = new Set();
+        const shortcutById = { saveBtn: 'Ctrl+S', searchBtn: 'Ctrl+F', replaceBtn: 'Ctrl+H', globalCommandBtn: 'Ctrl+K' };
         document.querySelectorAll('#topToolbar .top-toolbar-btn:not(#mobileMoreBtn)').forEach(button => {
-            if (button.disabled) return;
             const buttonText = button.textContent.trim();
             const label = buttonText || button.title;
             if (!label || seen.has(label)) return;
             seen.add(label);
-            items.push({ type: 'command', icon: '⌘', title: label, meta: button.title || '功能命令', search: `${label} ${button.title || ''}`, run: () => button.click() });
+            const shortcut = shortcutById[button.id] || '';
+            const disabledReason = button.disabled ? (button.title || '当前状态不可用') : '';
+            items.push({ key: `toolbar:${button.id || label}`, type: 'command', icon: '⌘', title: label, shortcut, disabled: button.disabled, disabledReason, meta: disabledReason || button.title || '功能命令', search: `${label} ${button.title || ''} ${shortcut}`, run: () => button.click() });
+        });
+        (Array.isArray(window.SoraFeatureCommands) ? window.SoraFeatureCommands : []).forEach(command => {
+            if (!command || !command.key || typeof command.run !== 'function' || seen.has(command.key)) return;
+            seen.add(command.key);
+            const disabledReason = typeof command.disabledReason === 'function' ? command.disabledReason() : (command.disabledReason || '');
+            items.push({
+                key: `feature:${command.key}`,
+                type: 'command',
+                icon: command.icon || '◇',
+                title: command.title || command.key,
+                shortcut: command.shortcut || '',
+                disabled: !!disabledReason,
+                disabledReason,
+                meta: disabledReason || command.meta || '扩展功能',
+                search: `${command.title || command.key} ${command.meta || ''} ${command.keywords || ''} ${command.shortcut || ''}`,
+                run: command.run
+            });
         });
         if (window.SoraReferencePicker) {
             const index = window.SoraReferencePicker.buildIndex();
@@ -1473,7 +1655,15 @@ const GlobalCommandPalette = (function() {
                 });
             });
         }
-        return items;
+        const recents = loadRecents();
+        return items.sort((left, right) => {
+            const leftIndex = recents.indexOf(left.key);
+            const rightIndex = recents.indexOf(right.key);
+            if (leftIndex < 0 && rightIndex < 0) return 0;
+            if (leftIndex < 0) return 1;
+            if (rightIndex < 0) return -1;
+            return leftIndex - rightIndex;
+        });
     }
 
     function open() {
@@ -1498,13 +1688,14 @@ const GlobalCommandPalette = (function() {
             visibleItems = allItems.filter(item => terms.every(term => item.search.toLocaleLowerCase().includes(term))).slice(0, 60);
             activeIndex = Math.min(activeIndex, Math.max(0, visibleItems.length - 1));
             results.innerHTML = visibleItems.length ? visibleItems.map((item, index) => `<div class="command-result-row">
-                <button type="button" class="command-result${index === activeIndex ? ' active' : ''}" data-command-index="${index}">
-                    <span>${item.icon}</span><span><strong>${escapeHtml(item.title)}</strong><br><small>${escapeHtml(item.meta)}</small></span><small>${item.type === 'command' ? '执行' : '打开'}</small>
+                <button type="button" class="command-result${index === activeIndex ? ' active' : ''}" data-command-index="${index}"${item.disabled ? ' disabled aria-disabled="true"' : ''}>
+                    <span>${item.icon}</span><span><strong>${escapeHtml(item.title)}</strong><br><small>${escapeHtml(item.meta)}</small></span><small>${item.shortcut ? escapeHtml(item.shortcut) : (item.type === 'command' ? '执行' : '打开')}</small>
                 </button>${item.secondaryRun ? `<button type="button" class="command-result-secondary" data-command-secondary-index="${index}">${escapeHtml(item.secondaryLabel)}</button>` : ''}</div>`).join('') : '<div class="command-empty">没有匹配结果。</div>';
         };
         const run = index => {
             const item = visibleItems[index];
-            if (!item) return;
+            if (!item || item.disabled) return;
+            recordRecent(item.key);
             FeatureDialog.close();
             item.run();
         };

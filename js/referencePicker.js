@@ -1,5 +1,6 @@
 (function() {
     'use strict';
+    const rowCache = new Map();
 
     function normalizeText(value) {
         return String(value || '').trim().toLocaleLowerCase();
@@ -57,7 +58,10 @@
         const rowsById = new Map(rows.map(row => [row[2], row]));
         const directories = [];
 
+        const activeIds = new Set();
         rows.forEach((row, directoryOrder) => {
+            const cacheKey = String(row[2] || '');
+            activeIds.add(cacheKey);
             const dir = {
                 id: String(row[2] || ''),
                 name: String(row[1] || row[2] || '未命名目录'),
@@ -66,27 +70,31 @@
                 order: directoryOrder,
                 anchors: []
             };
-            const template = document.createElement('template');
-            template.innerHTML = String(row[3] || '');
-            if (typeof ensureAnchorElements === 'function') ensureAnchorElements(template.content);
-            if (typeof assignHeadingAutoIds === 'function') assignHeadingAutoIds(template.content);
-
-            const seen = new Set();
-            template.content.querySelectorAll('[id], .sora-anchor[data-anchor-name]').forEach((element, anchorOrder) => {
-                const explicitName = element.getAttribute('data-anchor-name');
-                const anchorId = normalizeAnchor(explicitName || element.getAttribute('id'));
-                if (!anchorId || seen.has(anchorId)) return;
-                seen.add(anchorId);
-                dir.anchors.push({
-                    id: anchorId,
-                    label: explicitName || element.textContent.trim() || anchorId,
-                    preview: getAnchorPreview(element),
-                    order: anchorOrder,
-                    directory: dir
+            const content = String(row[3] || '');
+            const cached = rowCache.get(cacheKey);
+            let anchors;
+            if (cached && cached.content === content) {
+                anchors = cached.anchors;
+            } else {
+                const template = document.createElement('template');
+                template.innerHTML = content;
+                if (typeof ensureAnchorElements === 'function') ensureAnchorElements(template.content);
+                if (typeof assignHeadingAutoIds === 'function') assignHeadingAutoIds(template.content);
+                const seen = new Set();
+                anchors = [];
+                template.content.querySelectorAll('[id], .sora-anchor[data-anchor-name]').forEach((element, anchorOrder) => {
+                    const explicitName = element.getAttribute('data-anchor-name');
+                    const anchorId = normalizeAnchor(explicitName || element.getAttribute('id'));
+                    if (!anchorId || seen.has(anchorId)) return;
+                    seen.add(anchorId);
+                    anchors.push({ id: anchorId, label: explicitName || element.textContent.trim() || anchorId, preview: getAnchorPreview(element), order: anchorOrder });
                 });
-            });
+                rowCache.set(cacheKey, { content, anchors });
+            }
+            dir.anchors = anchors.map(anchor => ({ ...anchor, directory: dir }));
             directories.push(dir);
         });
+        rowCache.forEach((_, id) => { if (!activeIds.has(id)) rowCache.delete(id); });
 
         return {
             directories,
@@ -407,6 +415,7 @@
     window.SoraReferencePicker = Object.freeze({
         attach,
         buildIndex,
+        clearCache: () => rowCache.clear(),
         parse,
         resolve,
         getCurrentDirectoryId

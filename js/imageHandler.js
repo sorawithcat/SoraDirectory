@@ -83,7 +83,7 @@ async function compressImage(base64Data, options = {}) {
             // 计算压缩率
             const compressionRatio = ((base64Data.length - bestSize) / base64Data.length * 100).toFixed(1);
             if (bestSize < base64Data.length) {
-                console.log(`图片压缩: ${(base64Data.length/1024).toFixed(1)}KB → ${(bestSize/1024).toFixed(1)}KB (节省 ${compressionRatio}%)`);
+                window.SoraDiagnostics?.info('图片压缩完成', `${(base64Data.length/1024).toFixed(1)}KB → ${(bestSize/1024).toFixed(1)}KB，节省 ${compressionRatio}%`);
             }
             resolve(bestResult);
         };
@@ -1372,7 +1372,7 @@ async function downloadArchive(archiveElement) {
                     } catch (fsError) {
                         // 用户取消或 API 不支持，回退到传统下载方式
                         if (fsError.name !== 'AbortError') {
-                            console.log('File System Access API 不可用，使用传统下载方式:', fsError);
+                            window.SoraDiagnostics?.debug('文件系统接口不可用，使用下载回退', fsError);
                         } else {
                             // 用户取消
                             MediaStorage.hideProgressToast();

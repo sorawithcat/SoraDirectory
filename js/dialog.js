@@ -30,6 +30,46 @@ const customDialogMessage = document.getElementById('customDialogMessage');
 const customDialogInput = document.getElementById('customDialogInput');
 const customDialogFooter = document.getElementById('customDialogFooter');
 const customDialogClose = document.getElementById('customDialogClose');
+let customDialogReturnFocus = null;
+
+function activateCustomDialog() {
+    customDialogReturnFocus = document.activeElement;
+    customDialogOverlay.setAttribute('aria-hidden', 'false');
+    customDialogOverlay.classList.add('active');
+}
+
+function deactivateCustomDialog() {
+    customDialogOverlay.classList.remove('active');
+    customDialogOverlay.setAttribute('aria-hidden', 'true');
+    const target = customDialogReturnFocus;
+    customDialogReturnFocus = null;
+    if (target && target.isConnected && typeof target.focus === 'function') {
+        target.focus();
+    }
+}
+
+customDialogOverlay.addEventListener('keydown', event => {
+    if (!customDialogOverlay.classList.contains('active')) return;
+    if (event.key === 'Escape') {
+        event.preventDefault();
+        const cancel = document.getElementById('customDialogCancel');
+        (cancel || customDialogClose).click();
+        return;
+    }
+    if (event.key !== 'Tab') return;
+    const focusable = Array.from(customDialog.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'))
+        .filter(element => !element.disabled && element.offsetParent !== null);
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+    }
+});
 /**
  * 自定义 alert 对话框
  * @param {string} message - 显示的消息内容
@@ -50,7 +90,7 @@ function customAlert(message, title = '提示') {
         const okBtn = document.getElementById('customDialogOk');
         const closeBtn = customDialogClose;
         const closeDialog = () => {
-            customDialogOverlay.classList.remove('active');
+            deactivateCustomDialog();
             resolve();
         };
         okBtn.onclick = closeDialog;
@@ -58,7 +98,7 @@ function customAlert(message, title = '提示') {
         customDialogOverlay.onclick = (e) => {
             if (e.target === customDialogOverlay) closeDialog();
         };
-        customDialogOverlay.classList.add('active');
+        activateCustomDialog();
         okBtn.focus();
     });
 }
@@ -93,7 +133,7 @@ function customConfirm(message, okText = '确定', cancelText = '取消', title 
         const cancelBtn = document.getElementById('customDialogCancel');
         const closeBtn = customDialogClose;
         const closeDialog = (result) => {
-            customDialogOverlay.classList.remove('active');
+            deactivateCustomDialog();
             resolve(result);
         };
         okBtn.onclick = () => closeDialog(true);
@@ -102,7 +142,7 @@ function customConfirm(message, okText = '确定', cancelText = '取消', title 
         customDialogOverlay.onclick = (e) => {
             if (e.target === customDialogOverlay) closeDialog(false);
         };
-        customDialogOverlay.classList.add('active');
+        activateCustomDialog();
         okBtn.focus();
     });
 }
@@ -127,7 +167,7 @@ function customPrompt(message, defaultValue = '', title = '输入') {
         const cancelBtn = document.getElementById('customDialogCancel');
         const closeBtn = customDialogClose;
         const closeDialog = (result) => {
-            customDialogOverlay.classList.remove('active');
+            deactivateCustomDialog();
             resolve(result);
         };
         const handleOk = () => {
@@ -148,7 +188,7 @@ function customPrompt(message, defaultValue = '', title = '输入') {
         customDialogOverlay.onclick = (e) => {
             if (e.target === customDialogOverlay) closeDialog(null);
         };
-        customDialogOverlay.classList.add('active');
+        activateCustomDialog();
         setTimeout(() => customDialogInput.focus(), 100);
     });
 }
@@ -180,7 +220,7 @@ function customSelect(message, options, defaultValue = '', title = '选择') {
         const cancelBtn = document.getElementById('customDialogCancel');
         const closeBtn = customDialogClose;
         const closeDialog = (result) => {
-            customDialogOverlay.classList.remove('active');
+            deactivateCustomDialog();
             customDialogMessage.innerHTML = '';
             resolve(result);
         };
@@ -202,7 +242,7 @@ function customSelect(message, options, defaultValue = '', title = '选择') {
         customDialogOverlay.onclick = (e) => {
             if (e.target === customDialogOverlay) closeDialog(null);
         };
-        customDialogOverlay.classList.add('active');
+        activateCustomDialog();
         setTimeout(() => selectEl.focus(), 100);
     });
 }
@@ -245,7 +285,7 @@ function codeEditDialog(code = '', language = 'javascript', langOptions = [], ti
             deleteBtn.style.display = 'none';
         }
         const closeDialog = (result) => {
-            customDialogOverlay.classList.remove('active');
+            deactivateCustomDialog();
             customDialogMessage.innerHTML = '';
             resolve(result);
         };
@@ -276,7 +316,7 @@ function codeEditDialog(code = '', language = 'javascript', langOptions = [], ti
         };
         customDialog.style.maxWidth = '700px';
         customDialog.style.width = '90%';
-        customDialogOverlay.classList.add('active');
+        activateCustomDialog();
         setTimeout(() => textarea.focus(), 100);
     });
 }
@@ -361,7 +401,7 @@ function colorPickerDialog(defaultValue = '#000000', title = '选择颜色') {
             return /^#[0-9A-Fa-f]{6}$/.test(value);
         }
         const closeDialog = (result) => {
-            customDialogOverlay.classList.remove('active');
+            deactivateCustomDialog();
             customDialogMessage.innerHTML = '';
             customDialog.style.maxWidth = '';
             customDialog.style.width = '';
@@ -394,7 +434,7 @@ function colorPickerDialog(defaultValue = '#000000', title = '选择颜色') {
         };
         customDialog.style.maxWidth = '400px';
         customDialog.style.width = '90%';
-        customDialogOverlay.classList.add('active');
+        activateCustomDialog();
         updateContrast(colorPicker.value.toUpperCase());
         setTimeout(() => colorText.focus(), 100);
     });

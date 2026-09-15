@@ -92,7 +92,7 @@ function checkid(idname, fanhui = 0, findway = 0) {
     
     let ids = allId();
     if (ids.indexOf(idname) >= 0) {
-        console.log(`存在此id名："${idname}"`);
+        window.SoraDiagnostics?.debug('存在此 ID', idname);
         if (fanhui === 0) {
             return ids.indexOf(idname);
         } else {
@@ -106,21 +106,21 @@ function checkid(idname, fanhui = 0, findway = 0) {
             ids = minToMaxStr(ids);
         }
         if (ids.indexOf(idname) + 1 === ids.length) {
-            console.log(`不存在此id名："${idname}"，最接近的id名有："${ids[ids.indexOf(idname) - 1]}"，"${ids[ids.indexOf(idname) - 2]}"`);
+            window.SoraDiagnostics?.debug('ID 不存在，已计算邻近项', idname);
             if (fanhui === 0) {
                 return [ids[ids.indexOf(idname) - 1], ids[ids.indexOf(idname) - 2]];
             } else {
                 return false;
             }
         } else if (ids.indexOf(idname) === 0) {
-            console.log(`不存在此id名："${idname}"，最接近的id名有："${ids[ids.indexOf(idname) + 1]}"，"${ids[ids.indexOf(idname) + 2]}"`);
+            window.SoraDiagnostics?.debug('ID 不存在，已计算邻近项', idname);
             if (fanhui === 0) {
                 return [ids[ids.indexOf(idname) + 1], ids[ids.indexOf(idname) + 2]];
             } else {
                 return false;
             }
         } else {
-            console.log(`不存在此id名："${idname}"，最接近的id名有："${ids[ids.indexOf(idname) - 1]}"，"${ids[ids.indexOf(idname) + 1]}"`);
+            window.SoraDiagnostics?.debug('ID 不存在，已计算邻近项', idname);
             if (fanhui === 0) {
                 return [ids[ids.indexOf(idname) - 1], ids[ids.indexOf(idname) + 1]];
             } else {

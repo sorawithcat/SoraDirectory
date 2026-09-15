@@ -1257,7 +1257,7 @@ function reportProgress(current, total, action, options = {}) {
             );
             await new Promise(resolve => setTimeout(resolve, 0));
         }
-        console.log(`已预加载 ${contentsToProcess.length} 个目录的媒体内容`);
+        window.SoraDiagnostics?.info('媒体内容预加载完成', { count: contentsToProcess.length });
     }
     async function getMediaAsDataUrl(mediaId) {
         const database = await initDB();

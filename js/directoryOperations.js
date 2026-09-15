@@ -64,6 +64,7 @@ function createNewDirectory(name, asChild = false) {
             }
             if (!currentElement.classList.contains("expanded")) {
                 currentElement.classList.add("expanded");
+                currentElement.setAttribute('aria-expanded', 'true');
                 toggleChildDirectories(currentDirId, true);
             }
         }

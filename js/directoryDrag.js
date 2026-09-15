@@ -273,6 +273,7 @@ function handleDrop(e) {
         if (!dropTarget.classList.contains("has-children")) {
             dropTarget.classList.add("has-children");
             dropTarget.classList.add("expanded");
+            dropTarget.setAttribute('aria-expanded', 'true');
         }
     }
     let previousElement = draggedMulu;

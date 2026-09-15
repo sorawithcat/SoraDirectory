@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>SoraDirectory browser E2E</title>
+    <style>
+        body { margin: 0; font: 14px/1.5 system-ui, sans-serif; }
+        #status { padding: 10px; white-space: pre-wrap; }
+        iframe { width: 1200px; height: 760px; border: 0; }
+        body[data-viewport="mobile"] iframe { width: 360px; height: 720px; }
+    </style>
+</head>
+<body data-test-status="running">
+    <pre id="status">启动中…</pre>
+    <iframe id="app" title="测试应用"></iframe>
+    <script>
+        (async function() {
+            const params = new URLSearchParams(location.search);
+            const viewport = params.get('viewport') === 'mobile' ? 'mobile' : 'desktop';
+            document.body.dataset.viewport = viewport;
+            const status = document.getElementById('status');
+            const frame = document.getElementById('app');
+            const log = [];
+            const failures = [];
+            const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+            const poll = async (check, timeout = 12000) => {
+                const started = performance.now();
+                while (performance.now() - started < timeout) {
+                    try { const result = check(); if (result) return result; } catch (_) {}
+                    await wait(50);
+                }
+                throw new Error('等待超时');
+            };
+            const check = (condition, label, detail = '') => {
+                if (!condition) failures.push(`${label}${detail ? `：${detail}` : ''}`);
+                log.push(`${condition ? 'PASS' : 'FAIL'} ${label}${detail ? ` · ${detail}` : ''}`);
+            };
+            window.addEventListener('error', event => failures.push(`父页面错误：${event.message}`));
+            window.addEventListener('unhandledrejection', event => failures.push(`父页面异步错误：${event.reason?.message || event.reason}`));
+            try {
+                frame.src = `../index.html?test=browser-e2e-${viewport}-${Date.now()}`;
+                await poll(() => frame.contentWindow?.SoraMethodWorkbench && frame.contentWindow?.SoraKnowledgeBaseInterop);
+                const win = frame.contentWindow;
+                const runtimeErrors = [];
+                win.addEventListener('error', event => runtimeErrors.push(event.message));
+                win.addEventListener('unhandledrejection', event => runtimeErrors.push(event.reason?.message || String(event.reason)));
+                check(!win.document.getElementById('bootStatus')?.classList.contains('is-error'), '应用初始化无启动错误');
+                check(Boolean(win.SoraDiagnostics && win.SoraPerformance && win.SoraReusableBlocks && win.SoraComponentLibrary && win.SoraExtensionPacks && win.SoraKnowledgeBaseInterop), '扩展模块完整加载');
+
+                const longBody = `<h2 id="intro">开始</h2>${'<p>用于验证目录滚动恢复的长段落。</p>'.repeat(180)}<a href="#" data-sora-link="method" data-sora-methods='[{"methodId":"e2e_method","methodType":"show_message","trigger":"click","message":"ok"}]'>测试方法</a>`;
+                const data = [['mulu', '首页', 'e2e_root', longBody], ['mulu', '第二页', 'e2e_second', '<h2>第二页</h2><p>内容</p>']];
+                win.eval(`mulufile = ${JSON.stringify(data)}; rebuildMulufileIndex(); currentMuluName = null; LoadMulu();`);
+                await win.DirectoryNavigation.open('e2e_root', { viewMode: 'top' });
+                const preview = win.document.querySelector('.markdown-preview');
+                preview.style.setProperty('height', '240px', 'important');
+                preview.style.setProperty('max-height', '240px', 'important');
+                preview.style.setProperty('flex', '0 0 240px', 'important');
+                preview.style.setProperty('overflow', 'auto', 'important');
+                preview.scrollTop = 520;
+                await wait(50);
+                await win.DirectoryNavigation.open('e2e_second', { viewMode: 'top' });
+                await win.DirectoryNavigation.open('e2e_root', { viewMode: 'restore' });
+                check(preview.scrollTop > 300, '目录切换恢复滚动位置', `scrollTop=${Math.round(preview.scrollTop)}`);
+                const beforeRepeat = preview.scrollTop;
+                await win.DirectoryNavigation.open('e2e_root', { viewMode: 'restore' });
+                check(Math.abs(preview.scrollTop - beforeRepeat) < 20, '再次打开当前目录不回顶部');
+
+                const methodEntries = win.SoraMethodWorkbench.collectEntries();
+                check(methodEntries.some(entry => entry.method.methodId === 'e2e_method'), '方法配置可再次扫描编辑');
+                win.SoraMethodWorkbench.openManager();
+                await wait(50);
+                check(Array.from(win.document.querySelectorAll('[data-action-name="edit"]')).some(button => button.textContent.includes('编辑')), '方法管理显示编辑动作');
+                win.FeatureDialog.close();
+
+                const issues = await win.collectExportPreflightIssues(data);
+                check(Boolean(issues && Array.isArray(issues.invalidMethods)), '导出预检可重复运行');
+                const inventory = await win.SoraPerformance.analyze(data, { force: true });
+                check(inventory.rows === 2 && inventory.durationMs >= 0, 'Worker/回退性能清单可运行', `${inventory.durationMs.toFixed(1)}ms`);
+
+                const mediaId = await win.MediaStorage.save(new win.Blob(['e2e-media'], { type: 'image/png' }), 'image');
+                const mediaBlob = await win.MediaStorage.getChunkedBlob(mediaId);
+                check(Boolean(mediaId && mediaBlob && mediaBlob.size), '媒体写入与读取');
+
+                const currentData = win.eval('mulufile.map(row => row.slice())');
+                const packageBlob = await win.buildSoraPackageBlob(currentData);
+                const packageResult = await win.readSoraPackageManifest(new File([packageBlob], 'roundtrip.sora'));
+                check(packageResult.manifest.directories.length === 2, '.sora 保存与清单读取往返');
+
+                win.eval('markUnsavedChanges()');
+                await win.DraftManager.saveNow();
+                await win.DraftManager.createNamedSnapshot('浏览器回归');
+                const snapshots = await win.DraftManager.listSnapshots();
+                check(snapshots.some(item => item.snapshotName === '浏览器回归'), '按文档身份创建命名快照');
+
+                const kb = win.SoraKnowledgeBaseInterop;
+                check(kb.safeStem('a:b?c') === 'a-b-c', 'Markdown 文件名净化');
+                const parsed = kb.parseFrontMatter('---\ntitle: "样例"\ntags: ["a"]\n---\n# 正文');
+                check(parsed.data.title === '样例' && parsed.body.includes('# 正文'), 'Front Matter 解析');
+                check(kb.findCycles(new Map([['a', ['b']], ['b', ['a']]])).length === 1, '知识库循环链接预检');
+
+                async function captureExport(exportRows, settings) {
+                    const parts = [];
+                    win.showSaveFilePicker = async () => ({ name: 'e2e.html', createWritable: async () => ({ write: async part => parts.push(part), close: async () => {}, abort: async () => {} }) });
+                    const originalResolve = win.PublicationSettings.resolve;
+                    win.PublicationSettings.resolve = () => settings;
+                    try { await win.handleSaveAsWebpage(false, null, exportRows, { mode: 'all' }); }
+                    finally { win.PublicationSettings.resolve = originalResolve; }
+                    return new Blob(parts, { type: 'text/html' }).text();
+                }
+                const settings = { title: 'E2E', description: '', icon: '', language: 'zh-CN', theme: 'system', defaultDirId: 'e2e_root', initialTreeState: 'expanded', navigationMode: 'sidebar', capabilityLevel: 'standard', searchEnabled: true, mediaPolicy: 'balanced', deploymentMode: 'single-html', debugEnabled: false };
+                const exported = await captureExport(data, settings);
+                check(exported.includes('createSoraMethodRuntimeCore') && exported.includes('data-sora-methods'), '有方法导出包含共享运行核心', `length=${exported.length},core=${exported.includes('createSoraMethodRuntimeCore')},method=${exported.includes('data-sora-methods')}`);
+                check(!exported.includes('sora-method-debug-button">方法调试'), '标准发布不显示调试入口');
+                const compactRows = [['mulu', '纯阅读', 'plain', '<h1>纯阅读</h1><p>内容</p>']];
+                const compact = await captureExport(compactRows, { ...settings, defaultDirId: 'plain', capabilityLevel: 'compact', searchEnabled: false });
+                check(!compact.includes('function executeSingleMethod') && compact.includes('function handleSoraMethodTriggersCascade() {}'), '无方法精简导出裁剪方法运行适配');
+                check(!compact.includes('id="exportSearchInput"'), '精简导出裁剪搜索界面');
+
+                const reader = document.createElement('iframe');
+                reader.style.width = viewport === 'mobile' ? '360px' : '1100px';
+                reader.style.height = '640px';
+                document.body.appendChild(reader);
+                reader.srcdoc = exported;
+                await poll(() => reader.contentDocument?.querySelector('.content-body')?.textContent.includes('开始'), 10000);
+                check(Boolean(reader.contentDocument.querySelector('main[role="main"], main')), '导出网页真实运行并显示正文');
+                check(Boolean(reader.contentDocument.getElementById('readingModeBtn') && reader.contentDocument.getElementById('printPageBtn')), '阅读与打印入口可用');
+                if (viewport === 'mobile') check(getComputedStyle(reader.contentDocument.getElementById('mobileNavToggle')).display !== 'none', '移动宽度显示目录抽屉按钮');
+                else check(Boolean(reader.contentDocument.querySelector('[role="tree"]')), '桌面宽度显示语义目录树');
+
+                await win.DraftManager.clear();
+                await win.MediaStorage.deleteMedia(mediaId);
+                check(runtimeErrors.length === 0, '场景运行无未处理脚本错误', runtimeErrors.join('；'));
+            } catch (error) {
+                failures.push(`测试中断：${error.stack || error.message || error}`);
+            }
+            status.textContent = [...log, ...(failures.length ? ['FAILURES', ...failures] : ['ALL PASSED'])].join('\n');
+            document.body.dataset.testStatus = failures.length ? 'failed' : 'passed';
+            document.title = failures.length ? 'SoraDirectory E2E FAILED' : 'SoraDirectory E2E PASSED';
+        })();
+    </script>
+</body>
+</html>

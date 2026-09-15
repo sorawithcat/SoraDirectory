@@ -157,9 +157,7 @@ function updateMulufileData(element, newContent, options = {}) {
                 markUnsavedChanges();
             }
             if (cleanedContent && cleanedContent.includes('<video')) {
-                console.log('updateMulufileData: 已保存视频内容到 mulufile');
-                console.log('  - dirId:', dirId);
-                console.log('  - 内容长度:', cleanedContent.length);
+                window.SoraDiagnostics?.debug('目录媒体内容已同步', { id: dirId, size: cleanedContent.length });
             }
         }
         return true;
@@ -231,6 +229,8 @@ function RemoveOtherSelect() {
     let mulus = document.querySelectorAll(".mulu");
     for (let i = 0; i < mulus.length; i++) {
         mulus[i].classList.remove("select");
+        mulus[i].setAttribute("aria-selected", "false");
+        mulus[i].setAttribute("tabindex", "-1");
     }
 }
 /**
@@ -270,7 +270,7 @@ function DuplicateMuluHints() {
         showToast(`存在 ${duplicateMulu.length} 个重复目录名`, "warning", 3000);
         return true;
     } else {
-        console.log("无重复目录");
+        window.SoraDiagnostics?.debug('目录 ID 检查完成，无重复项');
         return false;
     }
 }
@@ -304,6 +304,9 @@ function ChangeChildName(idname = "", newName = "", options = {}) {
     }
     let hasDuplicate = isDuplicateName(newName);
     let currentDirId = currentMulu.getAttribute("data-dir-id");
+    const rewriteResult = window.SoraReferenceGraph && typeof window.SoraReferenceGraph.rewriteDirectoryReferences === 'function'
+        ? window.SoraReferenceGraph.rewriteDirectoryReferences(currentDirId, newName)
+        : { changed: 0, changedDirIds: [] };
     for (let i = 0; i < mulufile.length; i++) {
         let item = mulufile[i];
         if (item.length === 4) {
@@ -317,6 +320,16 @@ function ChangeChildName(idname = "", newName = "", options = {}) {
     if (hasDuplicate) {
         showToast("已存在同名目录", "warning", 2500);
     }
+    if (rewriteResult.changedDirIds.includes(currentDirId)) {
+        const row = typeof getMulufileByDirId === 'function' ? getMulufileByDirId(currentDirId) : null;
+        if (row && typeof jiedianwords !== 'undefined' && jiedianwords) jiedianwords.value = row[3] || '';
+        if (typeof updateMarkdownPreview === 'function') {
+            Promise.resolve(updateMarkdownPreview({ force: true })).catch(() => {});
+        }
+    }
+    if (rewriteResult.changed > 0) {
+        showToast(`已将 ${rewriteResult.changed} 处目录引用固化为稳定 ID`, 'success', 2600);
+    }
     return true;
 }
 
@@ -325,6 +338,62 @@ function isDirectoryToggleHit(element, event) {
     const rect = element.getBoundingClientRect();
     const x = Number.isFinite(event.clientX) ? event.clientX - rect.left : event.offsetX;
     return x >= 0 && x < 24;
+}
+
+function getVisibleDirectoryTreeItems() {
+    return Array.from(document.querySelectorAll('.mulu')).filter(element => {
+        return element.style.display !== 'none' && !element.classList.contains('directory-filter-hidden');
+    });
+}
+
+function focusDirectoryTreeItem(element) {
+    if (!element) return;
+    document.querySelectorAll('.mulu[tabindex="0"]').forEach(item => item.setAttribute('tabindex', '-1'));
+    element.setAttribute('tabindex', '0');
+    element.focus();
+}
+
+function handleDirectoryTreeKeydown(event) {
+    const current = event.currentTarget;
+    const visible = getVisibleDirectoryTreeItems();
+    const index = visible.indexOf(current);
+    let target = null;
+    if (event.key === 'ArrowDown') target = visible[Math.min(visible.length - 1, index + 1)];
+    else if (event.key === 'ArrowUp') target = visible[Math.max(0, index - 1)];
+    else if (event.key === 'Home') target = visible[0];
+    else if (event.key === 'End') target = visible[visible.length - 1];
+    else if (event.key === 'ArrowRight' && current.classList.contains('has-children')) {
+        if (!current.classList.contains('expanded')) {
+            current.classList.add('expanded');
+            current.setAttribute('aria-expanded', 'true');
+            toggleChildDirectories(current.getAttribute('data-dir-id'), true);
+        } else {
+            target = visible[index + 1];
+        }
+    } else if (event.key === 'ArrowLeft') {
+        if (current.classList.contains('has-children') && current.classList.contains('expanded')) {
+            current.classList.remove('expanded');
+            current.setAttribute('aria-expanded', 'false');
+            toggleChildDirectories(current.getAttribute('data-dir-id'), false);
+        } else {
+            const parentId = current.getAttribute('data-parent-id');
+            if (parentId && parentId !== 'mulu') {
+                target = document.querySelector('.mulu[data-dir-id="' + escapeCssSelectorValue(parentId) + '"]');
+            }
+        }
+    } else if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        Promise.resolve(switchToDirectoryElement(current, {
+            syncCurrent: true,
+            viewMode: currentMuluName === current.id ? 'preserve' : 'restore',
+            forceRender: false
+        })).catch(err => console.error('键盘切换目录失败:', err));
+        return;
+    } else {
+        return;
+    }
+    event.preventDefault();
+    if (target) focusDirectoryTreeItem(target);
 }
 /**
  * 为目录元素绑定标准事件
@@ -338,6 +407,20 @@ function isDirectoryToggleHit(element, event) {
  */
 function bindMuluEvents(muluElement, mulufileIndex = -1) {
     let clickTimer = null;
+    const level = Number.parseInt(muluElement.getAttribute('data-level'), 10) || 0;
+    muluElement.setAttribute('role', 'treeitem');
+    muluElement.setAttribute('aria-level', String(level + 1));
+    muluElement.setAttribute('aria-selected', muluElement.classList.contains('select') ? 'true' : 'false');
+    muluElement.setAttribute('tabindex', muluElement.classList.contains('select') ? '0' : '-1');
+    if (muluElement.classList.contains('has-children')) {
+        muluElement.setAttribute('aria-expanded', muluElement.classList.contains('expanded') ? 'true' : 'false');
+    } else {
+        muluElement.removeAttribute('aria-expanded');
+    }
+    if (muluElement.dataset.treeKeyboardBound !== 'true') {
+        muluElement.dataset.treeKeyboardBound = 'true';
+        muluElement.addEventListener('keydown', handleDirectoryTreeKeydown);
+    }
     if (typeof bindDragEvents === 'function') {
         bindDragEvents(muluElement);
     }
@@ -354,9 +437,11 @@ function bindMuluEvents(muluElement, mulufileIndex = -1) {
                 let dirId = muluElement.getAttribute("data-dir-id");
                 if (isExpanded) {
                     muluElement.classList.remove("expanded");
+                    muluElement.setAttribute('aria-expanded', 'false');
                     if (dirId) toggleChildDirectories(dirId, false);
                 } else {
                     muluElement.classList.add("expanded");
+                    muluElement.setAttribute('aria-expanded', 'true');
                     if (dirId) toggleChildDirectories(dirId, true);
                 }
                 return;
@@ -364,7 +449,11 @@ function bindMuluEvents(muluElement, mulufileIndex = -1) {
             if (clickTimer) clearTimeout(clickTimer);
             clickTimer = setTimeout(function() {
                 const done = typeof switchToDirectoryElement === 'function'
-                    ? switchToDirectoryElement(muluElement, { syncCurrent: true, scrollPreviewTop: true, forceRender: false })
+                    ? switchToDirectoryElement(muluElement, {
+                        syncCurrent: true,
+                        viewMode: currentMuluName === muluElement.id ? 'preserve' : 'restore',
+                        forceRender: false
+                    })
                     : Promise.resolve(false);
                 Promise.resolve(done).catch(err => {
                     console.error('切换目录失败:', err);
@@ -380,7 +469,11 @@ function bindMuluEvents(muluElement, mulufileIndex = -1) {
                 clickTimer = null;
             }
             const done = typeof switchToDirectoryElement === 'function'
-                ? switchToDirectoryElement(muluElement, { syncCurrent: true, scrollPreviewTop: true, forceRender: false })
+                ? switchToDirectoryElement(muluElement, {
+                    syncCurrent: true,
+                    viewMode: currentMuluName === muluElement.id ? 'preserve' : 'restore',
+                    forceRender: false
+                })
                 : Promise.resolve(false);
             Promise.resolve(done)
                 .catch(err => {

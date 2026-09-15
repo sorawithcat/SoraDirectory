@@ -23,7 +23,9 @@ function syncPreviewToTextarea() {
             }
         });
         ensureAnchorElements(markdownPreview);
-        let html = removeSearchHighlights(markdownPreview.innerHTML);
+        const storageRoot = markdownPreview.cloneNode(true);
+        if (window.SoraReusableBlocks) window.SoraReusableBlocks.cleanForStorage(storageRoot);
+        let html = removeSearchHighlights(storageRoot.innerHTML);
         const archiveElements = markdownPreview.querySelectorAll('.archive-attachment');
         archiveElements.forEach(archiveElement => {
             const storageId = archiveElement.getAttribute('data-media-storage-id');
@@ -101,6 +103,108 @@ function attachTaskListEvents() {
 const videoOriginalSrcMap = new Map();
 /** 缓存上次的内容，用于比较是否真的需要更新 */
 let lastPreviewContent = '';
+
+const DirectoryViewState = (function() {
+    const states = new Map();
+
+    function getCurrentDirId() {
+        const current = currentMuluName ? document.getElementById(currentMuluName) : null;
+        return current ? (current.getAttribute('data-dir-id') || '') : '';
+    }
+
+    function nodePath(root, node) {
+        if (!root || !node || (node !== root && !root.contains(node))) return null;
+        const path = [];
+        let current = node;
+        while (current && current !== root) {
+            const parent = current.parentNode;
+            if (!parent) return null;
+            path.unshift(Array.prototype.indexOf.call(parent.childNodes, current));
+            current = parent;
+        }
+        return current === root ? path : null;
+    }
+
+    function pointFromPath(root, point) {
+        if (!root || !point || !Array.isArray(point.path)) return null;
+        let node = root;
+        for (const index of point.path) {
+            if (!node.childNodes || !node.childNodes[index]) return null;
+            node = node.childNodes[index];
+        }
+        const maxOffset = node.nodeType === Node.TEXT_NODE
+            ? node.textContent.length
+            : (node.childNodes ? node.childNodes.length : 0);
+        return { node, offset: Math.max(0, Math.min(Number(point.offset) || 0, maxOffset)) };
+    }
+
+    function readSelection() {
+        if (!markdownPreview) return null;
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0) return null;
+        const range = selection.getRangeAt(0);
+        const startPath = nodePath(markdownPreview, range.startContainer);
+        const endPath = nodePath(markdownPreview, range.endContainer);
+        if (!startPath || !endPath) return null;
+        return {
+            start: { path: startPath, offset: range.startOffset },
+            end: { path: endPath, offset: range.endOffset },
+            collapsed: range.collapsed
+        };
+    }
+
+    function capture(dirId = getCurrentDirId()) {
+        if (!dirId || !markdownPreview) return null;
+        const state = {
+            scrollTop: Math.max(0, markdownPreview.scrollTop || 0),
+            selection: readSelection(),
+            updatedAt: Date.now()
+        };
+        states.set(dirId, state);
+        return state;
+    }
+
+    function restore(dirId, options = {}) {
+        if (!markdownPreview) return false;
+        const mode = options.mode || 'restore';
+        if (mode === 'preserve') return true;
+        if (mode === 'top') {
+            markdownPreview.scrollTop = 0;
+            return true;
+        }
+        const state = states.get(dirId);
+        if (!state) {
+            markdownPreview.scrollTop = 0;
+            return false;
+        }
+        markdownPreview.scrollTop = Math.max(0, Number(state.scrollTop) || 0);
+        if (!state.selection) return true;
+        const start = pointFromPath(markdownPreview, state.selection.start);
+        const end = pointFromPath(markdownPreview, state.selection.end);
+        if (!start || !end) return true;
+        try {
+            const range = document.createRange();
+            range.setStart(start.node, start.offset);
+            range.setEnd(end.node, end.offset);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+        } catch (_) {
+        }
+        return true;
+    }
+
+    function forget(dirId) {
+        states.delete(dirId);
+    }
+
+    function reset() {
+        states.clear();
+    }
+
+    return { capture, restore, forget, reset, get: dirId => states.get(dirId) || null };
+})();
+window.DirectoryViewState = DirectoryViewState;
 
 function escapeCssSelectorValue(value) {
     if (value === null || value === undefined) return '';
@@ -259,6 +363,7 @@ async function navigateToDirectoryInternalLink(dirId, anchorId) {
         if (parentEl) {
             if (!parentEl.classList.contains('expanded')) {
                 parentEl.classList.add('expanded');
+                parentEl.setAttribute('aria-expanded', 'true');
             }
             if (typeof toggleChildDirectories === 'function') {
                 toggleChildDirectories(parentId, true);
@@ -285,14 +390,19 @@ async function navigateToDirectoryInternalLink(dirId, anchorId) {
 async function switchToDirectoryElement(target, options = {}) {
     if (!target) return false;
     const syncCurrent = options.syncCurrent !== false;
-    const scrollPreviewTop = options.scrollPreviewTop !== false;
     const forceRender = options.forceRender === true;
+    const previous = currentMuluName ? document.getElementById(currentMuluName) : null;
+    const previousDirId = previous ? (previous.getAttribute('data-dir-id') || '') : '';
+    const targetDirId = target.getAttribute('data-dir-id') || '';
+    const viewMode = options.viewMode
+        || (options.scrollPreviewTop === false ? 'preserve' : 'top');
 
-    if (syncCurrent && currentMuluName) {
-        const current = document.getElementById(currentMuluName);
-        if (current) {
-            syncPreviewToTextarea();
-        }
+    if (previousDirId) {
+        DirectoryViewState.capture(previousDirId);
+    }
+
+    if (syncCurrent && previous) {
+        syncPreviewToTextarea();
     }
 
     currentMuluName = target.id;
@@ -300,23 +410,21 @@ async function switchToDirectoryElement(target, options = {}) {
         RemoveOtherSelect();
     }
     target.classList.add('select');
+    target.setAttribute('aria-selected', 'true');
+    target.setAttribute('tabindex', '0');
 
     if (jiedianwords) {
         jiedianwords.value = findMulufileData(target);
     }
-    if (markdownPreview && scrollPreviewTop) {
-        markdownPreview.scrollTop = 0;
-    }
-
     isUpdating = true;
     try {
         await updateMarkdownPreview({ force: forceRender });
     } finally {
         isUpdating = false;
     }
+    DirectoryViewState.restore(targetDirId, { mode: viewMode });
     if (typeof DirectoryNavigation !== 'undefined') {
-        const dirId = target.getAttribute('data-dir-id');
-        if (dirId) DirectoryNavigation.track(dirId);
+        if (targetDirId) DirectoryNavigation.track(targetDirId);
     }
     return true;
 }
@@ -438,6 +546,7 @@ async function updateMarkdownPreview(options = {}) {
         // 更新DOM（使用 requestAnimationFrame 优化）
         const processAfterDOMUpdate = () => {
             assignHeadingAutoIds(markdownPreview);
+            if (window.SoraReusableBlocks) window.SoraReusableBlocks.renderEditor(markdownPreview);
             // 为每个视频设置 data-video-index 属性，用于后续恢复
             const videos = markdownPreview.querySelectorAll('video');
             videos.forEach((video, index) => {
@@ -545,7 +654,7 @@ function initializeArchiveDownloadButtons() {
                 const storageId = archiveElement.getAttribute('data-media-storage-id');
                 const exportUrl = archiveElement.getAttribute('data-export-url');
                 const fileName = archiveElement.getAttribute('data-archive-name');
-                console.log('下载按钮点击:', { fileName, storageId: storageId ? '存在' : '不存在', exportUrl: exportUrl ? '存在' : '不存在' });
+                window.SoraDiagnostics?.debug('附件下载已触发', { id: storageId || '', type: exportUrl ? 'export-url' : fileName });
                 if (!storageId && !exportUrl) {
                     console.error('压缩包元素缺少 data-media-storage-id 和 data-export-url');
                     showToast('文件数据不存在，无法下载', 'error', 2000);
@@ -718,18 +827,14 @@ if (markdownPreview) {
                         const specialParent = currentBlock.closest('ul, ol, table, blockquote, h1, h2, h3, h4, h5, h6, pre, code');
                         if (!specialParent) {
                             e.preventDefault();
-                            try {
-                                document.execCommand('formatBlock', false, 'p');
-                            } catch (err) {
-                                const p = document.createElement('p');
-                                const br = document.createElement('br');
-                                p.appendChild(br);
-                                range.insertNode(p);
-                                range.setStart(p, 0);
-                                range.setEnd(p, 0);
-                                selection.removeAllRanges();
-                                selection.addRange(range);
-                            }
+                            const p = document.createElement('p');
+                            while (currentBlock.firstChild) p.appendChild(currentBlock.firstChild);
+                            if (!p.firstChild) p.appendChild(document.createElement('br'));
+                            currentBlock.replaceWith(p);
+                            range.selectNodeContents(p);
+                            range.collapse(false);
+                            selection.removeAllRanges();
+                            selection.addRange(range);
                             return;
                         }
                     }
@@ -970,7 +1075,13 @@ if (markdownPreview) {
                 selection.removeAllRanges();
                 selection.addRange(newRange);
             } else if (text) {
-                document.execCommand('insertText', false, text);
+                range.deleteContents();
+                const textNode = document.createTextNode(text);
+                range.insertNode(textNode);
+                range.setStartAfter(textNode);
+                range.collapse(true);
+                selection.removeAllRanges();
+                selection.addRange(range);
             }
             setTimeout(() => {
                 syncPreviewToTextarea();

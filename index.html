@@ -2296,6 +2296,12 @@
             background: var(--dir-hover-bg, #edf3fa) !important;
         }
 
+        .mulu:focus-visible {
+            z-index: 1;
+            outline: 3px solid var(--color-primary);
+            outline-offset: -3px;
+        }
+
         .mulu.select,
         .select {
             background: var(--dir-selected-bg, var(--color-primary-soft)) !important;
@@ -2413,6 +2419,7 @@
             }
         }
     </style>
+    <link rel="stylesheet" href="css/design-system.css?v=20260915-design-tokens-1">
 </head>
 <body>
 
@@ -2427,6 +2434,7 @@
             <button class="top-toolbar-btn" id="saveAsBtn" title="另存为">另存为</button>
             <button class="top-toolbar-btn" id="loadBtn" title="加载">加载</button>
             <button class="top-toolbar-btn" id="preflightBtn" title="检查目录、锚点、方法和媒体">导出预检</button>
+            <button class="top-toolbar-btn" id="publicationSettingsBtn" title="配置导出网页">发布设置</button>
         </div>
 
         <div class="top-toolbar-group format-toolbar-group">
@@ -2484,6 +2492,8 @@
             <button class="top-toolbar-btn" id="replaceBtn" title="替换 (Ctrl+H)">替换</button>
             <button class="top-toolbar-btn" id="mediaManagerBtn" title="查看媒体引用和孤立资源">媒体库</button>
             <button class="top-toolbar-btn" id="methodManagerBtn" title="集中管理、测试和检查方法">方法管理</button>
+            <button class="top-toolbar-btn" id="referenceGraphBtn" title="查看目录入链、出链和循环">关系</button>
+            <button class="top-toolbar-btn" id="directoryMetadataBtn" title="编辑目录标签、状态和自定义字段">字段</button>
             <button class="top-toolbar-btn" id="issueCenterBtn" title="查看目录、链接、锚点、方法和媒体问题">问题 <span id="issueCountBadge"></span></button>
             <button class="top-toolbar-btn" id="draftManagerBtn" title="查看和选择性恢复自动草稿快照">草稿</button>
             <button class="top-toolbar-btn" id="helpBtn" title="打开内置使用说明">使用说明</button>
@@ -2522,7 +2532,7 @@
             <button type="button" id="directoryBranchFilterBtn" aria-pressed="false" title="只显示当前目录分支">当前分支</button>
         </div>
         <div class="showbox">
-            <div class="mulubox">
+            <div class="mulubox" role="tree" aria-label="内容目录">
                 <div class="firststep">
                 </div>
             </div>
@@ -2533,6 +2543,7 @@
         <div class="workspace-navigation" id="workspaceNavigation">
             <div class="workspace-breadcrumb" id="workspaceBreadcrumb"></div>
             <button class="workspace-nav-btn" id="favoriteDirectoryBtn" title="收藏当前目录">☆</button>
+            <button type="button" class="workspace-nav-btn workspace-nav-text" id="openDirectoryAtTopBtn" title="将当前目录正文滚动到顶部">回顶部</button>
             <select class="workspace-nav-select" id="recentDirectorySelect" title="最近访问">
                 <option value="">最近访问</option>
             </select>
@@ -2671,11 +2682,11 @@
     </div>
     
     
-    <div class="custom-dialog-overlay" id="customDialogOverlay">
-        <div class="custom-dialog" id="customDialog">
+    <div class="custom-dialog-overlay" id="customDialogOverlay" aria-hidden="true">
+        <div class="custom-dialog" id="customDialog" role="dialog" aria-modal="true" aria-labelledby="customDialogTitle" aria-describedby="customDialogMessage">
             <div class="custom-dialog-header">
                 <span id="customDialogTitle">提示</span>
-                <button class="custom-dialog-close" id="customDialogClose">&times;</button>
+                <button type="button" class="custom-dialog-close" id="customDialogClose" aria-label="关闭">&times;</button>
             </div>
             <div class="custom-dialog-body" id="customDialogBody">
                 <div id="customDialogMessage"></div>
@@ -2691,7 +2702,7 @@
     <script>
         (async function() {
             const bootStatus = document.getElementById('bootStatus');
-            const assetVersion = '20260914-complete-optimization-7';
+            const assetVersion = '20260915-component-library-1';
             const runtimeErrors = [];
             const captureRuntimeError = event => {
                 const source = String(event.filename || '');
@@ -2723,7 +2734,9 @@
             // 功能脚本（可以并行加载）
             const featureScripts = [
                 'js/dialog.js',
+                'js/documentIdentity.js',
                 'js/methodRegistry.js',
+                'js/methodRuntimeCore.js',
                 'js/referencePicker.js',
                 'js/methodConfigDialog.js',
                 'js/directoryUtils.js',
@@ -2738,6 +2751,15 @@
                 'js/toolbar.js',
                 'js/searchReplace.js',
                 'js/workspaceFeatures.js',
+                'js/publicationSettings.js',
+                'js/referenceGraph.js',
+                'js/directoryMetadata.js',
+                'js/diagnostics.js',
+                'js/performanceBudget.js',
+                'js/reusableBlocks.js',
+                'js/extensionPacks.js',
+                'js/componentLibrary.js',
+                'js/knowledgeBaseInterop.js',
                 'js/methodWorkbench.js'
             ];
             

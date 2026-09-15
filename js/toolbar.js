@@ -93,7 +93,7 @@ if (topLoadBtn) {
                     parsedData = await FileCache.get(file);
                     if (parsedData) {
                         fromCache = true;
-                        console.log('FileCache: 从缓存加载文件', fileName);
+                        window.SoraDiagnostics?.debug('从文件缓存加载', fileName);
                     }
                 }
                 if (!parsedData) {
@@ -107,7 +107,7 @@ if (topLoadBtn) {
                     }
                     if (!isEncrypted && typeof FileCache !== 'undefined' && Array.isArray(parsedData)) {
                         FileCache.set(file, parsedData)
-                            .then(() => console.log('FileCache: 已缓存文件', fileName))
+                            .then(() => window.SoraDiagnostics?.debug('文件已缓存', fileName))
                             .catch(err => console.warn('FileCache: 缓存保存失败', err));
                     }
                 }
@@ -173,6 +173,8 @@ if (topLoadBtn) {
                         return;
                     }
                     mulufile = parsedData;
+                    if (window.SoraDocumentIdentity) window.SoraDocumentIdentity.adoptFile(file);
+                    if (window.DirectoryMetadata) window.DirectoryMetadata.reset();
                     if (typeof loadDirectoryLevelColors === 'function') {
                         loadDirectoryLevelColors(null);
                     }
@@ -316,13 +318,15 @@ if (newBtn) {
             if (typeof MediaStorage !== 'undefined' && MediaStorage.clearAll) {
                 try {
                     await MediaStorage.clearAll();
-                    console.log('已清空本地媒体存储');
+                    window.SoraDiagnostics?.info('新建文档时已清空本地媒体存储');
                 } catch (err) {
                     console.error('清空本地媒体存储失败:', err);
                 }
             }
             mulufile = [];
             if (typeof rebuildMulufileIndex === 'function') rebuildMulufileIndex();
+            if (window.DirectoryMetadata) window.DirectoryMetadata.reset();
+            if (window.SoraDocumentIdentity) window.SoraDocumentIdentity.newDocument('soralist');
             if (typeof DraftManager !== 'undefined') await DraftManager.clear();
             if (typeof DirectoryHistory !== 'undefined') DirectoryHistory.clear();
             if (typeof loadDirectoryLevelColors === 'function') {
@@ -536,6 +540,7 @@ function buildHelpPageContents() {
         '<li>批量插入图片和视频，并在媒体库中查看引用、复用资源或清理孤立资源。</li>',
         '<li>创建链接：外链、页内跳转（#锚点）、目录内跳转（dir:/name:）。</li>',
         '<li>创建方法：为导出网页配置导航、内容、状态、条件、交互、组件、样式和目录动作；目标目录或锚点可搜索选择。</li>',
+        '<li>通过 <strong>Ctrl+K</strong> 打开命令搜索，使用可复用内容块、受控组件、声明式扩展包、关系视图、智能集合、诊断和性能预算等扩展能力。</li>',
         '<li>保存为普通文件或加密文件；导出网页或加密网页（需要密码才能查看）。</li>',
         '<li>用面包屑、最近访问和收藏快速定位目录；未保存修改会生成本地自动草稿。</li>',
         '<li>导出前检查目录结构、链接、锚点、方法和媒体引用。</li>',
@@ -580,7 +585,7 @@ function buildHelpPageContents() {
         '<li>按钮出现“保存 *”说明有未保存更改。</li>',
         '<li><strong>另存为</strong>：可以选择“网页(.html)”或“自定义文件名”；两种都支持加密选项。</li>',
         '<li>导出网页会把目录与正文打包进单个 HTML 文件，适合发送给别人直接打开。</li>',
-        '<li><strong>切换目录会自动回到顶部</strong>：无论左键切换、右键切换、目录内跳转或新建后选中，右侧内容都会从顶部开始显示（带锚点跳转除外）。</li>',
+        '<li>每个目录会记住正文滚动位置和最后选区；再次打开会恢复上下文。需要从头阅读时，点击正文上方的 <strong>回顶部</strong>。</li>',
         '</ul>'
     ].join('');
 
@@ -590,6 +595,8 @@ function buildHelpPageContents() {
         '<h2 id="目录基础">基础操作</h2>',
         '<ul>',
         '<li>左键单击：选中并切换右侧内容。</li>',
+        '<li>再次单击当前目录：保持右侧正文位置，不会回到顶部。</li>',
+        '<li>返回最近目录、收藏目录或面包屑目录时：恢复该目录上次的正文位置；点击 <strong>回顶部</strong> 可明确从头打开。</li>',
         '<li>双击：重命名目录。</li>',
         '<li>拖拽：移动目录（含子目录）。</li>',
         '<li>点击目录左侧小三角：展开/收起子目录。</li>',
@@ -614,6 +621,7 @@ function buildHelpPageContents() {
         '<h2 id="目录撤销与导航">撤销、重做与快速导航</h2>',
         '<ul>',
         '<li><strong>撤销目录 / 重做目录</strong>：可恢复添加、删除、重命名、移动、粘贴和快速复制等目录操作，最多保留 40 步；也可在焦点不处于编辑区时使用 <strong>Ctrl+Z / Ctrl+Y</strong>。</li>',
+        '<li>重命名目录时，系统会把已能解析的名称引用固化为稳定目录 ID；删除前会显示子目录数和来自删除范围外的入链影响。</li>',
         '<li><strong>面包屑</strong>：编辑区上方显示当前目录路径，点击任一级可直接返回。</li>',
         '<li><strong>最近访问</strong>：保留最近 12 个有效目录，可从下拉列表快速跳转。</li>',
         '<li><strong>收藏目录</strong>：点击星标收藏当前目录，再从收藏列表进入。</li>',
@@ -726,6 +734,8 @@ function buildHelpPageContents() {
         '<ul>',
         '<li>编辑器预览区：<strong>Ctrl+单击</strong> 才会跳转/打开；单击用于进入编辑与选中元素。</li>',
         '<li>单击链接会打开链接编辑器；内部目标支持当前目录、当前分支、最近访问、收藏与全部目录范围。</li>',
+        '<li>顶部 <strong>关系</strong> 可查看当前目录的入链、出链、孤立目录、缺失目标和循环引用；点击关系可直接定位到来源或目标。</li>',
+        '<li>顶部 <strong>字段</strong> 可为当前目录设置标签、状态、优先级、日期和自定义字段，并通过“智能集合”筛选定位；筛选视图不会改动或删除正文。</li>',
         '</ul>'
     ].join('');
 
@@ -776,6 +786,13 @@ function buildHelpPageContents() {
         '<li>编辑器预览区会把方法显示为带“ƒ 方法”标记的链接；直接单击即可再次编辑。</li>',
         '<li>普通编辑时方法不会自动执行；点击“测试”会在隔离副本中预演，不改写原内容。</li>',
         '<li>顶部“方法管理”可集中搜索、定位、启停、复制、编辑、测试、查看关系、保存预设和升级旧配置。</li>',
+        '<li>方法卡片的“流程”会展开条件、分支和嵌套动作；“测试”沙箱支持运行全部、单步和重置，单步不会影响原正文。</li>',
+        '</ul>',
+        '<h2 id="内容与组件扩展">内容与组件扩展</h2>',
+        '<ul>',
+        '<li><strong>可复用内容块</strong>：通过 Ctrl+K 搜索并插入其他目录的只读引用；源目录更新后重新打开引用目录即可同步，块内“编辑源块”可返回内容源。循环引用会被阻止，导出网页会展开为静态内容。</li>',
+        '<li><strong>受控组件库</strong>：可插入折叠区、标签页、步骤条、问答、图库、输入和选择组件；插入后仍显示为方法链接，可再次单击编辑，并复用统一预检与导出运行时。</li>',
+        '<li><strong>声明式扩展包</strong>：只接受版本、能力声明、方法预设、组件预设和受控样式令牌；导入前显示权限与兼容性。脚本、远程代码、任意 JavaScript 和无约束 CSS 会被拒绝。</li>',
         '</ul>',
         '<h2 id="字段说明">字段说明</h2>',
         '<h3 id="触发方式">触发方式</h3>',
@@ -1007,7 +1024,8 @@ function buildHelpPageContents() {
 
         '<h2 id="导出预检">导出预检</h2>',
         '<ul>',
-        '<li>点击顶部<strong>导出预检</strong>可检查：重复目录 ID、父目录缺失、目录断链、锚点缺失/重复、方法配置与目标引用、重复方法 ID、媒体缺失和空目录。</li>',
+        '<li>点击顶部<strong>导出预检</strong>可检查：重复目录 ID、父目录缺失、目录断链、锚点缺失/重复、方法配置与目标引用、重复方法 ID、媒体缺失、不安全内容和空目录。</li>',
+        '<li>问题中心还会给出标题层级跳跃、重复标题、图片缺少替代文本和过长段落提醒；这些不阻止导出，也不会自动修改正文。</li>',
         '<li>预检只报告问题，不会自动修改内容；建议修正后再导出。</li>',
         '</ul>',
         '<h2 id="保存">保存</h2>',
@@ -1025,17 +1043,46 @@ function buildHelpPageContents() {
         '<h2 id="另存为">另存为</h2>',
         '<p>点击顶部工具栏 <strong>另存为</strong> 后会先选择保存格式：</p>',
         '<ul>',
-        '<li><strong>Sora 单文件包 (.sora)</strong>：保存目录、层级颜色和媒体的可重新导入单文件包；可选择整包加密。</li>',
+        '<li><strong>Sora 单文件包 (.sora)</strong>：保存目录、目录字段、层级颜色和媒体的可重新导入单文件包；可选择整包加密。</li>',
         '<li><strong>网页 (.html)</strong>：导出为独立可浏览的网页。</li>',
         '</ul>',
         '<p>选择格式后会询问导出范围：可导出全部目录、当前目录及其子目录，或手动勾选部分目录。</p>',
         '<p>网页导出可选择是否加密；<code>.sora</code> 包支持替换或合并加载，加密包需要密码。加载较大的包时会显示进度，目录可先打开，媒体继续在后台导入。</p>',
         '<p>浏览器无法直接写入文件时，生成完成后会提供<strong>保存到设备</strong>；设备与浏览器支持系统分享时还会显示<strong>分享</strong>。</p>',
+        '<h2 id="发布设置">发布设置</h2>',
+        '<ul>',
+        '<li>点击顶部 <strong>发布设置</strong>，可统一配置标题、说明、页面语言、主题、默认目录、目录初始状态和导航方式。</li>',
+        '<li>“精简阅读”关闭搜索和调试；“标准互动”保留搜索但隐藏调试；“完整互动”才允许显式开启方法调试。</li>',
+        '<li>发布设置会显示正文估算体积、方法数量、能力差异与部署方式；没有方法的文档会从产物中移除方法运行适配代码。</li>',
+        '<li>媒体策略可选大视频手动加载、所有视频手动加载，或在阅读页中禁止加载视频。</li>',
+        '<li>部署方式可选默认的单 HTML、静态网站目录或 PWA 目录；目录模式需要浏览器支持文件夹写入。</li>',
+        '<li>发布配置与正文分开保存；可保存/加载命名预设、比较差异、复制 JSON 或回退上次设置。</li>',
+        '</ul>',
         '<h2 id="导出网页">导出网页（不加密）</h2>',
         '<ul>',
-        '<li>导出网页后可离线打开浏览，目录与内部跳转都可用。</li>',
+        '<li>导出网页后可离线打开浏览；目录选择、内部跳转以及浏览器前进/后退会保留阅读位置。</li>',
+        '<li>导出页目录上方可搜索目录名和正文；按 <strong>Ctrl+K</strong> 或 <strong>/</strong> 可直接聚焦搜索。</li>',
+        '<li>地址中的目录和锚点定位可直接复制分享；打开后会还原对应目录和位置。</li>',
+        '<li>移动端使用“目录”按钮打开侧栏；目录树支持方向键、Home、End、Enter 和空格操作。</li>',
+        '<li>正文工具栏提供阅读模式、当前目录大纲、阅读进度和打印；打印会隐藏导航与操作按钮，并按纸张宽度处理代码、表格和分页。</li>',
         '<li>导出网页中：锚点不可见且不可点击，只用于作为跳转目标。</li>',
+        '<li>导出网页中：图片和视频会限制在正文宽度内；图片、剧透内容和交互弹窗均支持键盘操作。</li>',
         '<li>导出网页中：方法会生效（按触发方式执行），可用于隐藏/显示/切换、重命名、替换内容、添加格式、目录动作等。</li>',
+        '<li>导出预检会阻止提示不安全内容；导出时会强制移除脚本、内联事件和危险协议，外链会补全 <code>noopener noreferrer</code>。</li>',
+        '<li>发布版默认不显示“方法调试”；需要排查时应使用带诊断开关的发布配置。</li>',
+        '</ul>',
+        '<h2 id="网站目录与PWA">网站目录与 PWA</h2>',
+        '<ul>',
+        '<li><strong>单 HTML</strong>：最便携，支持直接发送和 <code>file://</code> 打开，是默认兼容基线。</li>',
+        '<li><strong>静态网站目录</strong>：生成 <code>index.html</code>，适合部署到普通静态托管。</li>',
+        '<li><strong>PWA 目录</strong>：额外生成 <code>manifest.webmanifest</code> 与 <code>sora-service-worker.js</code>；必须通过 HTTP/HTTPS 部署，Service Worker 失败不影响基础阅读。</li>',
+        '<li>加密网页不能可靠注册 PWA；若同时选择，导出时会自动降级为静态网站目录并提示。</li>',
+        '</ul>',
+        '<h2 id="Markdown互操作">Markdown / Obsidian 互操作</h2>',
+        '<ul>',
+        '<li>按 Ctrl+K 搜索“Markdown / Obsidian 互操作”，可导入或导出 Markdown 文件夹、Front Matter、双链和 <code>_assets</code> 资源目录。</li>',
+        '<li>所有写入都先展示同名冲突、非法文件名映射、缺失资源和循环关系；已有同名文件不会被覆盖。</li>',
+        '<li>方法运行逻辑不会写入 Markdown；方法链接会降级为普通文字，完整交互请使用网页导出。</li>',
         '</ul>',
         '<h2 id="加密导出">加密导出（网页/文件）</h2>',
         '<ul>',
@@ -1105,7 +1152,7 @@ function buildHelpPageContents() {
         '<h2 id="交互相关">交互相关</h2>',
         '<ul>',
         '<li>编辑器预览区：<strong>Ctrl+单击</strong> 才会跳转/打开；单击用于进入编辑与选中元素。</li>',
-        '<li>切换目录时右侧内容会自动回到顶部；如果是带锚点的跳转，会在顶部归零后再滚动到锚点位置。</li>',
+        '<li>普通目录切换会恢复该目录上次位置；首次打开从顶部开始。带锚点的跳转始终定位到目标锚点。</li>',
         '<li>目录内跳转使用 <code>name:</code> 时，如果存在同名目录，会跳到第一个匹配项（建议用 <code>dir:</code> 更稳定）。</li>',
         '</ul>',
         '<h2 id="视图相关">视图相关</h2>',
@@ -1120,6 +1167,7 @@ function buildHelpPageContents() {
         '<li>有未保存修改时，系统会把最新草稿保存在当前浏览器本地，并定期保留最多 20 个历史快照。</li>',
         '<li>再次打开时可选择恢复最近 30 天内的草稿；选择忽略会删除该草稿。</li>',
         '<li>点击顶部“草稿”可查看快照差异，恢复整个快照，或只勾选部分目录恢复。</li>',
+        '<li>草稿按文档身份隔离，同名但来源不同的文件不会串用；可输入名称建立命名快照，目录字段会随快照恢复。</li>',
         '<li>自动草稿不能替代正式保存或备份，清理浏览器站点数据后可能丢失。</li>',
         '</ul>',
         '<h2 id="媒体资源管理">媒体资源管理</h2>',
@@ -1133,6 +1181,13 @@ function buildHelpPageContents() {
         '<li><strong>左键</strong>点击存储信息：刷新统计。</li>',
         '<li><strong>右键</strong>点击存储信息：清理孤立媒体数据（不再被任何目录引用的图片/视频/压缩文件）。</li>',
         '<li>存储信息会定期自动刷新（也可手动刷新）。</li>',
+        '<li>按 Ctrl+K 搜索<strong>存储与诊断</strong>可查看空间趋势、孤立/缺失/重复媒体、迁移能力和诊断级别；合并重复媒体前会再次确认并先重写引用。</li>',
+        '<li>诊断摘要会脱敏，不包含正文、密码、附件内容或方法持久变量值。</li>',
+        '</ul>',
+        '<h2 id="性能预算">性能预算</h2>',
+        '<ul>',
+        '<li>按 Ctrl+K 搜索<strong>性能预算</strong>可运行 1,000 目录、约 10 MB 正文的索引基准，并查看 Worker 状态与最近耗时。</li>',
+        '<li>基准主要验证索引与预检计算；真实输入流畅度仍以桌面和移动浏览器场景验收为准。</li>',
         '</ul>',
         '<h2 id="新建会清空什么">新建会清空什么</h2>',
         '<ul>',
