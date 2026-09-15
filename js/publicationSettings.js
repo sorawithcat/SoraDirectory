@@ -6,7 +6,7 @@ const PublicationSettings = (function() {
         description: '',
         icon: '',
         language: 'zh-CN',
-        theme: 'system',
+        theme: 'light',
         defaultDirectory: 'first',
         initialTreeState: 'expanded',
         navigationMode: 'sidebar',
@@ -17,7 +17,6 @@ const PublicationSettings = (function() {
         debugEnabled: false
     });
     const ALLOWED = {
-        theme: new Set(['system', 'light', 'dark', 'high-contrast']),
         initialTreeState: new Set(['expanded', 'collapsed', 'current-path']),
         navigationMode: new Set(['sidebar', 'content-first']),
         capabilityLevel: new Set(['compact', 'standard', 'full']),
@@ -40,6 +39,7 @@ const PublicationSettings = (function() {
         next.language = /^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/.test(String(source.language || ''))
             ? String(source.language)
             : DEFAULTS.language;
+        next.theme = 'light';
         Object.keys(ALLOWED).forEach(key => {
             next[key] = ALLOWED[key].has(source[key]) ? source[key] : DEFAULTS[key];
         });
@@ -168,7 +168,7 @@ const PublicationSettings = (function() {
             description: controls.description.value,
             icon: controls.icon.value,
             language: controls.language.value,
-            theme: controls.theme.value,
+            theme: 'light',
             defaultDirectory: controls.defaultDirectory.value,
             initialTreeState: controls.initialTreeState.value,
             navigationMode: controls.navigationMode.value,
@@ -192,7 +192,7 @@ const PublicationSettings = (function() {
 
     function describeDifferences(a, b) {
         const labels = {
-            title: '标题', description: '说明', icon: '图标', language: '语言', theme: '主题',
+            title: '标题', description: '说明', icon: '图标', language: '语言',
             defaultDirectory: '默认目录', initialTreeState: '目录初始状态', navigationMode: '导航方式',
             capabilityLevel: '产物等级', searchEnabled: '搜索', mediaPolicy: '媒体策略', deploymentMode: '部署方式', debugEnabled: '调试'
         };
@@ -207,17 +207,17 @@ const PublicationSettings = (function() {
         const style = document.createElement('style');
         style.id = 'publicationSettingsStyle';
         style.textContent = `
-            .publication-settings { display:grid; gap:14px; }
+            .publication-settings { display:grid; min-width:0; gap:14px; }
             .publication-settings-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
-            .publication-field { display:grid; gap:5px; color:#334155; font-size:13px; }
+            .publication-field { display:grid; min-width:0; gap:5px; color:#334155; font-size:13px; }
             .publication-field > span { font-weight:700; }
             .publication-field input:not([type="checkbox"]), .publication-field select, .publication-field textarea { width:100%; min-height:38px; padding:7px 9px; border:1px solid #94a3b8; border-radius:6px; background:#fff; color:#0f172a; font:inherit; }
             .publication-field textarea { min-height:76px; resize:vertical; }
             .publication-field small, .publication-status { color:#64748b; line-height:1.45; }
             .publication-check { display:flex; align-items:center; gap:8px; min-height:38px; }
             .publication-check input { width:18px; height:18px; }
-            .publication-preset { display:grid; grid-template-columns:minmax(160px,1fr) minmax(160px,1fr) auto auto; gap:8px; padding-top:12px; border-top:1px solid #e2e8f0; }
-            .publication-preset input, .publication-preset select { min-height:38px; padding:7px 9px; border:1px solid #94a3b8; border-radius:6px; background:#fff; }
+            .publication-preset { display:grid; min-width:0; grid-template-columns:minmax(160px,1fr) minmax(160px,1fr) auto auto; gap:8px; padding-top:12px; border-top:1px solid #e2e8f0; }
+            .publication-preset input, .publication-preset select { width:100%; min-width:0; min-height:38px; padding:7px 9px; border:1px solid #94a3b8; border-radius:6px; background:#fff; }
             .publication-actions { display:flex; flex-wrap:wrap; gap:8px; justify-content:flex-end; padding-top:12px; border-top:1px solid #e2e8f0; }
             .publication-actions button, .publication-preset button { min-height:38px; padding:7px 11px; border:1px solid #94a3b8; border-radius:6px; background:#fff; color:#1e293b; cursor:pointer; }
             .publication-actions .primary { border-color:#2563eb; background:#2563eb; color:#fff; }
@@ -246,9 +246,6 @@ const PublicationSettings = (function() {
         controls.description.maxLength = 300;
         addField(grid, '发布说明', controls.description, '写入网页摘要，不会改动正文');
         controls.icon = addField(grid, '页面图标', createInput('text', active.icon), '支持 HTTPS、data:image 或相对路径；危险协议会被清空');
-        controls.theme = addField(grid, '主题', createSelect([
-            ['system', '跟随系统'], ['light', '浅色'], ['dark', '深色'], ['high-contrast', '高对比度']
-        ], active.theme));
         const directoryOptions = [['first', '第一个目录'], ['current', '导出时当前目录']];
         (typeof mulufile !== 'undefined' && Array.isArray(mulufile) ? mulufile : []).forEach(row => {
             if (Array.isArray(row) && row.length === 4) directoryOptions.push([`dir:${row[2]}`, row[1]]);

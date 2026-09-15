@@ -92,7 +92,10 @@ assert.ok(runtime.includes('entry.intersectionRatio >= threshold'), 'configured 
 assert.ok(runtime.includes("executionMode === 'parallel'"), 'parallel flow contract missing');
 assert.ok(runtime.includes('function initReadingTools()'), 'export reading tools missing');
 assert.ok(runtime.includes('function buildContentOutline()'), 'export content outline missing');
+assert.ok(runtime.includes('class="reading-tools"'), 'export reading tools must use one collapsed entry');
 assert.ok(runtime.includes('@media print'), 'export print stylesheet missing');
+assert.equal(runtime.includes('html[data-theme="dark"]'), false, 'export dark theme variant should not return');
+assert.equal(runtime.includes('@media (prefers-color-scheme: dark)'), false, 'export appearance must not change with system theme');
 assert.ok(runtime.includes("navigator.serviceWorker.register('./sora-service-worker.js')"), 'PWA service worker registration missing');
 assert.ok(runtime.includes("publicationSettings.deploymentMode = 'static-folder'"), 'encrypted PWA downgrade missing');
 assert.ok(runtime.includes('SORA_OPTIONAL_METHOD_RUNTIME_START'), 'optional method runtime boundary missing');
@@ -127,6 +130,10 @@ assert.ok(helpSource.includes('没有方法的文档会从产物中移除方法�
 assert.ok(helpSource.includes('草稿按文档身份隔离'), 'document-scoped draft guidance is missing from built-in help');
 assert.ok(helpSource.includes('诊断摘要会脱敏'), 'diagnostic privacy guidance is missing from built-in help');
 assert.ok(publication.includes("const STORAGE_KEY = 'sora_publication_settings_v1'"), 'publication settings persistence missing');
+assert.ok(publication.includes("next.theme = 'light'"), 'publication settings must migrate old themes to the fixed light appearance');
+assert.equal(publication.includes("controls.theme = addField"), false, 'publication settings should not expose theme variants');
+assert.ok(workspace.includes('.feature-dialog, .feature-dialog * { box-sizing: border-box; }'), 'feature dialog box-sizing overflow guard missing');
+assert.ok(directoryMetadata.includes('.directory-metadata-field-wide { grid-column:1 / -1; }'), 'wide metadata field layout missing');
 assert.ok(publication.includes('function describeDifferences'), 'publication preset comparison missing');
 assert.ok(publication.includes('state.history'), 'publication settings rollback history missing');
 assert.ok(publication.includes('function resolve(muluData, currentDirId, fallbackTitle)'), 'publication resolution contract missing');

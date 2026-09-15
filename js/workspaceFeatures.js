@@ -20,11 +20,12 @@ const FeatureDialog = (function() {
             .workspace-nav-select { max-width: 150px; padding: 3px 6px; }
             .feature-dialog-overlay { position: fixed; inset: 0; z-index: 12000; display: none; align-items: center; justify-content: center; padding: 18px; background: rgba(15, 23, 42, 0.42); }
             .feature-dialog-overlay.active { display: flex; }
-            .feature-dialog { width: min(920px, 96vw); max-height: 88vh; display: flex; flex-direction: column; border: 1px solid #cbd5e1; border-radius: 10px; background: #fff; box-shadow: 0 18px 50px rgba(15, 23, 42, 0.28); overflow: hidden; }
+            .feature-dialog, .feature-dialog * { box-sizing: border-box; }
+            .feature-dialog { width: min(920px, 96vw); max-width: 100%; max-height: 88vh; display: flex; flex-direction: column; border: 1px solid #cbd5e1; border-radius: 10px; background: #fff; box-shadow: 0 18px 50px rgba(15, 23, 42, 0.28); overflow: hidden; }
             .feature-dialog-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid #e2e8f0; background: #f8fafc; }
             .feature-dialog-title { margin: 0; font-size: 17px; }
             .feature-dialog-close { border: 0; background: transparent; font-size: 22px; cursor: pointer; color: #64748b; }
-            .feature-dialog-body { padding: 14px 16px; overflow: auto; }
+            .feature-dialog-body { width: 100%; min-width: 0; padding: 14px 16px; overflow: auto; }
             .feature-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
             .feature-toolbar input[type="search"] { flex: 1; min-width: 200px; padding: 7px 10px; border: 1px solid #cbd5e1; border-radius: 6px; }
             .media-summary { color: #64748b; font-size: 13px; }

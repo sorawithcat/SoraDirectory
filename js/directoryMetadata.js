@@ -144,9 +144,10 @@
         const style = document.createElement('style');
         style.id = 'directoryMetadataStyle';
         style.textContent = `
-            .directory-metadata { display:grid; gap:14px; }
+            .directory-metadata { display:grid; min-width:0; gap:14px; }
             .directory-metadata-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
-            .directory-metadata-field { display:grid; gap:5px; font-size:13px; color:#334155; }
+            .directory-metadata-field { display:grid; min-width:0; gap:5px; font-size:13px; color:#334155; }
+            .directory-metadata-field-wide { grid-column:1 / -1; }
             .directory-metadata-field > span { font-weight:700; }
             .directory-metadata-field input, .directory-metadata-field select, .directory-metadata-field textarea { width:100%; min-height:38px; padding:7px 9px; border:1px solid #94a3b8; border-radius:6px; background:#fff; color:#0f172a; font:inherit; }
             .directory-metadata-field textarea { min-height:92px; resize:vertical; }
@@ -154,8 +155,8 @@
             .directory-metadata-actions { display:flex; justify-content:flex-end; gap:8px; padding-top:12px; border-top:1px solid #e2e8f0; }
             .directory-metadata-actions button { min-height:38px; padding:7px 12px; border:1px solid #94a3b8; border-radius:6px; background:#fff; cursor:pointer; }
             .directory-metadata-actions .primary { border-color:#2563eb; background:#2563eb; color:#fff; }
-            .smart-collection-toolbar { display:grid; grid-template-columns:repeat(4,minmax(120px,1fr)); gap:8px; }
-            .smart-collection-toolbar input, .smart-collection-toolbar select { min-height:38px; padding:7px 9px; border:1px solid #94a3b8; border-radius:6px; }
+            .smart-collection-toolbar { display:grid; min-width:0; grid-template-columns:repeat(4,minmax(120px,1fr)); gap:8px; }
+            .smart-collection-toolbar input, .smart-collection-toolbar select { width:100%; min-width:0; min-height:38px; padding:7px 9px; border:1px solid #94a3b8; border-radius:6px; }
             .smart-collection-results { display:grid; gap:6px; }
             .smart-collection-item { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; width:100%; padding:9px 10px; border:1px solid #dbe3ee; border-radius:7px; background:#fff; color:#1e293b; text-align:left; cursor:pointer; }
             .smart-collection-item small { color:#64748b; }
@@ -194,6 +195,7 @@
         const custom = document.createElement('textarea');
         custom.value = stringifyCustom(value.custom);
         addField(grid, '自定义字段', custom, '每行 key=value，不会写入正文');
+        custom.closest('.directory-metadata-field')?.classList.add('directory-metadata-field-wide');
         wrapper.appendChild(grid);
         const actions = document.createElement('div');
         actions.className = 'directory-metadata-actions';

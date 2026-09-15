@@ -52,6 +52,17 @@
                 const data = [['mulu', '首页', 'e2e_root', longBody], ['mulu', '第二页', 'e2e_second', '<h2>第二页</h2><p>内容</p>']];
                 win.eval(`mulufile = ${JSON.stringify(data)}; rebuildMulufileIndex(); currentMuluName = null; LoadMulu();`);
                 await win.DirectoryNavigation.open('e2e_root', { viewMode: 'top' });
+                win.PublicationSettings.open();
+                await wait(30);
+                let dialogBody = win.document.querySelector('.feature-dialog-body');
+                check(dialogBody.scrollWidth <= dialogBody.clientWidth + 1, '发布设置弹窗无横向溢出', `${dialogBody.scrollWidth}/${dialogBody.clientWidth}`);
+                check(!Array.from(dialogBody.querySelectorAll('label > span')).some(item => item.textContent === '主题'), '发布设置不再显示主题选项');
+                win.FeatureDialog.close();
+                win.DirectoryMetadata.openEditor('e2e_root');
+                await wait(30);
+                dialogBody = win.document.querySelector('.feature-dialog-body');
+                check(dialogBody.scrollWidth <= dialogBody.clientWidth + 1, '目录字段弹窗无横向溢出', `${dialogBody.scrollWidth}/${dialogBody.clientWidth}`);
+                win.FeatureDialog.close();
                 const preview = win.document.querySelector('.markdown-preview');
                 preview.style.setProperty('height', '240px', 'important');
                 preview.style.setProperty('max-height', '240px', 'important');
@@ -108,7 +119,7 @@
                     finally { win.PublicationSettings.resolve = originalResolve; }
                     return new Blob(parts, { type: 'text/html' }).text();
                 }
-                const settings = { title: 'E2E', description: '', icon: '', language: 'zh-CN', theme: 'system', defaultDirId: 'e2e_root', initialTreeState: 'expanded', navigationMode: 'sidebar', capabilityLevel: 'standard', searchEnabled: true, mediaPolicy: 'balanced', deploymentMode: 'single-html', debugEnabled: false };
+                const settings = { title: 'E2E', description: '', icon: '', language: 'zh-CN', theme: 'light', defaultDirId: 'e2e_root', initialTreeState: 'expanded', navigationMode: 'sidebar', capabilityLevel: 'standard', searchEnabled: true, mediaPolicy: 'balanced', deploymentMode: 'single-html', debugEnabled: false };
                 const exported = await captureExport(data, settings);
                 check(exported.includes('createSoraMethodRuntimeCore') && exported.includes('data-sora-methods'), '有方法导出包含共享运行核心', `length=${exported.length},core=${exported.includes('createSoraMethodRuntimeCore')},method=${exported.includes('data-sora-methods')}`);
                 check(!exported.includes('sora-method-debug-button">方法调试'), '标准发布不显示调试入口');
@@ -124,7 +135,9 @@
                 reader.srcdoc = exported;
                 await poll(() => reader.contentDocument?.querySelector('.content-body')?.textContent.includes('开始'), 10000);
                 check(Boolean(reader.contentDocument.querySelector('main[role="main"], main')), '导出网页真实运行并显示正文');
-                check(Boolean(reader.contentDocument.getElementById('readingModeBtn') && reader.contentDocument.getElementById('printPageBtn')), '阅读与打印入口可用');
+                check(Boolean(reader.contentDocument.getElementById('readingTools') && reader.contentDocument.getElementById('readingModeBtn') && reader.contentDocument.getElementById('printPageBtn')), '折叠的阅读与打印入口可用');
+                check(!reader.contentDocument.documentElement.hasAttribute('data-theme'), '导出页不再暴露多主题外观');
+                check(getComputedStyle(reader.contentDocument.body).backgroundColor === 'rgb(255, 255, 255)', '导出页固定旧版浅色背景');
                 if (viewport === 'mobile') check(getComputedStyle(reader.contentDocument.getElementById('mobileNavToggle')).display !== 'none', '移动宽度显示目录抽屉按钮');
                 else check(Boolean(reader.contentDocument.querySelector('[role="tree"]')), '桌面宽度显示语义目录树');
 

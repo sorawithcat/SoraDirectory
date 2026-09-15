@@ -3358,7 +3358,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             description: '',
             icon: '',
             language: 'zh-CN',
-            theme: 'system',
+            theme: 'light',
             defaultDirId: sourceData.length && sourceData[0].length === 4 ? sourceData[0][2] : '',
             initialTreeState: 'expanded',
             navigationMode: 'sidebar',
@@ -3753,7 +3753,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
     const mediaChunkMarker = '<!--SORA_MEDIA_CHUNKS-->';
     // 生成完整的HTML页面
     let htmlContent = `<!DOCTYPE html>
-<html lang="${publicationAttribute(publicationSettings.language)}" data-theme="${publicationAttribute(publicationSettings.theme)}">
+<html lang="${publicationAttribute(publicationSettings.language)}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -3768,50 +3768,12 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             --page-bg: #ffffff;
             --panel-bg: #f5f5f5;
             --elevated-bg: #ffffff;
-            --text: #1f2933;
-            --muted: #526170;
-            --border: #d8dee6;
-            --accent: #075bbd;
-            --accent-soft: #e8eef6;
+            --text: #333333;
+            --muted: #666666;
+            --border: #dddddd;
+            --accent: #0066cc;
+            --accent-soft: #eef1f4;
             --code-bg: #f6f8fa;
-        }
-        html[data-theme="dark"] {
-            color-scheme: dark;
-            --page-bg: #111827;
-            --panel-bg: #172033;
-            --elevated-bg: #1f2937;
-            --text: #e5edf7;
-            --muted: #a9b7c8;
-            --border: #46556a;
-            --accent: #7db7ff;
-            --accent-soft: #243d5c;
-            --code-bg: #182234;
-        }
-        html[data-theme="high-contrast"] {
-            color-scheme: light;
-            --page-bg: #ffffff;
-            --panel-bg: #ffffff;
-            --elevated-bg: #ffffff;
-            --text: #000000;
-            --muted: #202020;
-            --border: #000000;
-            --accent: #003cff;
-            --accent-soft: #fff200;
-            --code-bg: #ffffff;
-        }
-        @media (prefers-color-scheme: dark) {
-            html[data-theme="system"] {
-                color-scheme: dark;
-                --page-bg: #111827;
-                --panel-bg: #172033;
-                --elevated-bg: #1f2937;
-                --text: #e5edf7;
-                --muted: #a9b7c8;
-                --border: #46556a;
-                --accent: #7db7ff;
-                --accent-soft: #243d5c;
-                --code-bg: #182234;
-            }
         }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
@@ -4031,12 +3993,16 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             gap: 10px;
             min-width: 0;
         }
-        .reading-actions { display:flex; align-items:center; gap:6px; margin-left:auto; }
-        .reading-actions button, .content-outline summary { min-height:36px; padding:6px 10px; border:1px solid var(--border); border-radius:7px; background:var(--elevated-bg); color:var(--text); cursor:pointer; }
-        .content-outline { position:relative; }
+        .reading-actions { position:relative; display:flex; align-items:center; margin-left:auto; }
+        .reading-tools { position:relative; font-size:14px; font-weight:400; }
+        .reading-tools > summary { min-height:34px; padding:6px 10px; border:1px solid var(--border); border-radius:5px; background:#fff; color:var(--text); cursor:pointer; list-style:none; }
+        .reading-tools > summary::-webkit-details-marker { display:none; }
+        .reading-tools-menu { position:absolute; right:0; top:calc(100% + 6px); z-index:20; display:grid; gap:2px; width:min(220px,80vw); padding:6px; border:1px solid var(--border); border-radius:6px; background:#fff; box-shadow:0 8px 20px rgba(0,0,0,.12); }
+        .reading-tools-menu > button, .content-outline > summary { width:100%; min-height:34px; padding:7px 9px; border:0; border-radius:4px; background:transparent; color:var(--text); text-align:left; cursor:pointer; }
+        .reading-tools-menu > button:hover, .content-outline > summary:hover { background:var(--accent-soft); }
         .content-outline[open] .content-outline-menu { display:grid; }
-        .content-outline-menu { position:absolute; right:0; top:calc(100% + 6px); z-index:20; display:none; width:min(360px,82vw); max-height:55vh; overflow:auto; padding:8px; border:1px solid var(--border); border-radius:9px; background:var(--elevated-bg); box-shadow:0 12px 28px rgba(15,23,42,.18); }
-        .content-outline-menu button { min-height:34px; border:0; background:transparent; text-align:left; }
+        .content-outline-menu { display:none; max-height:40vh; overflow:auto; padding:4px 0 4px 8px; border-top:1px solid var(--border); }
+        .content-outline-menu button { min-height:32px; border:0; border-radius:4px; background:transparent; color:var(--text); text-align:left; cursor:pointer; }
         .reading-progress { position:fixed; inset:0 0 auto 0; z-index:10020; height:3px; background:transparent; pointer-events:none; }
         .reading-progress span { display:block; width:0; height:100%; background:var(--accent); transition:width .1s linear; }
         body.reading-mode .sidebar { transform:translateX(-105%); }
@@ -4071,11 +4037,6 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             line-height: 1.6;
             overflow-wrap: anywhere;
         }
-        .content-body > * { max-width: 75ch; margin-inline: auto; }
-        .content-body > table,
-        .content-body > pre,
-        .content-body > figure,
-        .content-body > .archive-attachment { max-width: 100%; }
         .content-body h1, .content-body h2, .content-body h3,
         .content-body h4, .content-body h5, .content-body h6 {
             margin-top: 1em;
@@ -4609,9 +4570,14 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             <button type="button" class="mobile-nav-toggle" id="mobileNavToggle" aria-controls="exportSidebar" aria-expanded="false">目录</button>
             <span id="contentTitle">选择一个目录查看内容</span>
             <div class="reading-actions">
-                <details class="content-outline" id="contentOutline"><summary>本页大纲</summary><div class="content-outline-menu" id="contentOutlineMenu"></div></details>
-                <button type="button" id="readingModeBtn" aria-pressed="false">阅读模式</button>
-                <button type="button" id="printPageBtn">打印</button>
+                <details class="reading-tools" id="readingTools">
+                    <summary>工具</summary>
+                    <div class="reading-tools-menu">
+                        <details class="content-outline" id="contentOutline"><summary>本页大纲</summary><div class="content-outline-menu" id="contentOutlineMenu"></div></details>
+                        <button type="button" id="readingModeBtn" aria-pressed="false">阅读模式</button>
+                        <button type="button" id="printPageBtn">打印</button>
+                    </div>
+                </details>
             </div>
         </header>
         <main class="content-body" id="contentBody" tabindex="-1">
@@ -5138,13 +5104,18 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             const contentBody = document.getElementById('contentBody');
             const readingButton = document.getElementById('readingModeBtn');
             const printButton = document.getElementById('printPageBtn');
+            const readingTools = document.getElementById('readingTools');
             if (contentBody) contentBody.addEventListener('scroll', updateReadingProgress, { passive: true });
             if (readingButton) readingButton.addEventListener('click', function() {
                 const active = document.body.classList.toggle('reading-mode');
                 readingButton.setAttribute('aria-pressed', active ? 'true' : 'false');
                 readingButton.textContent = active ? '退出阅读' : '阅读模式';
+                if (readingTools) readingTools.open = false;
             });
-            if (printButton) printButton.addEventListener('click', function() { window.print(); });
+            if (printButton) printButton.addEventListener('click', function() {
+                if (readingTools) readingTools.open = false;
+                window.print();
+            });
         }
 
         function readVariableStore(scope) {
@@ -8190,8 +8161,8 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                 start_url: './index.html',
                 scope: './',
                 display: 'standalone',
-                background_color: publicationSettings.theme === 'dark' ? '#111827' : '#ffffff',
-                theme_color: publicationSettings.theme === 'dark' ? '#111827' : '#075bbd',
+                background_color: '#ffffff',
+                theme_color: '#075bbd',
                 icons: publicationSettings.icon ? [{ src: publicationSettings.icon, sizes: 'any', purpose: 'any' }] : []
             };
             const serviceWorker = `const CACHE='sora-directory-v1';const FILES=['./','./index.html','./manifest.webmanifest'];self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(FILES)).then(()=>self.skipWaiting())));self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim())));self.addEventListener('fetch',event=>{if(event.request.method!=='GET')return;event.respondWith(caches.match(event.request).then(hit=>hit||fetch(event.request).then(response=>{const copy=response.clone();caches.open(CACHE).then(cache=>cache.put(event.request,copy));return response;}).catch(()=>caches.match('./index.html'))));});`;
