@@ -256,10 +256,89 @@ function applyLinkAttributesToElement(a, inputValue) {
 
 async function editLinkElement(a) {
     const initial = buildLinkValueForEdit(a);
-    const val = await customPrompt('编辑链接地址:', initial);
+    const val = await showLinkConfigDialog(initial, '编辑链接');
     if (!val) return;
     applyLinkAttributesToElement(a, val);
     syncPreviewToTextarea();
+}
+
+function showLinkConfigDialog(initialValue, title = '插入链接') {
+    return new Promise(resolve => {
+        const initial = String(initialValue || '');
+        const isInternal = initial.startsWith('#') || /^(dir|name|目录|目录名):/i.test(initial);
+        customDialogTitle.textContent = title;
+        customDialogInput.style.display = 'none';
+        customDialogMessage.innerHTML = `
+            <div class="link-config-form">
+                <div class="link-type-switch" role="group" aria-label="链接类型">
+                    <button type="button" data-link-mode="internal" class="${isInternal ? 'active' : ''}">目录或锚点</button>
+                    <button type="button" data-link-mode="external" class="${isInternal ? '' : 'active'}">外部网址</button>
+                </div>
+                <div class="form-group" data-link-section="internal"${isInternal ? '' : ' hidden'}>
+                    <label for="linkInternalTarget">目录或锚点</label>
+                    <input id="linkInternalTarget" class="form-control" value="${escapeHtmlAttribute(isInternal ? initial : '')}" placeholder="搜索目录名、ID、锚点或正文预览" />
+                    <small>可切换当前目录、当前分支、最近访问、收藏或全部目录。</small>
+                </div>
+                <div class="form-group" data-link-section="external"${isInternal ? ' hidden' : ''}>
+                    <label for="linkExternalTarget">网址</label>
+                    <input id="linkExternalTarget" class="form-control" type="url" value="${escapeHtmlAttribute(isInternal ? 'https://' : (initial || 'https://'))}" placeholder="https://example.com" />
+                </div>
+                <small class="method-field-error" data-link-error role="alert"></small>
+            </div>`;
+        customDialogFooter.innerHTML =
+            '<button class="custom-dialog-btn custom-dialog-btn-secondary" id="customDialogCancel">取消</button>' +
+            '<button class="custom-dialog-btn custom-dialog-btn-primary" id="customDialogOk">确定</button>';
+        const internalInput = document.getElementById('linkInternalTarget');
+        const externalInput = document.getElementById('linkExternalTarget');
+        const error = customDialogMessage.querySelector('[data-link-error]');
+        let mode = isInternal ? 'internal' : 'external';
+        const picker = window.SoraReferencePicker ? window.SoraReferencePicker.attach(internalInput, {
+            allowDirectory: true,
+            currentDirId: window.SoraReferencePicker.getCurrentDirectoryId(),
+            openOnFocus: true,
+            buttonLabel: '选择链接目标'
+        }) : null;
+        const close = value => {
+            if (picker) picker.destroy();
+            customDialogOverlay.classList.remove('active');
+            customDialogMessage.innerHTML = '';
+            resolve(value);
+        };
+        customDialogMessage.querySelectorAll('[data-link-mode]').forEach(button => {
+            button.addEventListener('click', () => {
+                mode = button.dataset.linkMode;
+                customDialogMessage.querySelectorAll('[data-link-mode]').forEach(item => item.classList.toggle('active', item === button));
+                customDialogMessage.querySelectorAll('[data-link-section]').forEach(section => {
+                    section.hidden = section.dataset.linkSection !== mode;
+                });
+                (mode === 'internal' ? internalInput : externalInput).focus();
+            });
+        });
+        document.getElementById('customDialogOk').onclick = () => {
+            const value = (mode === 'internal' ? internalInput.value : externalInput.value).trim();
+            if (!value) {
+                error.textContent = '请选择目标或输入网址';
+                return;
+            }
+            if (mode === 'internal' && picker) {
+                const resolved = picker.resolve(value);
+                if (!resolved || !resolved.exists) {
+                    error.textContent = resolved && resolved.error ? resolved.error : '内部链接目标不存在';
+                    return;
+                }
+            }
+            if (mode === 'external' && !/^(https?:|mailto:|tel:)/i.test(value)) {
+                error.textContent = '外部链接需以 http://、https://、mailto: 或 tel: 开头';
+                return;
+            }
+            close(value);
+        };
+        document.getElementById('customDialogCancel').onclick = () => close(null);
+        customDialogClose.onclick = () => close(null);
+        customDialogOverlay.onclick = event => { if (event.target === customDialogOverlay) close(null); };
+        customDialogOverlay.classList.add('active');
+        setTimeout(() => (mode === 'internal' ? internalInput : externalInput).focus(), 0);
+    });
 }
 
 async function editAnchorElement(anchorEl) {
@@ -300,6 +379,12 @@ function safeParseJson(raw, fallback) {
     }
 }
 
+function escapeHtmlAttribute(value) {
+    return escapeHtml(String(value || ''))
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 function ensureMethodId(cfg) {
     if (!cfg || typeof cfg !== 'object') return null;
     if (cfg.methodId) return cfg.methodId;
@@ -309,6 +394,13 @@ function ensureMethodId(cfg) {
 
 function normalizeMethodConfig(cfg, options = {}) {
     if (!cfg || typeof cfg !== 'object') return null;
+    if (window.SoraMethodRegistry) {
+        const normalized = window.SoraMethodRegistry.normalize(cfg, {
+            assignId: false
+        });
+        if (options.assignId !== false) ensureMethodId(normalized);
+        return normalized;
+    }
     if (!cfg.trigger) {
         cfg.trigger = 'click';
     }
@@ -362,6 +454,10 @@ function writeExecutedMethodIdsToElement(a, idSet) {
 }
 
 function buildTriggerLabel(trigger) {
+    if (window.SoraMethodRegistry) {
+        const definition = window.SoraMethodRegistry.getTrigger(trigger);
+        if (definition) return definition.label;
+    }
     switch (trigger) {
         case 'open':
             return '打开时';
@@ -377,6 +473,7 @@ function buildTriggerLabel(trigger) {
 
 function buildMethodLabel(cfg) {
     if (!cfg || typeof cfg !== 'object') return '方法';
+    if (window.SoraMethodRegistry) return window.SoraMethodRegistry.summarize(cfg);
     const type = cfg.methodType || '未设置';
     const triggerLabel = buildTriggerLabel(cfg.trigger || 'click');
     const onceLabel = cfg.once ? '一次性' : '可重复';
@@ -645,13 +742,7 @@ if (markdownPreview) {
         if (soraType === 'method') {
             e.preventDefault();
             e.stopPropagation();
-            if (e.altKey) {
-                await editMethodElement(a);
-                return;
-            }
-            if (typeof showToast === 'function') {
-                showToast('方法仅在导出网页后生效，请使用 Alt+单击进行编辑', 'info', 2500);
-            }
+            await editMethodElement(a);
             return;
         }
         if (!href) return;
@@ -1144,7 +1235,7 @@ async function applyFormat(command) {
             break;
         case 'link':
             {
-                const url = await customPrompt('输入链接地址:', 'https://');
+                const url = await showLinkConfigDialog('https://', '插入链接');
                 if (!url) return;
 
                 const trimmed = String(url).trim();
@@ -1212,7 +1303,7 @@ async function applyFormat(command) {
                 const methods = [cfg];
 
                 const displayHtml = selectedText ? selectedHtml : escapeHtml('方法');
-                formattedHtml = '<a href="#" data-sora-link="method" data-sora-methods="' + escapeHtml(JSON.stringify(methods)) + '">' + displayHtml + '</a>';
+                formattedHtml = '<a href="#" data-sora-link="method" data-sora-methods="' + escapeHtmlAttribute(JSON.stringify(methods)) + '">' + displayHtml + '</a>';
             }
             break;
         // 文本颜色

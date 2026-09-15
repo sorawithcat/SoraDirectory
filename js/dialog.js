@@ -288,14 +288,21 @@ function codeEditDialog(code = '', language = 'javascript', langOptions = [], ti
  */
 function colorPickerDialog(defaultValue = '#000000', title = '选择颜色') {
     return new Promise((resolve) => {
+        const presetColors = ['#111827', '#475569', '#2563EB', '#0F766E', '#15803D', '#B45309', '#B91C1C', '#7E22CE', '#FDE68A', '#DBEAFE', '#DCFCE7', '#FCE7F3'];
+        let recentColors = [];
+        try {
+            const saved = JSON.parse(localStorage.getItem('soraRecentColors') || '[]');
+            if (Array.isArray(saved)) recentColors = saved.filter(value => /^#[0-9A-Fa-f]{6}$/.test(value)).slice(0, 8);
+        } catch (_) {}
         customDialogTitle.textContent = title;
         customDialogInput.style.display = 'none';
         customDialogMessage.innerHTML = 
-            '<div style="text-align: center; padding: 20px 0;">' +
-            '<input type="color" id="colorPickerInput" value="' + escapeHtml(defaultValue) + '" style="width: 200px; height: 200px; border: 2px solid #ddd; border-radius: 4px; cursor: pointer;">' +
-            '<br><br>' +
-            '<label style="font-size: 12px; color: #666; display: block; margin-bottom: 4px;">颜色值（十六进制）</label>' +
-            '<input type="text" id="colorTextInput" value="' + escapeHtml(defaultValue) + '" style="width: 150px; padding: 6px; border: 1px solid #ddd; border-radius: 4px; text-align: center; font-family: monospace; font-size: 14px;" placeholder="#000000" maxlength="7">' +
+            '<div class="color-picker-layout">' +
+            '<div class="color-picker-primary"><input type="color" id="colorPickerInput" value="' + escapeHtml(defaultValue) + '">' +
+            '<div><label for="colorTextInput">颜色值</label><input type="text" id="colorTextInput" value="' + escapeHtml(defaultValue) + '" placeholder="#000000" maxlength="7"></div></div>' +
+            '<div><strong>常用颜色</strong><div class="color-preset-grid">' + presetColors.map(color => '<button type="button" data-color="' + color + '" style="--swatch:' + color + '" aria-label="选择颜色 ' + color + '"></button>').join('') + '</div></div>' +
+            (recentColors.length ? '<div><strong>最近使用</strong><div class="color-preset-grid">' + recentColors.map(color => '<button type="button" data-color="' + color + '" style="--swatch:' + color + '" aria-label="选择最近颜色 ' + color + '"></button>').join('') + '</div></div>' : '') +
+            '<div id="colorContrastStatus" class="color-contrast-status" aria-live="polite"></div>' +
             '</div>';
         customDialogFooter.innerHTML = 
             '<button class="custom-dialog-btn custom-dialog-btn-secondary" id="customDialogCancel">取消</button>' +
@@ -305,8 +312,33 @@ function colorPickerDialog(defaultValue = '#000000', title = '选择颜色') {
         const okBtn = document.getElementById('customDialogOk');
         const cancelBtn = document.getElementById('customDialogCancel');
         const closeBtn = customDialogClose;
+        const contrastStatus = document.getElementById('colorContrastStatus');
+        const luminance = color => {
+            const parts = [1, 3, 5].map(index => parseInt(color.slice(index, index + 2), 16) / 255)
+                .map(value => value <= 0.03928 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4));
+            return 0.2126 * parts[0] + 0.7152 * parts[1] + 0.0722 * parts[2];
+        };
+        const contrast = (first, second) => {
+            const a = luminance(first);
+            const b = luminance(second);
+            return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+        };
+        const updateContrast = color => {
+            const white = contrast(color, '#FFFFFF');
+            const black = contrast(color, '#000000');
+            const best = white >= black ? '白色' : '黑色';
+            const ratio = Math.max(white, black);
+            contrastStatus.textContent = `推荐搭配${best}文字，对比度 ${ratio.toFixed(1)}:1${ratio >= 4.5 ? '，符合正文可读性要求' : '，仅建议用于大号文字或装饰'}`;
+            contrastStatus.classList.toggle('is-warning', ratio < 4.5);
+        };
+        const setColor = color => {
+            colorPicker.value = color;
+            colorText.value = color.toUpperCase();
+            updateContrast(color.toUpperCase());
+        };
         colorPicker.addEventListener('input', () => {
             colorText.value = colorPicker.value.toUpperCase();
+            updateContrast(colorPicker.value.toUpperCase());
         });
         colorText.addEventListener('input', () => {
             let value = colorText.value.trim();
@@ -315,7 +347,11 @@ function colorPickerDialog(defaultValue = '#000000', title = '选择颜色') {
             }
             if (/^#[0-9A-Fa-f]{6}$/.test(value)) {
                 colorPicker.value = value;
+                updateContrast(value.toUpperCase());
             }
+        });
+        customDialogMessage.querySelectorAll('[data-color]').forEach(button => {
+            button.addEventListener('click', () => setColor(button.dataset.color));
         });
         function validateColor(value) {
             if (!value) return false;
@@ -334,6 +370,8 @@ function colorPickerDialog(defaultValue = '#000000', title = '选择颜色') {
         const handleOk = () => {
             let color = colorPicker.value.toUpperCase();
             if (validateColor(color)) {
+                const nextRecent = [color, ...recentColors.filter(value => value !== color)].slice(0, 8);
+                localStorage.setItem('soraRecentColors', JSON.stringify(nextRecent));
                 closeDialog(color);
             } else {
                 showToast('请输入有效的颜色值（如 #FF0000）', 'error', 2000);
@@ -357,6 +395,7 @@ function colorPickerDialog(defaultValue = '#000000', title = '选择颜色') {
         customDialog.style.maxWidth = '400px';
         customDialog.style.width = '90%';
         customDialogOverlay.classList.add('active');
+        updateContrast(colorPicker.value.toUpperCase());
         setTimeout(() => colorText.focus(), 100);
     });
 }

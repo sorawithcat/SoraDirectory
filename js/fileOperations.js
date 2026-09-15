@@ -2515,6 +2515,161 @@ function buildPartialExportData(selectedIds, data = mulufile) {
     return exportRows;
 }
 
+function collectMethodPreflightIssues(rows, parsedById, issues) {
+    const picker = window.SoraReferencePicker;
+    const registry = window.SoraMethodRegistry;
+    const referenceIndex = picker ? picker.buildIndex(rows) : null;
+    const methodIds = new Map();
+    const knownDirectoryActions = registry
+        ? new Set(registry.getDirectoryActions().map(item => item.value))
+        : null;
+
+    function addIssue(key, value) {
+        if (!issues[key].includes(value)) issues[key].push(value);
+    }
+
+    function resolveReference(value, contextDirId) {
+        if (!picker || !referenceIndex) return null;
+        return picker.resolve(value, referenceIndex, contextDirId);
+    }
+
+    function validatePair(frontValue, backValue, contextDirId, label, requireRange, requireDirectory) {
+        const front = resolveReference(frontValue, contextDirId);
+        if (!frontValue) {
+            addIssue('invalidMethods', `${label}：缺少目标目录或前锚点`);
+            return;
+        }
+        if (!front || !front.exists) {
+            addIssue('missingMethodTargets', `${label}：${front && front.error ? front.error : frontValue}`);
+            return;
+        }
+        if (!backValue) {
+            if (requireRange) {
+                addIssue('invalidMethods', `${label}：该动作需要后锚点`);
+            } else if (requireDirectory && front.type !== 'directory') {
+                addIssue('invalidMethods', `${label}：目录级动作必须指向整个目录`);
+            }
+            return;
+        }
+        const back = resolveReference(backValue, contextDirId);
+        if (!back || !back.exists) {
+            addIssue('missingMethodTargets', `${label}：${back && back.error ? back.error : backValue}`);
+            return;
+        }
+        if (front.type !== 'anchor' || back.type !== 'anchor') {
+            addIssue('invalidMethods', `${label}：范围起点和终点都必须是锚点`);
+            return;
+        }
+        if (front.directory.id !== back.directory.id) {
+            addIssue('invalidMethods', `${label}：前后锚点不在同一目录`);
+        } else if (front.anchor.order >= back.anchor.order) {
+            addIssue('invalidMethods', `${label}：后锚点没有位于前锚点之后`);
+        }
+    }
+
+    function inspectMethod(config, row, path, depth) {
+        const label = `${row[1]} · ${path}`;
+        if (!config || typeof config !== 'object') {
+            addIssue('invalidMethods', `${label}：配置不是有效对象`);
+            return;
+        }
+        if (depth > 20) {
+            addIssue('invalidMethods', `${label}：嵌套层级超过 20 层`);
+            return;
+        }
+        const cfg = registry
+            ? registry.normalize(config, { assignId: false, clone: true })
+            : config;
+        if (cfg.methodId) {
+            if (methodIds.has(cfg.methodId)) {
+                addIssue('duplicateMethodIds', `${cfg.methodId}：${methodIds.get(cfg.methodId)} / ${label}`);
+            } else {
+                methodIds.set(cfg.methodId, label);
+            }
+        }
+        if (registry) {
+            registry.validateBasic(cfg).forEach(error => {
+                if (!['frontAnchor', 'backAnchor'].includes(error.field)) addIssue('invalidMethods', `${label}：${error.message}`);
+            });
+        }
+        const action = registry ? registry.getAction(cfg.methodType) : null;
+        if (!action || !['none', 'optional'].includes(action.targetMode) || cfg.frontAnchor) {
+            validatePair(
+                String(cfg.frontAnchor || '').trim(),
+                String(cfg.backAnchor || '').trim(),
+                row[2],
+                label,
+                !!(action && action.targetMode === 'range'),
+                !!(action && action.targetMode === 'directory') || (!action || action.targetMode !== 'optional') && !String(cfg.backAnchor || '').trim()
+            );
+        }
+        if (action && action.targetMode === 'directory' && String(cfg.backAnchor || '').trim()) {
+            addIssue('invalidMethods', `${label}：${action.label}只能作用于整个目录，请清空后锚点`);
+        }
+
+        if (cfg.methodType === '更换内容') {
+            if (!cfg.backAnchor && !String(cfg.renameTo || '').trim()) {
+                addIssue('invalidMethods', `${label}：缺少新目录名`);
+            } else if (cfg.backAnchor && cfg.replaceSourceType !== 'text') {
+                validatePair(
+                    String(cfg.replaceFromFrontAnchor || '').trim(),
+                    String(cfg.replaceFromBackAnchor || '').trim(),
+                    row[2],
+                    `${label}的替换来源`,
+                    false,
+                    false
+                );
+            }
+        } else if (cfg.methodType === '添加格式') {
+            if (['color', 'background-color'].includes(cfg.formatCommand) && !/^#[0-9a-fA-F]{6}$/.test(String(cfg.formatValue || ''))) {
+                addIssue('invalidMethods', `${label}：颜色值无效`);
+            }
+            if (cfg.formatCommand === 'link') {
+                const linkValue = String(cfg.formatValue || '').trim();
+                if (!linkValue) addIssue('invalidMethods', `${label}：缺少链接地址`);
+                else if (!/^(https?:\/\/|mailto:|tel:|#|dir:|name:|sora-dir:)/i.test(linkValue)) {
+                    addIssue('invalidMethods', `${label}：链接协议不受支持`);
+                }
+            }
+        } else if (cfg.methodType === '目录右键动作' && knownDirectoryActions && !knownDirectoryActions.has(cfg.dirAction)) {
+            addIssue('invalidMethods', `${label}：不支持的目录动作 ${cfg.dirAction || '未设置'}`);
+        } else if (cfg.methodType === '插入内容' && cfg.contentSourceType === 'reference') {
+            validatePair(String(cfg.contentFrontAnchor || '').trim(), String(cfg.contentBackAnchor || '').trim(), row[2], `${label}的插入来源`, false, false);
+        } else if (cfg.methodType === '传送范围') {
+            validatePair(String(cfg.destinationFrontAnchor || '').trim(), String(cfg.destinationBackAnchor || '').trim(), row[2], `${label}的传送目标`, true, false);
+        }
+
+        ['formatMethods', 'elseMethods', 'confirmMethods', 'cancelMethods'].forEach(methodKey => {
+            if (!Array.isArray(cfg[methodKey])) return;
+            cfg[methodKey].forEach((nested, index) => {
+                inspectMethod(nested, row, `${path} / ${methodKey} ${index + 1}`, depth + 1);
+            });
+        });
+    }
+
+    rows.forEach(row => {
+        const template = parsedById.get(row[2]);
+        if (!template) return;
+        template.content.querySelectorAll('a[data-sora-link="method"][data-sora-methods]').forEach((link, linkIndex) => {
+            const raw = link.getAttribute('data-sora-methods') || '';
+            let methods;
+            try {
+                methods = JSON.parse(raw);
+            } catch (error) {
+                addIssue('invalidMethods', `${row[1]} · 方法 ${linkIndex + 1}：配置 JSON 无法解析`);
+                return;
+            }
+            if (!Array.isArray(methods) || methods.length === 0) {
+                addIssue('invalidMethods', `${row[1]} · 方法 ${linkIndex + 1}：没有可执行配置`);
+                return;
+            }
+            methods.forEach((method, methodIndex) => {
+                inspectMethod(method, row, `方法 ${linkIndex + 1}.${methodIndex + 1}`, 0);
+            });
+        });
+    });
+}
+
 async function collectExportPreflightIssues(data = mulufile) {
     const rows = Array.isArray(data) ? data.filter(row => row && row.length === 4) : [];
     const rowById = new Map();
@@ -2525,6 +2680,9 @@ async function collectExportPreflightIssues(data = mulufile) {
         brokenLinks: [],
         missingAnchors: [],
         duplicateAnchors: [],
+        invalidMethods: [],
+        missingMethodTargets: [],
+        duplicateMethodIds: [],
         missingMedia: [],
         emptyDirectories: []
     };
@@ -2550,8 +2708,10 @@ async function collectExportPreflightIssues(data = mulufile) {
         if (typeof assignHeadingAutoIds === 'function') assignHeadingAutoIds(template.content);
         parsedById.set(row[2], template);
         const anchorCounts = new Map();
-        template.content.querySelectorAll('[id]').forEach(element => {
-            const id = element.getAttribute('id');
+        template.content.querySelectorAll('[id], .sora-anchor[data-anchor-name]').forEach(element => {
+            const id = element.matches('.sora-anchor[data-anchor-name]')
+                ? element.getAttribute('data-anchor-name')
+                : element.getAttribute('id');
             if (!id) return;
             anchorCounts.set(id, (anchorCounts.get(id) || 0) + 1);
         });
@@ -2610,6 +2770,8 @@ async function collectExportPreflightIssues(data = mulufile) {
         });
     });
 
+    collectMethodPreflightIssues(rows, parsedById, issues);
+
     if (typeof MediaStorage !== 'undefined') {
         await Promise.all(Array.from(mediaIds).map(async mediaId => {
             if (!await MediaStorage.mediaExists(mediaId)) issues.missingMedia.push(mediaId);
@@ -2619,23 +2781,29 @@ async function collectExportPreflightIssues(data = mulufile) {
 }
 
 function buildExportPreflightHtml(issues) {
-    const sections = [
-        ['重复目录ID', issues.duplicateDirectoryIds],
-        ['父目录缺失', issues.missingParents],
-        ['目录链接失效', issues.brokenLinks],
-        ['锚点缺失', issues.missingAnchors],
-        ['重复锚点', issues.duplicateAnchors],
-        ['媒体缺失', issues.missingMedia],
-        ['空目录', issues.emptyDirectories]
+    const groups = [
+        ['阻断错误', '#b91c1c', [
+            ['重复目录ID', issues.duplicateDirectoryIds], ['父目录缺失', issues.missingParents],
+            ['目录链接失效', issues.brokenLinks], ['锚点缺失', issues.missingAnchors],
+            ['方法配置无效', issues.invalidMethods], ['方法目标缺失', issues.missingMethodTargets],
+            ['方法ID重复', issues.duplicateMethodIds], ['媒体缺失', issues.missingMedia]
+        ]],
+        ['风险警告', '#b45309', [['重复锚点', issues.duplicateAnchors]]],
+        ['信息提示', '#475569', [['空目录', issues.emptyDirectories]]]
     ];
-    const total = sections.reduce((sum, section) => sum + section[1].length, 0);
-    if (total === 0) return { total, html: '<p>预检通过，未发现断链、重复锚点或缺失媒体。</p>' };
-    const html = sections.filter(section => section[1].length > 0).map(([title, values]) => {
-        const shown = values.slice(0, 12).map(value => `<li>${escapeHtml(String(value))}</li>`).join('');
-        const more = values.length > 12 ? `<li>另有 ${values.length - 12} 项…</li>` : '';
-        return `<section style="margin-bottom:10px"><strong>${title}（${values.length}）</strong><ul>${shown}${more}</ul></section>`;
+    const counts = groups.map(([, , sections]) => sections.reduce((sum, section) => sum + section[1].length, 0));
+    const total = counts.reduce((sum, count) => sum + count, 0);
+    if (total === 0) return { total, blocking: 0, warnings: 0, info: 0, html: '<p>预检通过，未发现目录、链接、锚点、方法或媒体问题。</p>' };
+    const html = groups.map(([groupTitle, color, sections], groupIndex) => {
+        if (!counts[groupIndex]) return '';
+        const sectionHtml = sections.filter(section => section[1].length > 0).map(([title, values]) => {
+            const shown = values.slice(0, 12).map(value => `<li>${escapeHtml(String(value))}</li>`).join('');
+            const more = values.length > 12 ? `<li>另有 ${values.length - 12} 项…</li>` : '';
+            return `<div style="margin:7px 0"><strong>${title}（${values.length}）</strong><ul>${shown}${more}</ul></div>`;
+        }).join('');
+        return `<section style="margin-bottom:12px;border-left:4px solid ${color};padding-left:10px"><h3 style="margin:0;color:${color}">${groupTitle}（${counts[groupIndex]}）</h3>${sectionHtml}</section>`;
     }).join('');
-    return { total, html: `<p>发现 <strong>${total}</strong> 个需要关注的问题：</p>${html}` };
+    return { total, blocking: counts[0], warnings: counts[1], info: counts[2], html: `<p>发现 <strong>${total}</strong> 个检查结果：</p>${html}` };
 }
 
 async function showExportPreflight(data = mulufile) {
@@ -2656,7 +2824,7 @@ async function confirmExportPreflight(data = mulufile) {
         showToast('导出预检通过', 'success', 1400);
         return true;
     }
-    return customConfirm(report.html, '继续导出', '返回修正', '导出预检', true);
+    return customConfirm(report.html, report.blocking ? '仍要导出' : '继续导出', '返回修正', report.blocking ? '导出预检：存在阻断错误' : '导出预检', true);
 }
 
 async function chooseSaveAsExportScope() {
@@ -3431,6 +3599,19 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
     const directoryLevelColorsJson = JSON.stringify(
         typeof serializeDirectoryLevelColors === 'function' ? serializeDirectoryLevelColors() : {}
     ).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
+    const methodRuntimeHandlersJson = JSON.stringify(
+        window.SoraMethodRegistry
+            ? window.SoraMethodRegistry.getRuntimeHandlerMap()
+            : {
+                '隐藏': 'visibility_hide',
+                '隐藏（初始不隐藏）': 'visibility_hide_initially_visible',
+                '显示': 'visibility_show',
+                '切换': 'visibility_toggle',
+                '更换内容': 'change_content',
+                '添加格式': 'add_format',
+                '目录右键动作': 'directory_action'
+            }
+    ).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
     // 获取第一个目录的ID作为默认选中
     const firstDirId = sourceData.length > 0 && sourceData[0].length === 4 ? sourceData[0][2] : '';
     const mediaChunkMarker = '<!--SORA_MEDIA_CHUNKS-->';
@@ -3936,6 +4117,39 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         .archive-delete-btn {
             display: none;
         }
+        .sora-method-dialog-overlay { position:fixed; inset:0; z-index:10020; display:none; align-items:center; justify-content:center; padding:18px; background:rgba(15,23,42,.46); }
+        .sora-method-dialog-overlay.active { display:flex; }
+        .sora-method-dialog { position:relative; width:min(520px,94vw); max-height:86vh; overflow:auto; padding:24px; border-radius:12px; background:#fff; box-shadow:0 22px 60px rgba(15,23,42,.28); }
+        .sora-method-dialog.mode-drawer { position:absolute; right:0; top:0; bottom:0; width:min(440px,92vw); max-height:none; border-radius:0; }
+        .sora-method-dialog.mode-sidebar { position:absolute; left:0; top:0; bottom:0; width:min(360px,88vw); max-height:none; border-radius:0; }
+        .sora-method-dialog-close { position:absolute; top:8px; right:10px; border:0; background:transparent; color:#64748b; font-size:24px; cursor:pointer; }
+        .sora-method-dialog-content { padding:10px 4px 18px; line-height:1.65; white-space:pre-wrap; }
+        .sora-method-dialog-actions { display:flex; justify-content:flex-end; flex-wrap:wrap; gap:8px; }
+        .sora-method-dialog-actions button { min-height:38px; padding:7px 14px; border:1px solid #cbd5e1; border-radius:6px; background:#fff; cursor:pointer; }
+        .sora-method-dialog-actions button.primary { border-color:#2563eb; background:#2563eb; color:#fff; }
+        .sora-component { display:block; margin:10px 0; padding:10px; border:1px solid #dbe3ee; border-radius:8px; }
+        .sora-component input[type="text"] { display:block; width:100%; margin-top:6px; padding:8px; border:1px solid #cbd5e1; border-radius:5px; }
+        .sora-style-accent { padding:2px 5px; border-left:4px solid #2563eb; background:#eff6ff; }
+        .sora-style-muted { opacity:.58; }
+        .sora-style-success { color:#047857; background:#ecfdf5; }
+        .sora-style-warning { color:#a16207; background:#fffbeb; }
+        .sora-style-danger { color:#b91c1c; background:#fef2f2; }
+        .sora-style-compact { line-height:1.25; font-size:.92em; }
+        .sora-style-hidden { display:none !important; }
+        .sora-animation-fade { animation:soraFade .45s ease both; }
+        .sora-animation-expand { animation:soraExpand .4s ease both; transform-origin:top; }
+        .sora-animation-slide { animation:soraSlide .4s ease both; }
+        .sora-animation-emphasis { animation:soraEmphasis .55s ease both; }
+        @keyframes soraFade { from { opacity:0; } to { opacity:1; } }
+        @keyframes soraExpand { from { opacity:0; transform:scaleY(.65); } to { opacity:1; transform:scaleY(1); } }
+        @keyframes soraSlide { from { opacity:0; transform:translateX(-18px); } to { opacity:1; transform:translateX(0); } }
+        @keyframes soraEmphasis { 0%,100% { transform:scale(1); } 45% { transform:scale(1.04); } }
+        .sora-method-debug-button { position:fixed; right:12px; bottom:12px; z-index:9998; padding:7px 10px; border:1px solid #cbd5e1; border-radius:999px; background:#fff; color:#334155; box-shadow:0 4px 16px rgba(15,23,42,.15); cursor:pointer; }
+        .sora-method-debug-list { max-height:46vh; overflow:auto; margin:10px 0; padding:0; list-style:none; }
+        .sora-method-debug-list li { padding:7px 0; border-bottom:1px solid #e2e8f0; font-size:13px; }
+        @media (prefers-reduced-motion: reduce) {
+            .sora-animation-fade, .sora-animation-expand, .sora-animation-slide, .sora-animation-emphasis { animation:none; }
+        }
         @media (max-width: 768px) {
             body {
                 flex-direction: column;
@@ -3979,13 +4193,22 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         const contentCache = {};
         let mediaDataMap = {};
         const directoryLevelColors = ${directoryLevelColorsJson};
+        const soraMethodRuntimeHandlers = ${methodRuntimeHandlersJson};
         let currentSelected = null;
         let currentDirId = null;
         let soraMethodContextDirId = null;
         const nameMap = {};
         const nameIndex = {};
         const soraExecutedMethodIds = new Set();
+        const soraMethodExecutionCounts = new Map();
+        const soraMethodLastRun = new Map();
+        const soraMethodDebounceTimers = new Map();
+        const soraPageVariables = {};
+        const soraDirectoryHistory = [];
+        const soraMethodExecutionLog = [];
         const soraMethodHoverCooldownMap = new WeakMap();
+        let soraVisibleObserver = null;
+        let soraHistoryNavigation = false;
         let soraDirClipboard = null;
         const SORA_METHOD_DEBUG = false;
 
@@ -4061,6 +4284,13 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
 
         function selectDirectory(dirId, toggleExpand = false) {
             methodDebugLog('[Sora方法] selectDirectory被调用, dirId:', dirId);
+            if (currentDirId && currentDirId !== dirId) {
+                handleSoraMethodTriggersCascade('leave_dir');
+                if (!soraHistoryNavigation) {
+                    soraDirectoryHistory.push(currentDirId);
+                    if (soraDirectoryHistory.length > 50) soraDirectoryHistory.shift();
+                }
+            }
             releaseActiveMedia();
             if (currentSelected) {
                 currentSelected.classList.remove('selected');
@@ -4088,6 +4318,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             initArchiveDownloads();
             setTimeout(() => {
                 loadLazyMedia();
+                initVisibleMethodTriggers();
             }, 100);
 
             methodDebugLog('[Sora方法] 开始执行enter_dir触发');
@@ -4118,7 +4349,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             return String(str || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         }
 
-        function showExportToast(message, duration = 2500) {
+        function showExportToast(message, duration = 2500, tone = 'info') {
             if (!message) return;
             let el = document.getElementById('soraExportToast');
             if (!el) {
@@ -4141,6 +4372,13 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                 document.body.appendChild(el);
             }
             el.textContent = String(message);
+            const tones = {
+                info: 'rgba(15, 23, 42, 0.9)',
+                success: 'rgba(21, 128, 61, 0.92)',
+                warning: 'rgba(180, 83, 9, 0.94)',
+                error: 'rgba(185, 28, 28, 0.94)'
+            };
+            el.style.background = tones[tone] || tones.info;
             el.style.display = 'block';
             clearTimeout(el._hideTimer);
             el._hideTimer = setTimeout(() => {
@@ -4180,7 +4418,14 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
 
         function normalizeRuntimeMethodConfig(cfg, idx, salt) {
             if (!cfg || typeof cfg !== 'object') return null;
+            if (!cfg.configVersion) cfg.configVersion = 1;
             if (!cfg.trigger) cfg.trigger = 'click';
+            if (cfg.enabled === undefined) cfg.enabled = true;
+            cfg.delayMs = Math.max(0, Number(cfg.delayMs) || 0);
+            cfg.debounceMs = Math.max(0, Number(cfg.debounceMs) || 0);
+            cfg.throttleMs = Math.max(0, Number(cfg.throttleMs) || 0);
+            cfg.maxExecutions = Math.max(1, Math.min(1000, Number(cfg.maxExecutions) || (cfg.once ? 1 : 20)));
+            cfg.conditions = Array.isArray(cfg.conditions) ? cfg.conditions : [];
             if (!cfg.formatCommand && cfg.formatType) {
                 cfg.formatCommand = cfg.formatType;
                 delete cfg.formatType;
@@ -4192,6 +4437,14 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                     })
                     .filter(Boolean);
             }
+            ['elseMethods', 'confirmMethods', 'cancelMethods'].forEach(function(key) {
+                if (!Array.isArray(cfg[key])) return;
+                cfg[key] = cfg[key]
+                    .map(function(item, nestedIndex) {
+                        return normalizeRuntimeMethodConfig(item, nestedIndex, salt + '_' + key + '_' + nestedIndex);
+                    })
+                    .filter(Boolean);
+            });
             ensureMethodId(cfg, idx, salt);
             return cfg;
         }
@@ -4223,6 +4476,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             for (let i = 0; i < methods.length; i++) {
                 const cfg = methods[i];
                 if (!cfg || typeof cfg !== 'object') continue;
+                if (cfg.enabled === false) continue;
                 if ((cfg.trigger || 'click') !== trigger) continue;
                 const id = ensureMethodId(cfg, i, (a.textContent || '').slice(0, 30));
                 if (executedInRun && id && executedInRun.has(id)) {
@@ -4231,7 +4485,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                 if (cfg.once && id && soraExecutedMethodIds.has(id)) {
                     continue;
                 }
-                const ok = executeSingleMethod(cfg);
+                const ok = executeConfiguredMethod(cfg, a);
                 if (!ok) continue;
                 anyOk = true;
                 if (executedInRun && id) {
@@ -4282,7 +4536,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                             let ok = false;
                             soraMethodContextDirId = dirId;
                             try {
-                                ok = executeSingleMethod(cfg);
+                                ok = executeConfiguredMethod(cfg, methodLink);
                             } finally {
                                 soraMethodContextDirId = null;
                             }
@@ -4333,34 +4587,208 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             showExportToast('方法触发次数过多，已停止继续执行');
         }
 
+        function readVariableStore(scope) {
+            if (scope === 'page') return soraPageVariables;
+            const storage = scope === 'local' ? localStorage : sessionStorage;
+            try {
+                return safeParseJson(storage.getItem('soraDirectoryMethodVariables'), {}) || {};
+            } catch (error) {
+                return {};
+            }
+        }
+
+        function writeVariableStore(scope, value) {
+            if (scope === 'page') return;
+            const storage = scope === 'local' ? localStorage : sessionStorage;
+            try {
+                storage.setItem('soraDirectoryMethodVariables', JSON.stringify(value));
+            } catch (error) {
+                console.warn('[Sora方法] 状态保存失败:', error);
+            }
+        }
+
+        function getMethodVariable(name, scope) {
+            const store = readVariableStore(scope || 'session');
+            return store[String(name || '')];
+        }
+
+        function setMethodVariable(name, value, scope) {
+            const actualScope = scope || 'session';
+            const store = readVariableStore(actualScope);
+            store[String(name || '')] = value;
+            writeVariableStore(actualScope, store);
+            return value;
+        }
+
+        function compareMethodValue(actual, operator, expected) {
+            if (operator === 'truthy') return !!actual;
+            if (operator === 'falsy') return !actual;
+            if (operator === 'contains') return String(actual ?? '').includes(String(expected ?? ''));
+            if (operator === 'greater') return Number(actual) > Number(expected);
+            if (operator === 'less') return Number(actual) < Number(expected);
+            if (operator === 'not_equals') return String(actual ?? '') !== String(expected ?? '');
+            return String(actual ?? '') === String(expected ?? '');
+        }
+
+        function evaluateMethodCondition(condition, cfg) {
+            const type = condition.type || 'variable';
+            let actual = '';
+            if (type === 'variable') actual = getMethodVariable(condition.key, condition.scope || 'session');
+            if (type === 'execution_count') actual = soraMethodExecutionCounts.get(cfg.methodId) || 0;
+            if (type === 'current_dir') actual = currentDirId || '';
+            if (type === 'visible') {
+                const ref = parseAnchorRef(condition.key);
+                const dirId = resolveDirIdFromRef(ref);
+                const element = dirId ? document.querySelector('[data-dir-id="' + escapeCssSelectorValue(dirId) + '"]') : null;
+                actual = !!(element && element.style.display !== 'none' && element.dataset.soraHidden !== 'true');
+            }
+            if (type === 'checkbox' || type === 'input_value') {
+                const key = String(condition.key || '').replace(/^#/, '');
+                const element = document.querySelector('#' + escapeCssSelectorValue(key) + ', [name="' + escapeCssSelectorValue(key) + '"]');
+                actual = type === 'checkbox' ? !!(element && element.checked) : (element ? element.value : '');
+            }
+            return compareMethodValue(actual, condition.operator || 'equals', condition.value);
+        }
+
+        function evaluateMethodConditions(cfg) {
+            const conditions = Array.isArray(cfg.conditions) ? cfg.conditions : [];
+            if (!conditions.length) return true;
+            let result = evaluateMethodCondition(conditions[0], cfg);
+            for (let i = 1; i < conditions.length; i++) {
+                const value = evaluateMethodCondition(conditions[i], cfg);
+                result = conditions[i].join === 'OR' ? (result || value) : (result && value);
+            }
+            return result;
+        }
+
+        function recordMethodExecution(cfg, status, detail) {
+            soraMethodExecutionLog.unshift({
+                time: new Date().toLocaleTimeString(),
+                methodId: cfg.methodId || '',
+                type: cfg.methodType || '',
+                status: status,
+                detail: detail || '',
+                dirId: soraMethodContextDirId || currentDirId || ''
+            });
+            if (soraMethodExecutionLog.length > 100) soraMethodExecutionLog.length = 100;
+        }
+
+        function executeMethodArray(methods, executionMode) {
+            if (!Array.isArray(methods) || !methods.length) return;
+            methods.forEach(function(method, index) {
+                const run = function() { executeConfiguredMethod(method, null, index); };
+                if (executionMode === 'parallel') setTimeout(run, 0);
+                else run();
+            });
+        }
+
+        function executeConfiguredMethod(cfg, sourceElement) {
+            if (!cfg || cfg.enabled === false) return false;
+            const id = ensureMethodId(cfg, 0, cfg.methodType || 'method');
+            const count = soraMethodExecutionCounts.get(id) || 0;
+            if (count >= (Number(cfg.maxExecutions) || (cfg.once ? 1 : 20))) {
+                recordMethodExecution(cfg, 'skipped', '已达到最大执行次数');
+                return false;
+            }
+            if (!evaluateMethodConditions(cfg)) {
+                recordMethodExecution(cfg, 'skipped', '条件未满足');
+                if (cfg.failureMode === 'fallback') executeMethodArray(cfg.elseMethods, cfg.executionMode);
+                return false;
+            }
+            const now = Date.now();
+            const throttleMs = Number(cfg.throttleMs) || 0;
+            if (throttleMs && now - (soraMethodLastRun.get(id) || 0) < throttleMs) {
+                recordMethodExecution(cfg, 'skipped', '节流中');
+                return false;
+            }
+            const run = function() {
+                soraMethodDebounceTimers.delete(id);
+                soraMethodLastRun.set(id, Date.now());
+                let ok = false;
+                const previousContext = soraMethodContextDirId;
+                if (cfg._contextDirId) soraMethodContextDirId = cfg._contextDirId;
+                try {
+                    ok = executeSingleMethod(cfg, sourceElement);
+                } catch (error) {
+                    console.error('[Sora方法] 执行失败:', error);
+                } finally {
+                    soraMethodContextDirId = previousContext;
+                }
+                if (ok) {
+                    const nextCount = (soraMethodExecutionCounts.get(id) || 0) + 1;
+                    soraMethodExecutionCounts.set(id, nextCount);
+                    recordMethodExecution(cfg, 'success', '第 ' + nextCount + ' 次执行');
+                } else {
+                    recordMethodExecution(cfg, 'failed', '动作未完成');
+                    if (cfg.failureMode === 'fallback') executeMethodArray(cfg.elseMethods, cfg.executionMode);
+                }
+            };
+            const debounceMs = Number(cfg.debounceMs) || 0;
+            const delayMs = Number(cfg.delayMs) || 0;
+            if (debounceMs) {
+                clearTimeout(soraMethodDebounceTimers.get(id));
+                soraMethodDebounceTimers.set(id, setTimeout(run, debounceMs + delayMs));
+                return true;
+            }
+            if (delayMs) {
+                setTimeout(run, delayMs);
+                return true;
+            }
+            run();
+            return true;
+        }
+
         function executeSingleMethod(cfg) {
             if (!cfg || typeof cfg !== 'object') return false;
             const type = cfg.methodType || '';
+            const handler = soraMethodRuntimeHandlers[type] || '';
             methodDebugLog('[Sora方法] 执行单个方法, 类型:', type, '配置:', cfg);
-            if (type === '更换内容') {
+            if (handler === 'change_content') {
                 if (cfg.renameTo && String(cfg.renameTo).trim()) {
                     return executeRenameDirectoryMethod(cfg);
                 }
                 return executeChangeContentMethod(cfg);
             }
-            if (type === '隐藏') {
+            if (handler === 'visibility_hide') {
                 return executeVisibilityMethod(cfg, 'hide');
             }
-            if (type === '隐藏（初始不隐藏）') {
+            if (handler === 'visibility_hide_initially_visible') {
                 return executeVisibilityMethod(cfg, 'hide_init_visible');
             }
-            if (type === '显示') {
+            if (handler === 'visibility_show') {
                 return executeVisibilityMethod(cfg, 'show');
             }
-            if (type === '切换') {
+            if (handler === 'visibility_toggle') {
                 return executeVisibilityMethod(cfg, 'toggle');
             }
-            if (type === '添加格式') {
+            if (handler === 'add_format') {
                 return executeAddFormatMethod(cfg);
             }
-            if (type === '目录右键动作') {
+            if (handler === 'directory_action') {
                 return executeDirActionMethod(cfg);
             }
+            if (handler === 'navigate') return executeNavigateMethod(cfg, false);
+            if (handler === 'navigate_back') return executeNavigateBackMethod();
+            if (handler === 'navigate_sibling') return executeNavigateSiblingMethod(cfg);
+            if (handler === 'expand_navigate') return executeNavigateMethod(cfg, true);
+            if (handler === 'insert_content') return executeInsertContentMethod(cfg);
+            if (handler === 'clear_range') return executeClearRangeMethod(cfg, false);
+            if (handler === 'delete_range') return executeClearRangeMethod(cfg, true);
+            if (handler === 'transfer_range') return executeTransferRangeMethod(cfg);
+            if (handler === 'template_content') return executeTemplateContentMethod(cfg);
+            if (handler === 'variable_set') return executeVariableMethod(cfg, 'set');
+            if (handler === 'variable_adjust') return executeVariableMethod(cfg, 'adjust');
+            if (handler === 'variable_toggle') return executeVariableMethod(cfg, 'toggle');
+            if (handler === 'state_display') return executeStateDisplayMethod(cfg);
+            if (handler === 'toast') {
+                showExportToast(interpolateMethodTemplate(cfg.message || '', cfg), 2500, cfg.tone || 'info');
+                return true;
+            }
+            if (handler === 'confirm') return executeConfirmMethod(cfg);
+            if (handler === 'panel') return executePanelMethod(cfg);
+            if (handler === 'component') return executeComponentMethod(cfg);
+            if (handler === 'class_control') return executeClassControlMethod(cfg);
+            if (handler === 'animation') return executeAnimationMethod(cfg);
             console.warn('[Sora方法] 未支持的方法类型:', type);
             showExportToast('未支持的方法类型：' + type);
             return false;
@@ -4810,6 +5238,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             if (cmd === 'link') {
                 const hrefRaw = String(value || '').trim();
                 if (!hrefRaw) return html;
+                if (!/^(https?:\\/\\/|mailto:|tel:|#|dir:|name:|sora-dir:)/i.test(hrefRaw)) return html;
                 const display = html || escapeHtml(hrefRaw);
                 if (hrefRaw.startsWith('#')) {
                     const id = normalizeAnchorId(hrefRaw);
@@ -5141,13 +5570,10 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                 return true;
             }
             if (action === '删除目录') {
-                const okConfirm = window.confirm('是否删除此目录？此操作不可撤销。');
-                if (!okConfirm) return false;
-                const ok = deleteDirectoryFromDom(targetDir);
-                if (!ok) {
-                    showExportToast('删除失败：未找到目标目录');
-                    return false;
-                }
+                showExportChoice('是否删除此目录？此操作不可撤销。', function() {
+                    const ok = deleteDirectoryFromDom(targetDir);
+                    showExportToast(ok ? '目录已删除' : '删除失败：未找到目标目录');
+                });
                 return true;
             }
             if (action === '复制目录（含子目录）') {
@@ -5326,6 +5752,343 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             return true;
         }
 
+        function resolveMethodTarget(cfg) {
+            const frontRef = parseAnchorRef(cfg.frontAnchor);
+            if (!frontRef) return null;
+            const dirId = resolveDirIdFromRef(frontRef);
+            if (!dirId) return null;
+            const backRef = cfg.backAnchor ? parseAnchorRef(cfg.backAnchor) : null;
+            if (backRef && resolveDirIdFromRef(backRef) !== dirId) return null;
+            return {
+                dirId: dirId,
+                frontId: frontRef.anchorId || '',
+                backId: backRef && backRef.anchorId ? backRef.anchorId : ''
+            };
+        }
+
+        function mutateMethodTarget(cfg, callback) {
+            const target = resolveMethodTarget(cfg);
+            if (!target) {
+                showExportToast('目标目录或锚点无效');
+                return false;
+            }
+            const root = target.dirId === currentDirId
+                ? document.getElementById('contentBody')
+                : document.createElement('div');
+            if (!root) return false;
+            if (target.dirId !== currentDirId) root.innerHTML = getDirHtmlById(target.dirId);
+            const ok = callback(root, target);
+            if (!ok) return false;
+            setDirHtmlById(target.dirId, root.innerHTML, target.dirId === currentDirId);
+            return true;
+        }
+
+        function executeNavigateMethod(cfg, expand) {
+            const target = resolveMethodTarget(cfg);
+            if (!target) {
+                showExportToast('跳转目标无效');
+                return false;
+            }
+            if (expand) expandDirectoryAncestors(target.dirId);
+            selectDirectory(target.dirId, false);
+            if (target.frontId) {
+                requestAnimationFrame(function() { scrollToAnchorInContent(target.frontId); });
+            }
+            return true;
+        }
+
+        function executeNavigateBackMethod() {
+            const previous = soraDirectoryHistory.pop();
+            if (!previous) {
+                showExportToast('没有上一浏览位置');
+                return false;
+            }
+            soraHistoryNavigation = true;
+            try {
+                selectDirectory(previous, false);
+            } finally {
+                soraHistoryNavigation = false;
+            }
+            return true;
+        }
+
+        function executeNavigateSiblingMethod(cfg) {
+            const current = document.querySelector('[data-dir-id="' + escapeCssSelectorValue(currentDirId) + '"]');
+            if (!current) return false;
+            const all = getMuluList();
+            const level = getMuluLevel(current);
+            const parentId = current.dataset.parentId || '';
+            const siblings = all.filter(function(element) {
+                return getMuluLevel(element) === level && (element.dataset.parentId || '') === parentId;
+            });
+            const index = siblings.indexOf(current);
+            const nextIndex = cfg.siblingDirection === 'previous' ? index - 1 : index + 1;
+            if (nextIndex < 0 || nextIndex >= siblings.length) {
+                showExportToast(cfg.siblingDirection === 'previous' ? '已经是第一个同级目录' : '已经是最后一个同级目录');
+                return false;
+            }
+            selectDirectory(siblings[nextIndex].dataset.dirId, false);
+            return true;
+        }
+
+        function expandDirectoryAncestors(dirId) {
+            const all = getMuluList();
+            let target = document.querySelector('[data-dir-id="' + escapeCssSelectorValue(dirId) + '"]');
+            if (!target) return;
+            let level = getMuluLevel(target);
+            let index = all.indexOf(target) - 1;
+            while (level > 0 && index >= 0) {
+                const candidate = all[index];
+                if (getMuluLevel(candidate) === level - 1) {
+                    candidate.classList.add('expanded');
+                    level--;
+                }
+                index--;
+            }
+            refreshMuluVisibility();
+        }
+
+        function interpolateMethodTemplate(value, cfg) {
+            const text = String(value || '');
+            return text.replace(/\\{\\{([^{}]+)\\}\\}/g, function(match, key) {
+                const name = String(key || '').trim();
+                if (name === '目录名') return nameMap[currentDirId] || '';
+                if (name === '日期') return new Date().toLocaleDateString();
+                if (name === '时间') return new Date().toLocaleTimeString();
+                const variable = getMethodVariable(name, (cfg && cfg.variableScope) || 'session');
+                return variable === undefined ? '' : String(variable);
+            });
+        }
+
+        function extractMethodSourceHtml(frontValue, backValue) {
+            const front = parseAnchorRef(frontValue);
+            if (!front) return null;
+            const dirId = resolveDirIdFromRef(front);
+            if (!dirId) return null;
+            const back = backValue ? parseAnchorRef(backValue) : null;
+            if (back && resolveDirIdFromRef(back) !== dirId) return null;
+            const root = document.createElement('div');
+            root.innerHTML = getDirHtmlById(dirId);
+            return extractHtmlBetweenAnchors(root, front.anchorId || '', back && back.anchorId ? back.anchorId : '');
+        }
+
+        function getInsertionHtml(cfg) {
+            if (cfg.contentSourceType === 'reference') {
+                return extractMethodSourceHtml(cfg.contentFrontAnchor, cfg.contentBackAnchor);
+            }
+            const content = interpolateMethodTemplate(cfg.contentText || '', cfg);
+            return escapeHtml(content).replace(/\\n/g, '<br>');
+        }
+
+        function executeInsertContentMethod(cfg) {
+            const insertion = getInsertionHtml(cfg);
+            if (insertion === null) {
+                showExportToast('插入内容来源无效');
+                return false;
+            }
+            return mutateMethodTarget(cfg, function(root, target) {
+                const front = target.frontId ? findAnchorElementInRoot(root, target.frontId) : null;
+                const back = target.backId ? findAnchorElementInRoot(root, target.backId) : null;
+                const holder = document.createElement('div');
+                holder.innerHTML = insertion;
+                const fragment = document.createDocumentFragment();
+                while (holder.firstChild) fragment.appendChild(holder.firstChild);
+                const position = cfg.insertPosition || 'after';
+                if (position === 'before' && front) front.before(fragment);
+                else if (position === 'after' && back) back.after(fragment);
+                else if (position === 'start' && front) front.after(fragment);
+                else if (position === 'end' && back) back.before(fragment);
+                else root.appendChild(fragment);
+                return true;
+            });
+        }
+
+        function executeClearRangeMethod(cfg, removeAnchors) {
+            return mutateMethodTarget(cfg, function(root, target) {
+                if (!target.frontId || !target.backId) return false;
+                const front = findAnchorElementInRoot(root, target.frontId);
+                const back = findAnchorElementInRoot(root, target.backId);
+                if (!front || !back) return false;
+                const ok = replaceHtmlBetweenAnchors(root, target.frontId, target.backId, '');
+                if (ok && removeAnchors) {
+                    front.remove();
+                    back.remove();
+                }
+                return ok;
+            });
+        }
+
+        function executeTransferRangeMethod(cfg) {
+            const source = resolveMethodTarget(cfg);
+            const destinationCfg = { frontAnchor: cfg.destinationFrontAnchor, backAnchor: cfg.destinationBackAnchor };
+            const destination = resolveMethodTarget(destinationCfg);
+            if (!source || !destination || !source.frontId || !source.backId || !destination.frontId || !destination.backId) {
+                showExportToast('传送范围的来源或目标无效');
+                return false;
+            }
+            const sourceHtml = extractMethodSourceHtml(cfg.frontAnchor, cfg.backAnchor);
+            const destinationHtml = extractMethodSourceHtml(cfg.destinationFrontAnchor, cfg.destinationBackAnchor);
+            if (sourceHtml === null || destinationHtml === null) return false;
+            const replaceDestination = mutateMethodTarget(destinationCfg, function(root, target) {
+                return replaceHtmlBetweenAnchors(root, target.frontId, target.backId, sourceHtml);
+            });
+            if (!replaceDestination) return false;
+            if (cfg.transferMode === 'move' || cfg.transferMode === 'swap') {
+                return mutateMethodTarget(cfg, function(root, target) {
+                    return replaceHtmlBetweenAnchors(root, target.frontId, target.backId, cfg.transferMode === 'swap' ? destinationHtml : '');
+                });
+            }
+            return true;
+        }
+
+        function executeTemplateContentMethod(cfg) {
+            const html = escapeHtml(interpolateMethodTemplate(cfg.templateText || '', cfg)).replace(/\\n/g, '<br>');
+            return mutateMethodTarget(cfg, function(root, target) {
+                return replaceHtmlBetweenAnchors(root, target.frontId, target.backId, html);
+            });
+        }
+
+        function executeVariableMethod(cfg, operation) {
+            const name = String(cfg.variableName || '').trim();
+            if (!name) return false;
+            const scope = cfg.variableScope || 'session';
+            const current = getMethodVariable(name, scope);
+            let value = cfg.variableValue;
+            if (operation === 'adjust') value = (Number(current) || 0) + (Number(cfg.variableDelta) || 0);
+            if (operation === 'toggle') value = !Boolean(current);
+            if (operation === 'set') {
+                if (cfg.variableType === 'number') value = Number(value) || 0;
+                if (cfg.variableType === 'boolean') value = value === true || String(value).toLowerCase() === 'true' || String(value) === '1';
+            }
+            setMethodVariable(name, value, scope);
+            return true;
+        }
+
+        function executeStateDisplayMethod(cfg) {
+            const value = getMethodVariable(cfg.variableName, cfg.variableScope || 'session');
+            let html = '<span class="sora-state-value">' + escapeHtml(value === undefined ? '' : value) + '</span>';
+            if (cfg.stateDisplayType === 'counter') html = '<span class="sora-state-counter">' + escapeHtml(value || 0) + '</span>';
+            if (cfg.stateDisplayType === 'progress') {
+                const number = Math.max(0, Math.min(100, Number(value) || 0));
+                html = '<progress max="100" value="' + number + '">' + number + '%</progress>';
+            }
+            if (cfg.stateDisplayType === 'complete') html = value ? '<span class="sora-state-complete">✓ 已完成</span>' : '<span class="sora-state-pending">未完成</span>';
+            if (!cfg.frontAnchor) {
+                const temp = document.createElement('div');
+                temp.innerHTML = html;
+                showExportToast(temp.textContent || '');
+                return true;
+            }
+            return mutateMethodTarget(cfg, function(root, target) {
+                return replaceHtmlBetweenAnchors(root, target.frontId, target.backId, html);
+            });
+        }
+
+        function ensureExportDialog() {
+            let overlay = document.getElementById('soraMethodDialog');
+            if (overlay) return overlay;
+            overlay = document.createElement('div');
+            overlay.id = 'soraMethodDialog';
+            overlay.className = 'sora-method-dialog-overlay';
+            overlay.innerHTML = '<section class="sora-method-dialog" role="dialog" aria-modal="true"><button type="button" class="sora-method-dialog-close" aria-label="关闭">×</button><div class="sora-method-dialog-content"></div><div class="sora-method-dialog-actions"></div></section>';
+            document.body.appendChild(overlay);
+            overlay.querySelector('.sora-method-dialog-close').addEventListener('click', function() { overlay.classList.remove('active'); });
+            overlay.addEventListener('click', function(event) { if (event.target === overlay) overlay.classList.remove('active'); });
+            return overlay;
+        }
+
+        function showExportChoice(message, onConfirm, onCancel) {
+            const overlay = ensureExportDialog();
+            overlay.querySelector('.sora-method-dialog').className = 'sora-method-dialog';
+            overlay.querySelector('.sora-method-dialog-content').textContent = String(message || '请确认');
+            const actions = overlay.querySelector('.sora-method-dialog-actions');
+            actions.innerHTML = '<button type="button" data-choice="cancel">取消</button><button type="button" data-choice="confirm" class="primary">确认</button>';
+            actions.onclick = function(event) {
+                const button = event.target.closest('[data-choice]');
+                if (!button) return;
+                overlay.classList.remove('active');
+                if (button.dataset.choice === 'confirm') {
+                    if (onConfirm) onConfirm();
+                } else if (onCancel) onCancel();
+            };
+            overlay.classList.add('active');
+        }
+
+        function executeConfirmMethod(cfg) {
+            const overlay = ensureExportDialog();
+            showExportChoice(interpolateMethodTemplate(cfg.message || '是否继续？', cfg), function() {
+                executeMethodArray(cfg.confirmMethods, cfg.executionMode);
+            }, function() {
+                executeMethodArray(cfg.cancelMethods, cfg.executionMode);
+            });
+            const timeout = Number(cfg.confirmTimeoutMs) || 0;
+            if (timeout > 0) {
+                setTimeout(function() {
+                    if (!overlay.classList.contains('active')) return;
+                    overlay.classList.remove('active');
+                    executeMethodArray(cfg.confirmDefault === 'confirm' ? cfg.confirmMethods : cfg.cancelMethods, cfg.executionMode);
+                }, timeout);
+            }
+            return true;
+        }
+
+        function executePanelMethod(cfg) {
+            const overlay = ensureExportDialog();
+            overlay.querySelector('.sora-method-dialog').className = 'sora-method-dialog mode-' + (cfg.panelMode || 'modal');
+            overlay.querySelector('.sora-method-dialog-content').textContent = interpolateMethodTemplate(cfg.message || '', cfg);
+            overlay.querySelector('.sora-method-dialog-actions').innerHTML = '<button type="button" data-close-panel>关闭</button>';
+            overlay.querySelector('[data-close-panel]').onclick = function() { overlay.classList.remove('active'); };
+            overlay.classList.add('active');
+            return true;
+        }
+
+        function executeComponentMethod(cfg) {
+            return mutateMethodTarget(cfg, function(root, target) {
+                const content = extractHtmlBetweenAnchors(root, target.frontId, target.backId);
+                if (content === null) return false;
+                const label = escapeHtml(cfg.componentLabel || '内容');
+                let html = '';
+                if (cfg.componentType === 'collapse') html = '<details class="sora-component"><summary>' + label + '</summary><div>' + content + '</div></details>';
+                else if (cfg.componentType === 'progress') html = '<div class="sora-component"><label>' + label + '</label><progress max="100" value="0">0%</progress></div>';
+                else if (cfg.componentType === 'input') html = '<label class="sora-component">' + label + '<input type="text"></label>';
+                else if (cfg.componentType === 'radio') html = '<label class="sora-component"><input type="radio" name="sora-' + stringToHash(label) + '"> ' + label + '</label>';
+                else if (cfg.componentType === 'checkbox') html = '<label class="sora-component"><input type="checkbox"> ' + label + '</label>';
+                else html = '<section class="sora-component sora-component-' + escapeHtmlAttr(cfg.componentType || 'steps') + '"><h3>' + label + '</h3>' + content + '</section>';
+                return replaceHtmlBetweenAnchors(root, target.frontId, target.backId, html);
+            });
+        }
+
+        function wrapTargetWithClass(cfg, className, dataAttribute) {
+            return mutateMethodTarget(cfg, function(root, target) {
+                const id = getRangeWrapperId(target.dirId, target.frontId, target.backId);
+                let wrapper = findRangeWrapper(root, id);
+                if (!wrapper) wrapper = wrapRangeInRoot(root, target.frontId, target.backId, id, 'contents');
+                if (!wrapper) return false;
+                if (dataAttribute) wrapper.setAttribute(dataAttribute.name, dataAttribute.value);
+                wrapper.classList.add(className);
+                return true;
+            });
+        }
+
+        function executeClassControlMethod(cfg) {
+            const token = 'sora-style-' + String(cfg.classToken || 'accent').replace(/[^a-z0-9_-]/gi, '');
+            return mutateMethodTarget(cfg, function(root, target) {
+                const id = getRangeWrapperId(target.dirId, target.frontId, target.backId);
+                let wrapper = findRangeWrapper(root, id);
+                if (!wrapper) wrapper = wrapRangeInRoot(root, target.frontId, target.backId, id, 'contents');
+                if (!wrapper) return false;
+                if (cfg.classOperation === 'add') wrapper.classList.add(token);
+                else if (cfg.classOperation === 'remove') wrapper.classList.remove(token);
+                else wrapper.classList.toggle(token);
+                return true;
+            });
+        }
+
+        function executeAnimationMethod(cfg) {
+            const name = String(cfg.animationName || 'fade').replace(/[^a-z0-9_-]/gi, '');
+            return wrapTargetWithClass(cfg, 'sora-animation-' + name, { name: 'data-sora-animate', value: String(Date.now()) });
+        }
+
         function parseAnchorRef(input) {
             const trimmed = String(input || '').trim();
             if (!trimmed) return null;
@@ -5397,6 +6160,105 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                     }, 100);
                 }
             }
+        }
+
+        function initVisibleMethodTriggers() {
+            if (soraVisibleObserver) soraVisibleObserver.disconnect();
+            if (!('IntersectionObserver' in window)) return;
+            const contentBody = document.getElementById('contentBody');
+            if (!contentBody) return;
+            const visibleLinks = Array.from(contentBody.querySelectorAll('a[data-sora-link="method"]')).filter(function(link) {
+                return readMethodsFromElement(link).some(function(method) { return method.trigger === 'visible'; });
+            });
+            const thresholds = Array.from(new Set([0.01].concat(visibleLinks.flatMap(function(link) {
+                return readMethodsFromElement(link).filter(function(method) { return method.trigger === 'visible'; }).map(function(method) {
+                    return Math.max(0, Math.min(1, Number(method.visibleThreshold) || 0.35));
+                });
+            })))).sort(function(a, b) { return a - b; });
+            soraVisibleObserver = new IntersectionObserver(function(entries) {
+                entries.forEach(function(entry) {
+                    if (!entry.isIntersecting) return;
+                    readMethodsFromElement(entry.target).forEach(function(method) {
+                        if (method.trigger !== 'visible') return;
+                        const threshold = Math.max(0, Math.min(1, Number(method.visibleThreshold) || 0.35));
+                        if (entry.intersectionRatio >= threshold) executeConfiguredMethod(method, entry.target);
+                    });
+                });
+            }, { root: contentBody, threshold: thresholds });
+            visibleLinks.forEach(function(link) { soraVisibleObserver.observe(link); });
+        }
+
+        function scheduleTimeMethodTriggers() {
+            document.querySelectorAll('.mulu').forEach(function(element) {
+                const dirId = element.dataset.dirId;
+                if (!dirId) return;
+                extractMethodLinksFromHtml(getContent(dirId) || '').forEach(function(link) {
+                    readMethodsFromElement(link).forEach(function(method) {
+                        if (method.enabled === false) return;
+                        method._contextDirId = dirId;
+                        if (method.trigger === 'delay') {
+                            setTimeout(function() { executeConfiguredMethod(method, link); }, Math.max(0, Number(method.triggerDelayMs) || 0));
+                        }
+                        if (method.trigger === 'interval') {
+                            const interval = Math.max(250, Number(method.intervalMs) || 5000);
+                            const timer = setInterval(function() {
+                                const count = soraMethodExecutionCounts.get(method.methodId) || 0;
+                                if (count >= method.maxExecutions) {
+                                    clearInterval(timer);
+                                    return;
+                                }
+                                executeConfiguredMethod(method, link);
+                            }, interval);
+                        }
+                    });
+                });
+            });
+        }
+
+        function normalizeShortcut(event) {
+            const parts = [];
+            if (event.ctrlKey) parts.push('Ctrl');
+            if (event.altKey) parts.push('Alt');
+            if (event.shiftKey) parts.push('Shift');
+            if (event.metaKey) parts.push('Meta');
+            const key = event.key.length === 1 ? event.key.toUpperCase() : event.key;
+            if (!['Control', 'Alt', 'Shift', 'Meta'].includes(key)) parts.push(key);
+            return parts.join('+').toLowerCase();
+        }
+
+        function showMethodDebugPanel() {
+            const overlay = ensureExportDialog();
+            overlay.querySelector('.sora-method-dialog').className = 'sora-method-dialog mode-drawer';
+            const pageVars = JSON.stringify(soraPageVariables, null, 2);
+            const sessionVars = JSON.stringify(readVariableStore('session'), null, 2);
+            overlay.querySelector('.sora-method-dialog-content').innerHTML =
+                '<h2>方法调试</h2>' +
+                '<p>当前目录：<code>' + escapeHtml(currentDirId || '无') + '</code> · 已记录 ' + soraMethodExecutionLog.length + ' 条</p>' +
+                '<details><summary>页面变量</summary><pre>' + escapeHtml(pageVars) + '</pre></details>' +
+                '<details><summary>会话变量</summary><pre>' + escapeHtml(sessionVars) + '</pre></details>' +
+                '<ul class="sora-method-debug-list">' + soraMethodExecutionLog.map(function(item) {
+                    return '<li><strong>' + escapeHtml(item.status) + '</strong> · ' + escapeHtml(item.time + ' ' + item.type) + '<br><small>' + escapeHtml(item.detail + ' · ' + item.methodId) + '</small></li>';
+                }).join('') + '</ul>';
+            overlay.querySelector('.sora-method-dialog-actions').innerHTML = '<button type="button" data-debug-reset>重置执行状态</button><button type="button" data-debug-close>关闭</button>';
+            overlay.querySelector('[data-debug-reset]').onclick = function() {
+                soraExecutedMethodIds.clear();
+                soraMethodExecutionCounts.clear();
+                soraMethodExecutionLog.length = 0;
+                Object.keys(soraPageVariables).forEach(function(key) { delete soraPageVariables[key]; });
+                showExportToast('方法执行状态已重置');
+                overlay.classList.remove('active');
+            };
+            overlay.querySelector('[data-debug-close]').onclick = function() { overlay.classList.remove('active'); };
+            overlay.classList.add('active');
+        }
+
+        function initMethodDebugButton() {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'sora-method-debug-button';
+            button.textContent = '方法调试';
+            button.addEventListener('click', showMethodDebugPanel);
+            document.body.appendChild(button);
         }
 
         function findAnchorElementInRoot(root, anchorId) {
@@ -6020,6 +6882,16 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             const contentBody = document.getElementById('contentBody');
             if (contentBody) {
                 contentBody.addEventListener('click', handleInternalLinkClick);
+                contentBody.addEventListener('dblclick', function(e) {
+                    const a = e.target && e.target.closest ? e.target.closest('a[data-sora-link="method"]') : null;
+                    if (a) executeMethodsForElement(a, 'dblclick');
+                });
+                contentBody.addEventListener('change', function() {
+                    handleSoraMethodTriggersCascade('change');
+                });
+                contentBody.addEventListener('ended', function() {
+                    handleSoraMethodTriggersCascade('media_end');
+                }, true);
                 contentBody.addEventListener('mouseover', function(e) {
                     const a = e.target && e.target.closest ? e.target.closest('a[data-sora-link="method"]') : null;
                     if (!a) return;
@@ -6032,8 +6904,35 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                     soraMethodHoverCooldownMap.set(a, now);
                     executeMethodsForElement(a, 'hover');
                 });
+                let longPressTimer = null;
+                contentBody.addEventListener('pointerdown', function(e) {
+                    const a = e.target && e.target.closest ? e.target.closest('a[data-sora-link="method"]') : null;
+                    if (!a) return;
+                    const methods = readMethodsFromElement(a).filter(function(method) { return method.trigger === 'longpress'; });
+                    if (!methods.length) return;
+                    const duration = Math.max(300, Math.min.apply(Math, methods.map(function(method) { return Number(method.longPressMs) || 600; })));
+                    longPressTimer = setTimeout(function() { executeMethodsForElement(a, 'longpress'); }, duration);
+                });
+                ['pointerup', 'pointercancel', 'pointerleave'].forEach(function(name) {
+                    contentBody.addEventListener(name, function() {
+                        clearTimeout(longPressTimer);
+                        longPressTimer = null;
+                    });
+                });
             }
         })();
+
+        document.addEventListener('keydown', function(event) {
+            const shortcut = normalizeShortcut(event);
+            const contentBody = document.getElementById('contentBody');
+            if (!contentBody) return;
+            contentBody.querySelectorAll('a[data-sora-link="method"]').forEach(function(link) {
+                const matches = readMethodsFromElement(link).filter(function(method) {
+                    return method.trigger === 'keyboard' && String(method.shortcut || '').toLowerCase() === shortcut;
+                });
+                matches.forEach(function(method) { executeConfiguredMethod(method, link); });
+            });
+        });
 
         function initCodeBlocks() {
             const contentBody = document.getElementById('contentBody');
@@ -6138,7 +7037,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                     try {
                         const dataUrl = await loadArchiveData(placeholderId);
                         if (!dataUrl) {
-                            alert('文件数据不可用');
+                            showExportToast('文件数据不可用');
                             downloadBtn.textContent = originalText;
                             downloadBtn.disabled = false;
                             return;
@@ -6149,7 +7048,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                         a.click();
                     } catch (err) {
                         console.error('加载压缩包失败:', err);
-                        alert('加载文件失败，请重试');
+                        showExportToast('加载文件失败，请重试');
                     } finally {
                         downloadBtn.textContent = originalText;
                         downloadBtn.disabled = false;
@@ -6185,6 +7084,8 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         
         methodDebugLog('[Sora方法] 网页加载完成，开始执行open触发');
         handleSoraMethodTriggersCascade('open');
+        scheduleTimeMethodTriggers();
+        initMethodDebugButton();
     </script>
 </body>
 </html>`;

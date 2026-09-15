@@ -5,7 +5,8 @@
   "private": true,
   "scripts": {
     "start": "python -m http.server 8080",
-    "check": "node scripts/check-js.js"
+    "check": "node scripts/check-js.js",
+    "test": "node scripts/test-method-registry.js && node scripts/test-feature-contracts.js"
   },
   "devDependencies": {
   },

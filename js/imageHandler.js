@@ -97,6 +97,45 @@ async function compressImage(base64Data, options = {}) {
 const MEDIA_IMAGE_EXT_RE = /\.(jpg|jpeg|png|gif|bmp|webp|svg|ico)$/i;
 const MEDIA_VIDEO_EXT_RE = /\.(mp4|webm|ogg|ogv|avi|mov|wmv|flv|mkv|m4v)$/i;
 let mediaImportActive = false;
+let mediaImportCancelRequested = false;
+let mediaImportQueueItems = [];
+
+function renderMediaImportQueue() {
+    let panel = document.getElementById('mediaImportQueue');
+    if (!panel) {
+        const style = document.createElement('style');
+        style.textContent = `
+            .media-import-queue { position:fixed; right:14px; bottom:14px; z-index:13000; width:min(360px,calc(100vw - 28px)); max-height:55vh; overflow:auto; padding:12px; border:1px solid #cbd5e1; border-radius:10px; background:#fff; box-shadow:0 15px 40px rgba(15,23,42,.22); }
+            .media-import-queue header { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px; }
+            .media-import-queue h3 { margin:0; font-size:14px; }
+            .media-import-queue-list { display:grid; gap:5px; }
+            .media-import-queue-item { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; padding:6px 0; border-top:1px solid #eef2f7; font-size:12px; }
+            .media-import-queue-item span:first-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+            .media-import-queue-actions { display:flex; gap:6px; margin-top:9px; }
+            .media-import-queue button { min-height:30px; border:1px solid #cbd5e1; border-radius:5px; background:#fff; cursor:pointer; }
+        `;
+        document.head.appendChild(style);
+        panel = document.createElement('aside');
+        panel.id = 'mediaImportQueue';
+        panel.className = 'media-import-queue';
+        panel.setAttribute('aria-live', 'polite');
+        document.body.appendChild(panel);
+        panel.addEventListener('click', event => {
+            if (event.target.closest('[data-cancel-import]')) mediaImportCancelRequested = true;
+            if (event.target.closest('[data-close-import]')) panel.remove();
+            if (event.target.closest('[data-retry-import]') && !mediaImportActive) {
+                const files = mediaImportQueueItems.filter(item => item.status === '失败').map(item => item.file);
+                if (files.length) importMediaFiles(files, { promptCaption: false });
+            }
+        });
+    }
+    const done = mediaImportQueueItems.filter(item => item.status === '完成').length;
+    const failed = mediaImportQueueItems.filter(item => item.status === '失败').length;
+    const cancelled = mediaImportQueueItems.filter(item => item.status === '已取消').length;
+    panel.innerHTML = `<header><h3>媒体导入 ${done}/${mediaImportQueueItems.length}</h3><small>${failed ? `失败 ${failed}` : cancelled ? `取消 ${cancelled}` : mediaImportActive ? '处理中' : '完成'}</small></header>
+        <div class="media-import-queue-list">${mediaImportQueueItems.map(item => `<div class="media-import-queue-item"><span>${escapeHtml(item.file.name)}</span><span>${item.status}</span></div>`).join('')}</div>
+        <div class="media-import-queue-actions">${mediaImportActive ? '<button type="button" data-cancel-import>取消剩余任务</button>' : ''}${failed ? '<button type="button" data-retry-import>重试失败项</button>' : ''}${!mediaImportActive ? '<button type="button" data-close-import>关闭</button>' : ''}</div>`;
+}
 
 function isSupportedImageFile(file) {
     return !!file && (file.type.startsWith('image/') || MEDIA_IMAGE_EXT_RE.test(file.name || ''));
@@ -137,6 +176,27 @@ function getDropMarkdownRange(event) {
         }
     }
     return null;
+}
+
+function showMediaDropIndicator(event) {
+    let indicator = document.getElementById('mediaDropIndicator');
+    if (!indicator) {
+        indicator = document.createElement('div');
+        indicator.id = 'mediaDropIndicator';
+        indicator.setAttribute('aria-hidden', 'true');
+        indicator.style.cssText = 'position:fixed;height:3px;border-radius:999px;background:#2563eb;box-shadow:0 0 0 2px rgba(37,99,235,.18);z-index:12000;pointer-events:none;display:none;';
+        document.body.appendChild(indicator);
+    }
+    const rect = markdownPreview.getBoundingClientRect();
+    indicator.style.left = `${Math.max(rect.left + 8, 8)}px`;
+    indicator.style.width = `${Math.max(24, rect.width - 16)}px`;
+    indicator.style.top = `${Math.max(rect.top + 3, Math.min(rect.bottom - 3, event.clientY))}px`;
+    indicator.style.display = 'block';
+}
+
+function hideMediaDropIndicator() {
+    const indicator = document.getElementById('mediaDropIndicator');
+    if (indicator) indicator.style.display = 'none';
 }
 
 function mediaDisplayName(file) {
@@ -321,12 +381,22 @@ async function importMediaFiles(files, options = {}) {
     }
 
     mediaImportActive = true;
+    mediaImportCancelRequested = false;
+    mediaImportQueueItems = mediaItems.map(item => ({ ...item, status: '等待' }));
+    renderMediaImportQueue();
     const fragment = document.createDocumentFragment();
     let importedCount = 0;
     let failedCount = 0;
     try {
         for (let i = 0; i < mediaItems.length; i++) {
             const item = mediaItems[i];
+            if (mediaImportCancelRequested) {
+                for (let pending = i; pending < mediaImportQueueItems.length; pending++) mediaImportQueueItems[pending].status = '已取消';
+                renderMediaImportQueue();
+                break;
+            }
+            mediaImportQueueItems[i].status = '处理中';
+            renderMediaImportQueue();
             showToast(`正在导入媒体 ${i + 1}/${mediaItems.length}`, 'info', 1200);
             try {
                 const node = item.type === 'video'
@@ -335,10 +405,14 @@ async function importMediaFiles(files, options = {}) {
                 fragment.appendChild(node);
                 fragment.appendChild(document.createElement('br'));
                 importedCount++;
+                mediaImportQueueItems[i].status = '完成';
             } catch (err) {
                 failedCount++;
+                mediaImportQueueItems[i].status = '失败';
+                mediaImportQueueItems[i].error = err && err.message ? err.message : String(err);
                 console.error('导入媒体失败:', mediaDisplayName(item.file), err);
             }
+            renderMediaImportQueue();
             if (i % 3 === 2) {
                 await new Promise(resolve => setTimeout(resolve, 0));
             }
@@ -358,6 +432,7 @@ async function importMediaFiles(files, options = {}) {
         showToast(`已导入 ${importedCount} 个媒体${ignoredText}${failedText}`, failedCount > 0 ? 'warning' : 'success', 3000);
     } finally {
         mediaImportActive = false;
+        renderMediaImportQueue();
     }
 }
 
@@ -1017,10 +1092,15 @@ if (markdownPreview) {
         if (e.dataTransfer) {
             e.dataTransfer.dropEffect = 'copy';
         }
+        showMediaDropIndicator(e);
+    });
+    markdownPreview.addEventListener('dragleave', function(e) {
+        if (!markdownPreview.contains(e.relatedTarget)) hideMediaDropIndicator();
     });
     markdownPreview.addEventListener("drop", async function(e) {
         e.preventDefault();
         e.stopPropagation();
+        hideMediaDropIndicator();
         try {
             showToast('正在读取拖入内容...', 'info', 1200);
             const files = await getFilesFromDataTransfer(e.dataTransfer);

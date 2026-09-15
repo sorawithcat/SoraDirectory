@@ -512,12 +512,12 @@ function buildHelpPageContents() {
     const root = [
         '<h1>使用说明</h1>',
         nav,
-        '<p>这是内置的说明文档</p>',
+        '<p>这是随项目版本更新的内置说明。</p>',
         '<h2 id="交互说明">交互说明</h2>',
         '<ul>',
         '<li><strong>目录区</strong>：左键选择；双击重命名；拖拽移动（含子目录）；右键打开菜单。</li>',
         '<li><strong>编辑区</strong>：右侧为可编辑预览区，直接输入/粘贴即可。</li>',
-        '<li><strong>链接/锚点</strong>：在编辑器预览区，单击用于编辑；要跳转/打开请使用 <strong>Ctrl+单击</strong>。</li>',
+        '<li><strong>链接/锚点/方法</strong>：单击可编辑；链接与锚点要跳转/打开时使用 <strong>Ctrl+单击</strong>。</li>',
         '<li><strong>导出网页</strong>：网页里是普通单击跳转；锚点本身不可见且不可点击（仅作为跳转目标）。</li>',
         '</ul>',
         '<h2 id="常用快捷键">常用快捷键</h2>',
@@ -525,6 +525,7 @@ function buildHelpPageContents() {
         '<li><strong>Ctrl+S</strong>：保存</li>',
         '<li><strong>Ctrl+F</strong>：查找</li>',
         '<li><strong>Ctrl+H</strong>：替换</li>',
+        '<li><strong>Ctrl+K</strong>：全局搜索目录、锚点与功能命令</li>',
         '<li><strong>Ctrl+Z / Ctrl+Y</strong>：撤销 / 重做目录操作（焦点不在编辑区时）</li>',
         '<li><strong>Ctrl+B / Ctrl+I / Ctrl+U</strong>：粗体 / 斜体 / 下划线</li>',
         '</ul>',
@@ -534,9 +535,10 @@ function buildHelpPageContents() {
         '<li>在右侧预览区编辑，并用顶部工具栏或悬浮工具栏插入格式。</li>',
         '<li>批量插入图片和视频，并在媒体库中查看引用、复用资源或清理孤立资源。</li>',
         '<li>创建链接：外链、页内跳转（#锚点）、目录内跳转（dir:/name:）。</li>',
+        '<li>创建方法：为导出网页配置导航、内容、状态、条件、交互、组件、样式和目录动作；目标目录或锚点可搜索选择。</li>',
         '<li>保存为普通文件或加密文件；导出网页或加密网页（需要密码才能查看）。</li>',
         '<li>用面包屑、最近访问和收藏快速定位目录；未保存修改会生成本地自动草稿。</li>',
-        '<li>导出前检查目录结构、链接、锚点和媒体引用。</li>',
+        '<li>导出前检查目录结构、链接、锚点、方法和媒体引用。</li>',
         '</ul>',
         '<h2 id="快速入口">快速入口</h2>',
         '<ul>',
@@ -615,6 +617,7 @@ function buildHelpPageContents() {
         '<li><strong>面包屑</strong>：编辑区上方显示当前目录路径，点击任一级可直接返回。</li>',
         '<li><strong>最近访问</strong>：保留最近 12 个有效目录，可从下拉列表快速跳转。</li>',
         '<li><strong>收藏目录</strong>：点击星标收藏当前目录，再从收藏列表进入。</li>',
+        '<li><strong>筛选目录 / 当前分支</strong>：在目录区顶部按名称或 ID 过滤，也可只看当前目录及其后代。</li>',
         '</ul>',
         '<h2 id="目录ID示例">目录ID 示例</h2>',
         '<p>例如你复制到的目录ID可能类似：<code>abc123xyz</code>。写目录内跳转时使用：</p>',
@@ -647,8 +650,8 @@ function buildHelpPageContents() {
         '<tr><td><code>spoiler</code></td><td>防剧透</td><td>使用 <code>&lt;spoiler&gt;</code>；悬停显示内容</td></tr>',
         '<tr><td><code>superscript</code></td><td>上标</td><td>使用 <code>&lt;sup&gt;</code></td></tr>',
         '<tr><td><code>subscript</code></td><td>下标</td><td>使用 <code>&lt;sub&gt;</code></td></tr>',
-        '<tr><td><code>color</code></td><td>文字颜色</td><td>会弹出颜色选择；已选中文本才能应用</td></tr>',
-        '<tr><td><code>background-color</code></td><td>背景颜色</td><td>会弹出颜色选择；已选中文本才能应用</td></tr>',
+        '<tr><td><code>color</code></td><td>文字颜色</td><td>提供常用/最近颜色及对比度提示；已选中文本才能应用</td></tr>',
+        '<tr><td><code>background-color</code></td><td>背景颜色</td><td>提供常用/最近颜色及对比度提示；已选中文本才能应用</td></tr>',
         '<tr><td><code>unordered-list</code></td><td>无序列表</td><td>按行拆分生成 <code>&lt;ul&gt;&lt;li&gt;</code></td></tr>',
         '<tr><td><code>ordered-list</code></td><td>有序列表</td><td>按行拆分生成 <code>&lt;ol&gt;&lt;li&gt;</code></td></tr>',
         '<tr><td><code>task-list</code></td><td>任务列表</td><td>按行生成可勾选任务项</td></tr>',
@@ -671,7 +674,8 @@ function buildHelpPageContents() {
         '<li>顶部工具栏提供<strong>插入图片</strong>、<strong>插入视频</strong>和<strong>媒体</strong>；“媒体”可一次选择多张图片和多个视频。</li>',
         '<li>也可把媒体文件拖入编辑区；浏览器支持文件夹拖入时，系统会递归读取文件夹，并忽略非图片、非视频文件。</li>',
         '<li>单个媒体导入时可填写图注/标题；右键图片或视频可修改图注/注释或删除。</li>',
-        '<li><strong>媒体库</strong>可按资源、目录或 ID 搜索，查看引用次数，定位引用目录，把已有资源插入当前目录，并删除未被引用的孤立资源。</li>',
+        '<li><strong>媒体库</strong>可按资源、目录、ID、类型、大小、当前目录或孤立状态筛选，查看/修改图注、宽度、对齐和加载策略，定位或复用资源，并在保留全部引用的前提下替换源文件。</li>',
+        '<li>批量导入会显示逐项队列；可取消剩余任务，并对失败项重试。</li>',
         '<li>媒体数据存储在浏览器本地；导出网页或 <code>.sora</code> 时会一并打包，因此文件可能变大。</li>',
         '</ul>'
     ].join('');
@@ -682,7 +686,7 @@ function buildHelpPageContents() {
 
         '<h2 id="外部链接">外部链接</h2>',
         '<ul>',
-        '<li>用“链接”按钮输入 <code>http://</code> 或 <code>https://</code> 地址即可。</li>',
+        '<li>“链接”对话框区分外部网址和内部引用；内部引用可直接搜索，无需记住目录 ID。</li>',
         '<li>编辑器里 <strong>Ctrl+单击</strong> 才会打开链接；单击会进入编辑。</li>',
         '</ul>',
         '<h2 id="页内跳转">页内跳转（当前目录）</h2>',
@@ -721,7 +725,7 @@ function buildHelpPageContents() {
         '<h2 id="编辑提示">编辑提示</h2>',
         '<ul>',
         '<li>编辑器预览区：<strong>Ctrl+单击</strong> 才会跳转/打开；单击用于进入编辑与选中元素。</li>',
-        '<li>单击链接会弹出“编辑链接地址”对话框，支持把外链改成 <code>#锚点</code> / <code>dir:</code> / <code>name:</code>。</li>',
+        '<li>单击链接会打开链接编辑器；内部目标支持当前目录、当前分支、最近访问、收藏与全部目录范围。</li>',
         '</ul>'
     ].join('');
 
@@ -769,8 +773,9 @@ function buildHelpPageContents() {
         '</ul>',
         '<h2 id="编辑方式">编辑方式</h2>',
         '<ul>',
-        '<li>编辑器预览区：对方法链接使用 <strong>Alt+单击</strong> 打开编辑对话框。</li>',
-        '<li>编辑器里方法不会执行，这是刻意设计：避免编辑时误触导致内容被改写。</li>',
+        '<li>编辑器预览区会把方法显示为带“ƒ 方法”标记的链接；直接单击即可再次编辑。</li>',
+        '<li>普通编辑时方法不会自动执行；点击“测试”会在隔离副本中预演，不改写原内容。</li>',
+        '<li>顶部“方法管理”可集中搜索、定位、启停、复制、编辑、测试、查看关系、保存预设和升级旧配置。</li>',
         '</ul>',
         '<h2 id="字段说明">字段说明</h2>',
         '<h3 id="触发方式">触发方式</h3>',
@@ -782,6 +787,12 @@ function buildHelpPageContents() {
         '<tr><td>选中目录时</td><td><code>enter_dir</code></td><td>当用户点击并进入某个目录时执行</td></tr>',
         '<tr><td>点击时</td><td><code>click</code></td><td>需要用户主动点击方法链接才执行</td></tr>',
         '<tr><td>悬浮时</td><td><code>hover</code></td><td>鼠标悬停在方法链接上时执行，移动设备无法触发</td></tr>',
+        '<tr><td>离开目录前</td><td><code>leave_dir</code></td><td>从当前目录切换到其他目录之前执行</td></tr>',
+        '<tr><td>双击 / 长按</td><td><code>dblclick / longpress</code></td><td>适配鼠标与触屏的明确交互</td></tr>',
+        '<tr><td>进入可视区域</td><td><code>visible</code></td><td>方法链接进入正文可视区域时执行</td></tr>',
+        '<tr><td>输入变化 / 媒体结束</td><td><code>change / media_end</code></td><td>用于表单和音视频流程</td></tr>',
+        '<tr><td>快捷键</td><td><code>keyboard</code></td><td>按配置的组合键执行</td></tr>',
+        '<tr><td>延时 / 定时</td><td><code>delay / interval</code></td><td>网页打开后延时一次或定时执行，并受最大次数保护</td></tr>',
         '</tbody>',
         '</table>',
         '<h3 id="方法类型">方法类型</h3>',
@@ -796,6 +807,10 @@ function buildHelpPageContents() {
         '<tr><td>更换内容</td><td>目录级时是重命名目录；范围级时是用文本或其他锚点范围的内容替换目标范围</td></tr>',
         '<tr><td>添加格式</td><td>仅范围级可用，给锚点范围内的内容添加格式（粗体、颜色、链接等）或生成嵌套方法链接</td></tr>',
         '<tr><td>目录右键动作</td><td>仅目录级可用，等价于在导出网页中对目录执行一次右键菜单动作</td></tr>',
+        '<tr><td>导航</td><td>跳转、返回上一位置、相邻目录、展开并跳转</td></tr>',
+        '<tr><td>内容</td><td>插入、清空、删除、复制/移动/交换范围，以及按模板生成内容</td></tr>',
+        '<tr><td>状态</td><td>设置、调整、切换变量，并显示数值、计数、进度或完成状态</td></tr>',
+        '<tr><td>交互与样式</td><td>自有提示/确认/面板、交互组件、受控样式和动画预设</td></tr>',
         '</tbody>',
         '</table>',
         '<h3 id="只执行一次">只执行一次</h3>',
@@ -866,6 +881,7 @@ function buildHelpPageContents() {
         '<li><strong>目录右键动作</strong>：仅目录级可用，等价于导出页里对该目录执行一次右键菜单动作。</li>',
         '</ul>',
         '<h2 id="锚点引用写法">锚点引用写法</h2>',
+        '<p>方法配置中的目录和锚点输入框支持直接搜索并选择，也保留以下手工写法：</p>',
         '<ul>',
         '<li><code>#锚点名</code>：当前目录内的锚点。</li>',
         '<li><code>dir:目录ID#锚点名</code>：指定目录ID内的锚点。</li>',
@@ -939,7 +955,7 @@ function buildHelpPageContents() {
         '<h3 id="嵌套方法">嵌套方法</h3>',
         '<p>当使用<strong>添加格式</strong>方法且命令选择为 <code>method</code>（方法链接）时，可以创建嵌套方法。嵌套方法的特点：</p>',
         '<ul>',
-        '<li><strong>多层嵌套</strong>：嵌套方法可以再嵌套方法，支持无限层级。</li>',
+        '<li><strong>多层嵌套</strong>：嵌套方法可以继续嵌套；预检与导出运行时最多检查 20 层以防循环和失控。</li>',
         '<li><strong>父级返回</strong>：在嵌套弹窗中点击取消会返回父级弹窗，而不是关闭整个对话框。</li>',
         '<li><strong>锚点上下文</strong>：嵌套方法中使用 <code>#锚点</code> 形式时，默认在同一目录内解析（不需要每次都写 <code>dir:</code>）。</li>',
         '<li><strong>验证规则</strong>：如果前后锚点都不指定目录（都用 <code>#</code> 形式），验证会通过；如果都指定目录，会检查是否为同一目录；混合使用时会提示保持一致。</li>',
@@ -991,7 +1007,7 @@ function buildHelpPageContents() {
 
         '<h2 id="导出预检">导出预检</h2>',
         '<ul>',
-        '<li>点击顶部<strong>导出预检</strong>可检查：重复目录 ID、父目录缺失、目录断链、锚点缺失/重复、媒体缺失和空目录。</li>',
+        '<li>点击顶部<strong>导出预检</strong>可检查：重复目录 ID、父目录缺失、目录断链、锚点缺失/重复、方法配置与目标引用、重复方法 ID、媒体缺失和空目录。</li>',
         '<li>预检只报告问题，不会自动修改内容；建议修正后再导出。</li>',
         '</ul>',
         '<h2 id="保存">保存</h2>',
@@ -1101,13 +1117,14 @@ function buildHelpPageContents() {
         '</ul>',
         '<h2 id="自动草稿">自动草稿</h2>',
         '<ul>',
-        '<li>有未保存修改时，系统会把最新草稿保存在当前浏览器本地，顶部会显示草稿状态。</li>',
+        '<li>有未保存修改时，系统会把最新草稿保存在当前浏览器本地，并定期保留最多 20 个历史快照。</li>',
         '<li>再次打开时可选择恢复最近 30 天内的草稿；选择忽略会删除该草稿。</li>',
+        '<li>点击顶部“草稿”可查看快照差异，恢复整个快照，或只勾选部分目录恢复。</li>',
         '<li>自动草稿不能替代正式保存或备份，清理浏览器站点数据后可能丢失。</li>',
         '</ul>',
         '<h2 id="媒体资源管理">媒体资源管理</h2>',
         '<ul>',
-        '<li><strong>媒体库</strong>用于查看资源大小、引用次数和引用目录，也可复用资源或定位引用。</li>',
+        '<li><strong>媒体库</strong>用于查看资源大小、类型、引用次数和引用目录，可按当前目录/孤立状态筛选；属性面板可统一修改图注、宽度、对齐和加载策略，“替换”会重连全部引用后再清理旧资源。</li>',
         '<li>仍被正文引用的资源不能在媒体库直接删除；孤立资源可逐项删除，也可右键顶部存储信息批量清理。</li>',
         '</ul>',
         '<h2 id="存储空间">存储空间</h2>',
@@ -1177,6 +1194,7 @@ async function loadHelpManual(options = {}) {
 
     const helpMulufile = buildHelpManualMulufile();
     const helpDirIds = new Set(helpMulufile.map(row => row[2]));
+    // 刷新旧版使用说明时，同时移除已废弃的解谜模板目录。
     helpDirIds.add('mulu_help_decrypt');
     helpDirIds.add('mulu_help_decrypt_hidden');
 
@@ -1321,267 +1339,6 @@ function prependHtmlIntoPreview(html) {
         markUnsavedChanges();
     }
     return true;
-}
-
-function buildDecryptGameTemplateHtml(dirId) {
-    function anchor(name) {
-        const n = String(name || '').trim();
-        return '<span id="' + escapeHtmlAttr(n) + '" class="sora-anchor" data-sora-anchor="true" data-anchor-name="' + escapeHtmlAttr(n) + '">\u200B</span>';
-    }
-    function escapeHtmlAttr(str) {
-        return String(str || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    }
-    function methodLink(text, methods) {
-        const json = escapeHtmlAttr(JSON.stringify(methods || []));
-        return '<a href="#" data-sora-link="method" data-sora-methods="' + json + '">' + escapeHtml(String(text || '')) + '</a>';
-    }
-
-    const dirRef = dirId ? ('dir:' + String(dirId)) : '';
-    const hiddenDirRef = 'dir:mulu_help_decrypt_hidden';
-
-    const openInit = [
-        { trigger: 'open', frontAnchor: hiddenDirRef, backAnchor: '', methodType: '隐藏', once: true },
-        { trigger: 'open', frontAnchor: '#system_methods_start', backAnchor: '#system_methods_end', methodType: '隐藏', once: true },
-        { trigger: 'open', frontAnchor: '#stage2_start', backAnchor: '#stage2_end', methodType: '隐藏', once: true },
-        { trigger: 'open', frontAnchor: '#stage3_start', backAnchor: '#stage3_end', methodType: '隐藏', once: true },
-        { trigger: 'open', frontAnchor: '#final_stage_start', backAnchor: '#final_stage_end', methodType: '隐藏', once: true },
-        { trigger: 'open', frontAnchor: '#success_msg_start', backAnchor: '#success_msg_end', methodType: '隐藏', once: true },
-        { trigger: 'open', frontAnchor: '#clue1_hidden_start', backAnchor: '#clue1_hidden_end', methodType: '隐藏', once: true },
-        { trigger: 'open', frontAnchor: '#clue2_hidden_start', backAnchor: '#clue2_hidden_end', methodType: '隐藏', once: true },
-        { trigger: 'open', frontAnchor: '#clue3_hidden_start', backAnchor: '#clue3_hidden_end', methodType: '隐藏', once: true },
-        { trigger: 'open', frontAnchor: '#hover_hint_start', backAnchor: '#hover_hint_end', methodType: '隐藏', once: true }
-    ];
-
-    const openInitLink = methodLink('启动导出页状态机', openInit);
-
-    const showClue1 = methodLink('展开协议说明', [
-        { trigger: 'click', frontAnchor: '#clue1_hidden_start', backAnchor: '#clue1_hidden_end', methodType: '显示', once: true }
-    ]);
-
-    const passStage1Wrong1 = methodLink('提交 NODE', [
-        { trigger: 'click', frontAnchor: '#feedback1_start', backAnchor: '#feedback1_end', methodType: '更换内容', once: false, replaceSourceType: 'text', replaceText: '校验失败：第 3 组 22 对应的是 V，不是 D。' }
-    ]);
-
-    const passStage1Wrong2 = methodLink('提交 VOID', [
-        { trigger: 'click', frontAnchor: '#feedback1_start', backAnchor: '#feedback1_end', methodType: '更换内容', once: false, replaceSourceType: 'text', replaceText: '校验失败：第 2 组 15 对应的是 O，序列没有 I。' }
-    ]);
-
-    const passStage1 = methodLink('提交 NOVA', [
-        { trigger: 'click', frontAnchor: '#answer_display1_start', backAnchor: '#answer_display1_end', methodType: '更换内容', once: true, replaceSourceType: 'anchor', replaceFromFrontAnchor: hiddenDirRef + '#answer1_start', replaceFromBackAnchor: hiddenDirRef + '#answer1_end' },
-        { trigger: 'click', frontAnchor: '#stage2_start', backAnchor: '#stage2_end', methodType: '显示', once: true },
-        { trigger: 'click', frontAnchor: '#stage1_start', backAnchor: '#stage1_end', methodType: '隐藏', once: true }
-    ]);
-
-    const toggleClue2 = methodLink('切换偏移提示', [
-        { trigger: 'click', frontAnchor: '#clue2_hidden_start', backAnchor: '#clue2_hidden_end', methodType: '切换', once: false }
-    ]);
-
-    const markCipherLine = methodLink('标记密文行', [
-        { trigger: 'click', frontAnchor: '#cipher_line_start', backAnchor: '#cipher_line_end', methodType: '添加格式', once: true, formatCommand: 'highlight' }
-    ]);
-
-    const passStage2Wrong1 = methodLink('提交 BLACK BAR', [
-        { trigger: 'click', frontAnchor: '#feedback2_start', backAnchor: '#feedback2_end', methodType: '更换内容', once: false, replaceSourceType: 'text', replaceText: '未通过：BAR 不是 EOD 的向前 3 位还原结果。' }
-    ]);
-
-    const passStage2Wrong2 = methodLink('提交 BLOCK KEY', [
-        { trigger: 'click', frontAnchor: '#feedback2_start', backAnchor: '#feedback2_end', methodType: '更换内容', once: false, replaceSourceType: 'text', replaceText: '未通过：第二个词应由 ERA 还原得到。' }
-    ]);
-
-    const passStage2 = methodLink('提交 BLACK BOX', [
-        { trigger: 'click', frontAnchor: '#answer_display2_start', backAnchor: '#answer_display2_end', methodType: '更换内容', once: true, replaceSourceType: 'anchor', replaceFromFrontAnchor: hiddenDirRef + '#answer2_start', replaceFromBackAnchor: hiddenDirRef + '#answer2_end' },
-        { trigger: 'click', frontAnchor: '#stage3_start', backAnchor: '#stage3_end', methodType: '显示', once: true },
-        { trigger: 'click', frontAnchor: '#stage2_start', backAnchor: '#stage2_end', methodType: '隐藏', once: true }
-    ]);
-
-    const showClue3 = methodLink('展开路由表提示', [
-        { trigger: 'click', frontAnchor: '#clue3_hidden_start', backAnchor: '#clue3_hidden_end', methodType: '显示', once: true }
-    ]);
-
-    const hoverShowHint = methodLink('悬停查看异常标记', [
-        { trigger: 'hover', frontAnchor: '#hover_hint_start', backAnchor: '#hover_hint_end', methodType: '切换', once: false }
-    ]);
-
-    const passStage3Wrong1 = methodLink('提交 FRAME', [
-        { trigger: 'click', frontAnchor: '#feedback3_start', backAnchor: '#feedback3_end', methodType: '更换内容', once: false, replaceSourceType: 'text', replaceText: '路由拒绝：F 命中的是 FORGE，不是 FRAME。' }
-    ]);
-
-    const passStage3Wrong2 = methodLink('提交 FROST', [
-        { trigger: 'click', frontAnchor: '#feedback3_start', backAnchor: '#feedback3_end', methodType: '更换内容', once: false, replaceSourceType: 'text', replaceText: '路由拒绝：FROST 是诱饵项，表中没有激活标记。' }
-    ]);
-
-    const passStage3 = methodLink('提交 FORGE', [
-        { trigger: 'click', frontAnchor: '#answer_display3_start', backAnchor: '#answer_display3_end', methodType: '更换内容', once: true, replaceSourceType: 'anchor', replaceFromFrontAnchor: hiddenDirRef + '#answer3_start', replaceFromBackAnchor: hiddenDirRef + '#answer3_end' },
-        { trigger: 'click', frontAnchor: '#final_stage_start', backAnchor: '#final_stage_end', methodType: '显示', once: true },
-        { trigger: 'click', frontAnchor: '#stage3_start', backAnchor: '#stage3_end', methodType: '隐藏', once: true }
-    ]);
-
-    const finalDecrypt = methodLink('组装最终密钥', (function() {
-        const ms = [
-            { trigger: 'click', frontAnchor: '#final_report_start', backAnchor: '#final_report_end', methodType: '更换内容', once: true, replaceSourceType: 'anchor', replaceFromFrontAnchor: hiddenDirRef + '#final_report_source_start', replaceFromBackAnchor: hiddenDirRef + '#final_report_source_end' },
-            { trigger: 'click', frontAnchor: '#success_msg_start', backAnchor: '#success_msg_end', methodType: '显示', once: true },
-            { trigger: 'click', frontAnchor: '#final_stage_start', backAnchor: '#final_stage_end', methodType: '隐藏', once: true }
-        ];
-        if (dirRef) {
-            ms.push({ trigger: 'click', frontAnchor: dirRef, backAnchor: '', methodType: '更换内容', once: true, renameTo: '已通关' });
-        }
-        return ms;
-    })());
-
-    return [
-        '<hr>',
-        '<h2>深层档案：雾港站</h2>',
-        '<p><strong>玩法说明：</strong>这是一个可导出的互动解谜模板。编辑器中方法链接只是配置，导出为网页后会按“打开网页 / 点击 / 悬停”触发。</p>',
-        '<blockquote>',
-        '<p><strong>演示点：</strong>打开网页时初始化、隐藏答案库、阶段推进、错误反馈、提示切换、锚点范围替换、添加格式、悬停提示、目录重命名。</p>',
-        '<p><strong>结构：</strong>主目录负责玩家流程；“隐藏答案库”在导出页会隐藏，但仍可作为内容替换来源。</p>',
-        '</blockquote>',
-        anchor('system_methods_start'),
-        '<p>' + openInitLink + '</p>',
-        anchor('system_methods_end'),
-        '<hr>',
-
-        anchor('stage1_start'),
-        '<h3>第一幕：握手包</h3>',
-        '<p><strong>截获序列：</strong><code>14-15-22-1</code></p>',
-        '<p>协议说明被拆走了。你需要还原四位代号，才能打开下一段日志。</p>',
-        '<p>' + showClue1 + '</p>',
-        anchor('clue1_hidden_start'),
-        '<blockquote>',
-        '<p>协议说明：A=1，B=2，C=3，以此类推。数字序列按字母表还原。</p>',
-        '</blockquote>',
-        anchor('clue1_hidden_end'),
-        '<p>' + passStage1Wrong1 + ' | ' + passStage1Wrong2 + ' | ' + passStage1 + '</p>',
-        '<blockquote>',
-        anchor('feedback1_start'),
-        '<p><em>等待提交...</em></p>',
-        anchor('feedback1_end'),
-        '</blockquote>',
-        '<div style="border:1px solid #d8dee6;border-radius:8px;padding:12px;background:#f8fafc;">',
-        anchor('answer_display1_start'),
-        '<p>握手结果尚未确认。</p>',
-        anchor('answer_display1_end'),
-        '</div>',
-        anchor('stage1_end'),
-
-        anchor('stage2_start'),
-        '<h3>第二幕：偏移日志</h3>',
-        '<p>第一幕的代号会打开一条加密日志。它不是随机乱码，而是一次很老派的 Caesar 偏移。</p>',
-        anchor('cipher_line_start'),
-        '<pre><code>EODFN ERA</code></pre>',
-        anchor('cipher_line_end'),
-        '<p>' + toggleClue2 + ' | ' + markCipherLine + '</p>',
-        anchor('clue2_hidden_start'),
-        '<blockquote>',
-        '<p>提示：密文每个字母比明文向后移动 3 位；还原时每个字母向前移动 3 位。</p>',
-        '</blockquote>',
-        anchor('clue2_hidden_end'),
-        '<p>' + passStage2Wrong1 + ' | ' + passStage2Wrong2 + ' | ' + passStage2 + '</p>',
-        '<blockquote>',
-        anchor('feedback2_start'),
-        '<p><em>等待提交...</em></p>',
-        anchor('feedback2_end'),
-        '</blockquote>',
-        '<div style="border:1px solid #d8dee6;border-radius:8px;padding:12px;background:#f8fafc;">',
-        anchor('answer_display2_start'),
-        '<p>模块名尚未恢复。</p>',
-        anchor('answer_display2_end'),
-        '</div>',
-        anchor('stage2_end'),
-
-        anchor('stage3_start'),
-        '<h3>第三幕：路由表</h3>',
-        '<p>日志恢复后，系统给出一张路由表。你需要用前两幕得到的两个词计算下一跳。</p>',
-        '<pre><code>NOVA      -> 字母序号和 52\nBLACKBOX  -> 字母序号和 84\n84 - 52   -> 32\n32 mod 26 -> 6\n第 6 个字母 -> F</code></pre>',
-        '<p>路由表：F = FORGE，R = RELAY，M = MINT。</p>',
-        '<p>' + showClue3 + ' | ' + hoverShowHint + '</p>',
-        anchor('clue3_hidden_start'),
-        '<blockquote>',
-        '<p>提示：这里的 mod 26 表示超过 26 后从 1 重新计数；32 回绕后是 6。</p>',
-        '</blockquote>',
-        anchor('clue3_hidden_end'),
-        anchor('hover_hint_start'),
-        '<blockquote>',
-        '<p>异常标记：FRAME 和 FROST 是相邻诱饵项，只有 FORGE 带有激活标记。</p>',
-        '</blockquote>',
-        anchor('hover_hint_end'),
-        '<p>' + passStage3Wrong1 + ' | ' + passStage3Wrong2 + ' | ' + passStage3 + '</p>',
-        '<blockquote>',
-        anchor('feedback3_start'),
-        '<p><em>等待提交...</em></p>',
-        anchor('feedback3_end'),
-        '</blockquote>',
-        '<div style="border:1px solid #d8dee6;border-radius:8px;padding:12px;background:#f8fafc;">',
-        anchor('answer_display3_start'),
-        '<p>下一跳未确认。</p>',
-        anchor('answer_display3_end'),
-        '</div>',
-        anchor('stage3_end'),
-
-        anchor('final_stage_start'),
-        '<h3>终幕：档案解封</h3>',
-        '<p>你已经得到三段材料：<code>NOVA</code>、<code>BLACK BOX</code>、<code>FORGE</code>。现在从隐藏答案库调取最终报告。</p>',
-        '<blockquote>',
-        '<p>这一步会用锚点范围替换内容、显示通关报告、隐藏当前阶段，并把目录重命名为“已通关”。</p>',
-        '</blockquote>',
-        '<p>' + finalDecrypt + '</p>',
-        anchor('final_stage_end'),
-
-        anchor('success_msg_start'),
-        '<hr>',
-        '<h3>档案已解封</h3>',
-        '<div style="border:1px solid #b8e2d0;border-radius:8px;padding:12px;background:#ecfdf5;">',
-        anchor('final_report_start'),
-        '<p>最终报告等待写入。</p>',
-        anchor('final_report_end'),
-        '</div>',
-        anchor('success_msg_end'),
-        '<hr>',
-    ].join('');
-}
-
-function buildDecryptHiddenAnswersHtml(dirId) {
-    function anchor(name) {
-        const n = String(name || '').trim();
-        return '<span id="' + escapeHtmlAttr(n) + '" class="sora-anchor" data-sora-anchor="true" data-anchor-name="' + escapeHtmlAttr(n) + '">​</span>';
-    }
-    function escapeHtmlAttr(str) {
-        return String(str || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    }
-
-    return [
-        '<h2>隐藏答案库</h2>',
-        '<p><strong>说明：</strong>导出网页时，本目录会被打开网页方法隐藏；主游戏仍能按锚点从这里提取答案片段。</p>',
-        '<hr>',
-
-        '<h3>第一幕结果</h3>',
-        anchor('answer1_start'),
-        '<p><strong>握手通过：</strong>14-15-22-1 还原为 NOVA。</p>',
-        '<p>系统接受代号，偏移日志已解锁。</p>',
-        anchor('answer1_end'),
-        '<hr>',
-
-        '<h3>第二幕结果</h3>',
-        anchor('answer2_start'),
-        '<p><strong>模块恢复：</strong>EODFN ERA 向前偏移 3 位得到 BLACK BOX。</p>',
-        '<p>黑箱模块已挂载，路由表进入可读状态。</p>',
-        anchor('answer2_end'),
-        '<hr>',
-
-        '<h3>第三幕结果</h3>',
-        anchor('answer3_start'),
-        '<p><strong>路由确认：</strong>F 命中 FORGE。</p>',
-        '<p>下一跳站点已确认，最终报告可以解封。</p>',
-        anchor('answer3_end'),
-        '<hr>',
-
-        '<h3>最终报告</h3>',
-        anchor('final_report_source_start'),
-        '<p><strong>最终密钥：</strong><code>NOVA-BLACKBOX-FORGE</code></p>',
-        '<p>演示结果正常：隐藏答案库已被读取，主流程完成内容替换，当前目录应被重命名为“已通关”。</p>',
-        anchor('final_report_source_end'),
-        '<hr>'
-    ].join('');
 }
 
 window.loadHelpManual = loadHelpManual;

@@ -790,6 +790,56 @@
             background-color: #dcecff;
             border-color: #73a7e8;
         }
+
+        body[data-workspace-mode="content"] .top-toolbar-group:has(#addDirectoryBtn),
+        body[data-workspace-mode="structure"] .format-toolbar-group {
+            display: none;
+        }
+
+        body[data-workspace-mode="automation"] .format-toolbar-scroll > :not(#topMethodBtn) {
+            display: none;
+        }
+
+        body[data-workspace-mode="automation"] .format-toolbar-scroll {
+            overflow: visible;
+        }
+
+        .markdown-preview a[data-sora-link="method"] {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            min-height: 22px;
+            margin: 0 3px;
+            padding: 1px 6px 1px 3px;
+            color: #5b21b6;
+            background: #f5f3ff;
+            border: 1px solid #c4b5fd;
+            border-radius: 3px;
+            vertical-align: middle;
+            text-decoration: none;
+            cursor: pointer;
+        }
+
+        .markdown-preview a[data-sora-link="method"]::before {
+            content: "ƒ 方法";
+            flex: 0 0 auto;
+            padding: 0 4px;
+            color: #fff;
+            background: #7c3aed;
+            border-radius: 2px;
+            font-size: 10px;
+            font-weight: 700;
+            line-height: 16px;
+        }
+
+        .markdown-preview a[data-sora-link="method"]:hover,
+        .markdown-preview a[data-sora-link="method"]:focus-visible {
+            color: #4c1d95;
+            background: #ede9fe;
+            border-color: #8b5cf6;
+            text-decoration: none;
+            outline: none;
+        }
         
         /* 仅在有选中文字时显示的按钮 */
         .format-btn-selection {
@@ -1146,6 +1196,462 @@
         textarea.form-control {
             resize: vertical;
             min-height: 80px;
+        }
+
+        .method-form {
+            max-height: none;
+            overflow: visible;
+            color: var(--color-text, #1f2933);
+        }
+
+        .method-form [hidden] {
+            display: none !important;
+        }
+
+        .method-summary {
+            display: grid;
+            gap: 4px;
+            margin-bottom: 18px;
+            padding: 14px 16px;
+            border: 1px solid var(--color-border, #d8dee6);
+            border-radius: 8px;
+            background: var(--color-panel-subtle, #f8fafc);
+        }
+
+        .link-config-form {
+            display: grid;
+            gap: 14px;
+        }
+
+        .link-type-switch {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4px;
+            padding: 4px;
+            border-radius: 8px;
+            background: var(--color-panel-subtle, #f1f5f9);
+        }
+
+        .link-type-switch button {
+            min-height: 38px;
+            border: 0;
+            border-radius: 6px;
+            background: transparent;
+            color: var(--color-muted, #607080);
+            cursor: pointer;
+        }
+
+        .link-type-switch button.active {
+            background: #fff;
+            color: var(--color-primary, #2563eb);
+            font-weight: 700;
+            box-shadow: 0 1px 4px rgba(15, 23, 42, 0.12);
+        }
+
+        .color-picker-layout {
+            display: grid;
+            gap: 16px;
+        }
+
+        .color-picker-primary {
+            display: grid;
+            grid-template-columns: 82px minmax(0, 1fr);
+            align-items: end;
+            gap: 12px;
+        }
+
+        .color-picker-primary input[type="color"] {
+            width: 82px;
+            height: 64px;
+            padding: 2px;
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            background: #fff;
+            cursor: pointer;
+        }
+
+        .color-picker-primary label {
+            display: block;
+            margin-bottom: 5px;
+            color: var(--color-muted);
+            font-size: 12px;
+        }
+
+        .color-picker-primary input[type="text"] {
+            width: 100%;
+            min-height: 40px;
+            padding: 7px 9px;
+            border: 1px solid var(--color-border);
+            border-radius: 6px;
+            font-family: monospace;
+        }
+
+        .color-preset-grid {
+            display: grid;
+            grid-template-columns: repeat(8, 30px);
+            gap: 7px;
+            margin-top: 8px;
+        }
+
+        .color-preset-grid button {
+            width: 30px;
+            height: 30px;
+            border: 1px solid rgba(15, 23, 42, 0.22);
+            border-radius: 6px;
+            background: var(--swatch);
+            cursor: pointer;
+        }
+
+        .color-preset-grid button:focus-visible {
+            outline: 2px solid var(--color-primary);
+            outline-offset: 2px;
+        }
+
+        .color-contrast-status {
+            padding: 9px 10px;
+            border-radius: 6px;
+            background: #ecfdf5;
+            color: #047857;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
+        .color-contrast-status.is-warning {
+            background: #fffbeb;
+            color: #a16207;
+        }
+
+        .method-summary > span {
+            color: var(--color-muted, #607080);
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .method-summary > strong {
+            overflow-wrap: anywhere;
+            font-size: 15px;
+            line-height: 1.5;
+        }
+
+        .method-summary > small {
+            color: var(--color-muted, #607080);
+            line-height: 1.45;
+        }
+
+        .method-summary > small.is-valid {
+            color: var(--color-success, #0f8a5f);
+        }
+
+        .method-summary > small.is-error,
+        .method-field-error {
+            color: var(--color-danger, #b42318);
+        }
+
+        .method-form-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 14px;
+        }
+
+        .method-grid-full {
+            grid-column: 1 / -1;
+        }
+
+        .method-flow-grid {
+            margin-top: 14px;
+        }
+
+        .method-condition-list {
+            display: grid;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+
+        .method-condition-row {
+            display: grid;
+            grid-template-columns: 88px 132px minmax(110px, 1fr) 120px minmax(100px, 1fr) auto;
+            gap: 6px;
+            align-items: center;
+            padding: 8px;
+            border: 1px solid var(--color-border, #d8dee6);
+            border-radius: 8px;
+            background: var(--color-panel-subtle, #f8fafc);
+        }
+
+        .method-fieldset {
+            min-width: 0;
+            margin: 2px 0 16px;
+            padding: 14px 16px 0;
+            border: 1px solid var(--color-border, #d8dee6);
+            border-radius: 8px;
+        }
+
+        .method-fieldset legend {
+            padding: 0 6px;
+            color: var(--color-text, #1f2933);
+            font-size: 13px;
+            font-weight: 700;
+        }
+
+        .method-checkbox-row {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            margin: 0 0 16px;
+            padding: 12px 14px;
+            border-radius: 8px;
+            background: var(--color-panel-subtle, #f8fafc);
+            cursor: pointer;
+        }
+
+        .method-checkbox-row input {
+            width: 18px;
+            height: 18px;
+            margin-top: 1px;
+        }
+
+        .method-checkbox-row span {
+            display: grid;
+            gap: 2px;
+        }
+
+        .method-checkbox-row small {
+            color: var(--color-muted, #607080);
+            font-weight: 400;
+        }
+
+        .method-conditional-section {
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid var(--color-border-soft, #e7ebf0);
+        }
+
+        .method-conditional-section h4 {
+            margin: 0 0 14px;
+            font-size: 14px;
+        }
+
+        .method-field-error:empty {
+            display: none;
+        }
+
+        .method-field-error:not(:empty) {
+            display: block;
+            margin-top: 5px;
+            font-weight: 600;
+        }
+
+        .form-group.has-error .form-control,
+        .form-group.has-error .reference-picker {
+            border-color: var(--color-danger, #b42318);
+        }
+
+        .reference-picker {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            align-items: stretch;
+            border: 1px solid var(--color-border, #d8dee6);
+            border-radius: 6px;
+            background: var(--color-panel, #fff);
+            overflow: hidden;
+        }
+
+        .reference-picker:focus-within {
+            border-color: var(--color-primary, #2563eb);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
+        }
+
+        .reference-picker .reference-picker-input {
+            min-width: 0;
+            border: 0;
+            border-radius: 0;
+            box-shadow: none;
+        }
+
+        .reference-picker-button {
+            min-width: 64px;
+            padding: 0 14px;
+            border: 0;
+            border-inline-start: 1px solid var(--color-border, #d8dee6);
+            background: var(--color-panel-subtle, #f8fafc);
+            color: var(--color-primary, #2563eb);
+            font: inherit;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        .reference-picker-button:hover {
+            background: var(--color-primary-soft, #e8f0fe);
+        }
+
+        .reference-picker-button:focus-visible,
+        .reference-picker-option:focus-visible,
+        .nested-method-actions button:focus-visible {
+            outline: 2px solid var(--color-primary, #2563eb);
+            outline-offset: -2px;
+        }
+
+        .reference-picker-panel {
+            grid-column: 1 / -1;
+            max-height: 240px;
+            overflow-y: auto;
+            border-top: 1px solid var(--color-border, #d8dee6);
+            background: var(--color-panel, #fff);
+        }
+
+        .reference-picker-scopes {
+            grid-column: 1 / -1;
+            padding: 7px 10px;
+            border-top: 1px solid var(--color-border, #d8dee6);
+            background: var(--color-panel-subtle, #f8fafc);
+        }
+
+        .reference-picker-scopes label {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            color: var(--color-muted, #607080);
+            font-size: 12px;
+        }
+
+        .reference-picker-scope {
+            min-height: 30px;
+            border: 1px solid var(--color-border, #d8dee6);
+            border-radius: 5px;
+            background: #fff;
+        }
+
+        .reference-picker-option {
+            display: grid;
+            width: 100%;
+            min-height: 44px;
+            gap: 3px;
+            padding: 9px 12px;
+            border: 0;
+            border-bottom: 1px solid var(--color-border-soft, #e7ebf0);
+            background: transparent;
+            color: var(--color-text, #1f2933);
+            text-align: start;
+            cursor: pointer;
+        }
+
+        .reference-picker-option:hover,
+        .reference-picker-option.active {
+            background: var(--color-primary-soft, #e8f0fe);
+        }
+
+        .reference-picker-option-main {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 12px;
+            min-width: 0;
+        }
+
+        .reference-picker-option-main strong {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .reference-picker-option-main span,
+        .reference-picker-option small {
+            color: var(--color-muted, #607080);
+            font-size: 12px;
+            overflow-wrap: anywhere;
+        }
+
+        .reference-picker-empty,
+        .nested-method-empty {
+            margin: 0;
+            padding: 14px;
+            color: var(--color-muted, #607080);
+            font-size: 13px;
+        }
+
+        .nested-method-list {
+            display: grid;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+
+        .nested-method-item {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 12px;
+            border: 1px solid var(--color-border, #d8dee6);
+            border-radius: 8px;
+            background: var(--color-panel-subtle, #f8fafc);
+        }
+
+        .nested-method-item.is-disabled {
+            opacity: 0.58;
+            border-style: dashed;
+        }
+
+        .nested-method-item > span {
+            min-width: 0;
+            overflow-wrap: anywhere;
+            font-size: 13px;
+            line-height: 1.45;
+        }
+
+        .nested-method-actions {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            gap: 5px;
+        }
+
+        .nested-method-actions .custom-dialog-btn {
+            min-height: 30px;
+            padding: 5px 8px;
+            font-size: 12px;
+        }
+
+        .nested-method-actions .custom-dialog-btn:disabled {
+            cursor: not-allowed;
+            opacity: 0.45;
+        }
+
+        .method-full-button {
+            width: 100%;
+        }
+
+        @media (max-width: 600px) {
+            .method-form-grid {
+                grid-template-columns: 1fr;
+                gap: 0;
+            }
+
+            .method-fieldset {
+                padding-inline: 12px;
+            }
+
+            .form-control,
+            .reference-picker-button {
+                font-size: 16px;
+            }
+
+            .nested-method-item {
+                grid-template-columns: 1fr;
+            }
+
+            .nested-method-actions {
+                justify-content: flex-start;
+            }
+
+            .method-condition-row {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .custom-dialog {
+                animation: none;
+            }
         }
         
         /* Toast 悬浮提示样式 */
@@ -1736,6 +2242,44 @@
             line-height: 1.45;
         }
 
+        .directory-filter-bar {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 6px;
+            padding: 7px 8px;
+            border-bottom: 1px solid var(--color-border);
+            background: #fff;
+        }
+
+        .directory-filter-bar input,
+        .directory-filter-bar button {
+            min-height: 32px;
+            border: 1px solid var(--color-border);
+            border-radius: 6px;
+            background: #fff;
+            color: var(--color-text);
+        }
+
+        .directory-filter-bar input {
+            min-width: 0;
+            padding: 5px 8px;
+        }
+
+        .directory-filter-bar button {
+            padding: 5px 8px;
+            cursor: pointer;
+        }
+
+        .directory-filter-bar button[aria-pressed="true"] {
+            border-color: var(--color-primary);
+            background: var(--color-primary-soft);
+            color: var(--color-primary);
+        }
+
+        .mulu.directory-filter-hidden {
+            display: none !important;
+        }
+
         .mulu {
             min-height: 32px;
             line-height: 32px;
@@ -1854,6 +2398,20 @@
                 padding: 18px;
             }
         }
+
+        @media (max-width: 600px) {
+            :root {
+                --sidebar-width: 138px;
+            }
+
+            .sidebar-help {
+                display: none;
+            }
+
+            .markdown-preview {
+                padding: 14px;
+            }
+        }
     </style>
 </head>
 <body>
@@ -1868,7 +2426,7 @@
             <button class="top-toolbar-btn" id="saveBtn" title="保存 (Ctrl+S)">保存</button>
             <button class="top-toolbar-btn" id="saveAsBtn" title="另存为">另存为</button>
             <button class="top-toolbar-btn" id="loadBtn" title="加载">加载</button>
-            <button class="top-toolbar-btn" id="preflightBtn" title="检查断链、锚点和媒体">导出预检</button>
+            <button class="top-toolbar-btn" id="preflightBtn" title="检查目录、锚点、方法和媒体">导出预检</button>
         </div>
 
         <div class="top-toolbar-group format-toolbar-group">
@@ -1922,13 +2480,23 @@
             <button class="top-toolbar-btn" id="undoDirectoryBtn" title="撤销目录操作 (Ctrl+Z)">撤销目录</button>
             <button class="top-toolbar-btn" id="redoDirectoryBtn" title="重做目录操作 (Ctrl+Y)">重做目录</button>
             <button class="top-toolbar-btn" id="searchBtn" title="查找 (Ctrl+F)">查找</button>
+            <button class="top-toolbar-btn" id="globalCommandBtn" title="全局搜索与命令 (Ctrl+K)">全局搜索</button>
             <button class="top-toolbar-btn" id="replaceBtn" title="替换 (Ctrl+H)">替换</button>
             <button class="top-toolbar-btn" id="mediaManagerBtn" title="查看媒体引用和孤立资源">媒体库</button>
+            <button class="top-toolbar-btn" id="methodManagerBtn" title="集中管理、测试和检查方法">方法管理</button>
+            <button class="top-toolbar-btn" id="issueCenterBtn" title="查看目录、链接、锚点、方法和媒体问题">问题 <span id="issueCountBadge"></span></button>
+            <button class="top-toolbar-btn" id="draftManagerBtn" title="查看和选择性恢复自动草稿快照">草稿</button>
             <button class="top-toolbar-btn" id="helpBtn" title="打开内置使用说明">使用说明</button>
         </div>
 
         <div class="top-toolbar-group">
             <span class="top-toolbar-label">视图</span>
+            <select id="workspaceModeSelect" class="top-toolbar-input" title="工具栏工作模式" aria-label="工具栏工作模式">
+                <option value="all">综合</option>
+                <option value="content">内容</option>
+                <option value="structure">目录</option>
+                <option value="automation">自动化</option>
+            </select>
             <button class="top-toolbar-btn" id="toggleSidebarBtn" title="切换侧边栏">切换侧边栏</button>
             <button class="top-toolbar-btn" id="fullscreenBtn" title="全屏">全屏</button>
         </div>
@@ -1948,6 +2516,10 @@
     <div class="bigbox">
         <div class="sidebar-help">
             左键选择/展开，右键菜单，双击改名，拖拽移动目录（含子目录）。链接：Ctrl+单击打开；页内跳转输入 #锚点；任意锚点：点“锚点”输入锚点名；目录内跳转输入 dir:目录ID#锚点 或 name:目录名#锚点
+        </div>
+        <div class="directory-filter-bar">
+            <input type="search" id="directoryFilterInput" placeholder="筛选目录" aria-label="筛选目录" />
+            <button type="button" id="directoryBranchFilterBtn" aria-pressed="false" title="只显示当前目录分支">当前分支</button>
         </div>
         <div class="showbox">
             <div class="mulubox">
@@ -2119,7 +2691,15 @@
     <script>
         (async function() {
             const bootStatus = document.getElementById('bootStatus');
-            const assetVersion = '20260710-p0-p1-sora-opfs-media-2';
+            const assetVersion = '20260914-complete-optimization-7';
+            const runtimeErrors = [];
+            const captureRuntimeError = event => {
+                const source = String(event.filename || '');
+                if (source.includes('/js/') || source.includes('SoraDirectoryJS.js')) {
+                    runtimeErrors.push(`${source.split('/').pop() || '脚本'}：${event.message || '运行失败'}`);
+                }
+            };
+            window.addEventListener('error', captureRuntimeError);
             const versionScript = src => src + (src.includes('?') ? '&' : '?') + 'v=' + assetVersion;
             function setBootStatus(message, isError) {
                 if (!bootStatus) return;
@@ -2143,6 +2723,8 @@
             // 功能脚本（可以并行加载）
             const featureScripts = [
                 'js/dialog.js',
+                'js/methodRegistry.js',
+                'js/referencePicker.js',
                 'js/methodConfigDialog.js',
                 'js/directoryUtils.js',
                 'js/preview.js',
@@ -2155,7 +2737,8 @@
                 'js/fileOperations.js',
                 'js/toolbar.js',
                 'js/searchReplace.js',
-                'js/workspaceFeatures.js'
+                'js/workspaceFeatures.js',
+                'js/methodWorkbench.js'
             ];
             
             // 主初始化脚本（必须最后加载）
@@ -2178,13 +2761,15 @@
                         await featureLoadPromise;
                         setBootStatus('正在初始化工作区...');
                         await ScriptLoader.loadScript(mainScriptUrl);
-                        setBootStatus('');
+                        window.removeEventListener('error', captureRuntimeError);
+                        setBootStatus(runtimeErrors.length ? `初始化异常：${runtimeErrors[0]}` : '', runtimeErrors.length > 0);
                     });
                 } else {
                     await featureLoadPromise;
                     setBootStatus('正在初始化工作区...');
                     await ScriptLoader.loadScript(mainScriptUrl);
-                    setBootStatus('');
+                    window.removeEventListener('error', captureRuntimeError);
+                    setBootStatus(runtimeErrors.length ? `初始化异常：${runtimeErrors[0]}` : '', runtimeErrors.length > 0);
                 }
             } catch (error) {
                 console.error('脚本加载失败:', error);
