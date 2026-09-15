@@ -119,9 +119,17 @@ assert.ok(runtime.includes("storage: 'external'"), 'split media file manifest mi
 assert.ok(runtime.includes("storage: 'external-encrypted'"), 'encrypted split media manifest missing');
 assert.ok(runtime.includes('SORA_SPLIT_MEDIA_MAGIC'), 'split media encryption format missing');
 assert.ok(runtime.includes('MediaStorage.writeMediaToWritable'), 'split media streaming writer missing');
+assert.ok(runtime.includes('function initLocalEncryptedMediaAuthorization'), 'local encrypted media authorization UI missing');
+assert.ok(runtime.includes("input.setAttribute('webkitdirectory', '')"), 'local encrypted media folder picker missing');
+assert.ok(runtime.includes('resolveAuthorizedSplitMediaFile'), 'authorized local media resolver missing');
+assert.ok(runtime.includes('function buildLocalServerPythonSource'), 'local HTTP launcher source missing');
+assert.ok(runtime.includes('ThreadingHTTPServer(("127.0.0.1", 0)'), 'local HTTP launcher must bind loopback on a free port');
+assert.ok(runtime.includes('splitMediaContext.assetCount > 0'), 'local HTTP launcher must require actual split media');
 assert.ok(runtime.includes("url.pathname.includes('/media/')"), 'PWA must not cache split media payloads');
 assert.ok(runtime.includes('MAX_CONCURRENT_IMAGE_LOADS = 2'), 'export image load concurrency guard missing');
 assert.ok(runtime.includes("SORA_ENCRYPTED_HTML_MAGIC = 'SORA_ENCRYPTED_HTML_V2'"), 'chunked encrypted HTML format missing');
+assert.equal(runtime.includes('placeholder="输入密码" autofocus'), false, 'encrypted export still forces password focus');
+assert.ok(runtime.includes('cursor:text; caret-color:#0066cc'), 'encrypted export password cursor styling missing');
 assert.ok(runtime.includes('writeEncryptedHtmlSource(baseName, encryptedHtmlSource'), 'encrypted HTML streaming writer missing');
 assert.equal(runtime.includes("encryptData(htmlParts.join('')"), false, 'encrypted HTML still joins the complete document in memory');
 assert.ok(media.includes('async function optimizeImageFile'), 'blob-based image optimization missing');

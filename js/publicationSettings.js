@@ -277,7 +277,7 @@ const PublicationSettings = (function() {
         const splitMediaWrap = document.createElement('div');
         splitMediaWrap.className = 'publication-check';
         splitMediaWrap.append(controls.splitMedia, document.createTextNode('拆分媒体文件（适合大文件）'));
-        addField(grid, '媒体文件', splitMediaWrap, '生成 index.html 与 media/ 目录，需整目录上传；加密媒体不落明文，但播放时仍需解密单个媒体');
+        addField(grid, '媒体文件', splitMediaWrap, '有媒体时生成 media/ 与“本地打开.cmd”；上传需保留完整目录');
         controls.searchEnabled = createInput('checkbox', active.searchEnabled);
         const searchWrap = document.createElement('div');
         searchWrap.className = 'publication-check';

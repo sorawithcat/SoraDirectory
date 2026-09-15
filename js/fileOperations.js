@@ -1622,12 +1622,12 @@ function generateSelfDecryptingHtml(title, encryptedData) {
     <title>${title} - 加密文档</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; justify-content: center; align-items: center; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; justify-content: center; align-items: center; cursor: default; }
         .container { background: white; padding: 40px; border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); max-width: 400px; width: 90%; text-align: center; }
         .lock-icon { font-size: 64px; margin-bottom: 20px; }
         h1 { color: #333; margin-bottom: 10px; font-size: 24px; }
         p { color: #666; margin-bottom: 20px; font-size: 14px; }
-        input[type="password"] { width: 100%; padding: 12px 16px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 16px; margin-bottom: 16px; transition: border-color 0.2s; }
+        input[type="password"] { width: 100%; padding: 12px 16px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 16px; margin-bottom: 16px; transition: border-color 0.2s; color:#222; background:#fff; cursor:text; caret-color:#667eea; }
         input[type="password"]:focus { outline: none; border-color: #667eea; }
         button { width: 100%; padding: 14px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
         button:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4); }
@@ -1651,7 +1651,7 @@ function generateSelfDecryptingHtml(title, encryptedData) {
         <div class="lock-icon">🔐</div>
         <h1>${title}</h1>
         <p>此文档已加密，请输入密码查看</p>
-        <input type="password" id="passwordInput" placeholder="输入密码" autofocus>
+        <input type="password" id="passwordInput" placeholder="输入密码">
         <button onclick="decrypt()">解锁</button>
         <div class="error" id="error">密码错误，请重试</div>
     </div>
@@ -1684,7 +1684,6 @@ function generateSelfDecryptingHtml(title, encryptedData) {
             } catch (e) {
                 document.getElementById('error').style.display = 'block';
                 document.getElementById('passwordInput').value = '';
-                document.getElementById('passwordInput').focus();
             }
         }
         function renderContent(data) {
@@ -2538,6 +2537,62 @@ async function writePartsToDirectoryHandle(directoryHandle, fileName, parts) {
     const fileHandle = await directoryHandle.getFileHandle(fileName, { create: true });
     await writePartsToFileHandle(fileHandle, parts);
     return fileHandle;
+}
+
+function buildLocalServerPythonSource() {
+    return `from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+import os
+import threading
+import webbrowser
+
+
+class SoraLocalHandler(SimpleHTTPRequestHandler):
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
+        super().end_headers()
+
+
+root = Path(__file__).resolve().parent
+os.chdir(root)
+server = ThreadingHTTPServer(("127.0.0.1", 0), SoraLocalHandler)
+url = "http://127.0.0.1:{}/".format(server.server_port)
+print("SoraDirectory local server: " + url)
+print("Close this window or press Ctrl+C to stop.")
+threading.Timer(0.35, lambda: webbrowser.open(url, new=2)).start()
+try:
+    server.serve_forever()
+except KeyboardInterrupt:
+    pass
+finally:
+    server.server_close()
+`;
+}
+
+function buildLocalServerCmdSource() {
+    return `@echo off\r
+setlocal\r
+chcp 65001 >nul\r
+cd /d "%~dp0"\r
+where py >nul 2>nul\r
+if not errorlevel 1 (\r
+    py -3 "%~dp0sora-local-server.py"\r
+    goto :finished\r
+)\r
+where python >nul 2>nul\r
+if not errorlevel 1 (\r
+    python "%~dp0sora-local-server.py"\r
+    goto :finished\r
+)\r
+echo 未找到 Python，无法启动本地服务。\r
+echo 请安装 Python，或直接打开 index.html 后按页面提示授权媒体目录。\r
+:finished\r
+echo.\r
+echo 本地服务已停止。\r
+pause\r
+`;
 }
 
 function isSafeExportUrl(value, attributeName) {
@@ -3468,7 +3523,8 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                 basePath: `./media/${bundleId}/`,
                 encrypted: !!encrypt,
                 mediaSalt,
-                mediaKey: mediaSalt ? await deriveKey(password, mediaSalt) : null
+                mediaKey: mediaSalt ? await deriveKey(password, mediaSalt) : null,
+                assetCount: 0
             };
             publicationSettings.splitMediaEncrypted = !!encrypt;
             publicationSettings.splitMediaBasePath = splitMediaContext.basePath;
@@ -3729,6 +3785,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                     url: externalContext.basePath + fileName
                 };
             }
+            externalContext.assetCount++;
             return asset;
         };
 
@@ -4234,6 +4291,17 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         .content-outline-menu button { min-height:32px; border:0; border-radius:4px; background:transparent; color:var(--text); text-align:left; cursor:pointer; }
         .reading-progress { position:fixed; inset:0 0 auto 0; z-index:10020; height:3px; background:transparent; pointer-events:none; }
         .reading-progress span { display:block; width:0; height:100%; background:var(--accent); transition:width .1s linear; }
+        .local-media-authorization { display:flex; align-items:center; gap:12px; padding:10px 20px; border-bottom:1px solid #e5c879; background:#fff8e6; color:#4b3705; font-size:14px; line-height:1.45; }
+        .local-media-authorization-copy { min-width:0; flex:1; overflow-wrap:anywhere; }
+        .local-media-authorization-title { display:block; margin-bottom:2px; color:#342500; }
+        .local-media-authorization-status { display:block; color:#6b4e08; }
+        .local-media-authorization button { flex:none; min-height:36px; padding:7px 12px; border:1px solid #075bbd; border-radius:6px; background:#075bbd; color:#fff; font:inherit; font-weight:600; cursor:pointer; }
+        .local-media-authorization button:hover { background:#064e9f; }
+        .local-media-authorization button:focus-visible { outline:3px solid rgba(7,91,189,.28); outline-offset:2px; }
+        .local-media-authorization.is-ready { border-bottom-color:#9ac7a8; background:#eef9f1; color:#155b2c; }
+        .local-media-authorization.is-ready .local-media-authorization-status { color:#256c3a; }
+        .local-media-authorization.is-error { border-bottom-color:#d9a3a3; background:#fff1f1; color:#8a1c1c; }
+        .local-media-authorization.is-error .local-media-authorization-status { color:#8a1c1c; }
         @media (min-width: 769px) {
             body.sidebar-collapsed:not(.content-first) .sidebar {
                 width: 0;
@@ -4762,6 +4830,8 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                 height: 100dvh;
             }
             .content-header { padding: 10px 12px; }
+            .local-media-authorization { align-items:stretch; flex-direction:column; padding:10px 12px; }
+            .local-media-authorization button { width:100%; }
             .mobile-nav-toggle { display: inline-flex; align-items: center; }
             .content-body { padding: 18px 16px 32px; }
         }
@@ -4823,6 +4893,9 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         const contentCache = {};
         let mediaDataMap = {};
         let mediaAssetMap = {};
+        const authorizedSplitMediaFiles = new Map();
+        let localSplitMediaAuthorizationForced = false;
+        let localSplitMediaAuthorizationReady = false;
         const directoryLevelColors = ${directoryLevelColorsJson};
         const soraMethodRuntimeHandlers = ${methodRuntimeHandlersJson};
         let currentSelected = null;
@@ -7366,6 +7439,136 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             }
         })();
 
+        function normalizeSplitMediaPath(value) {
+            let path = String(value || '');
+            const queryIndex = path.indexOf('?');
+            if (queryIndex >= 0) path = path.slice(0, queryIndex);
+            const hashIndex = path.indexOf('#');
+            if (hashIndex >= 0) path = path.slice(0, hashIndex);
+            try { path = decodeURIComponent(path); } catch (_) {}
+            path = path.split(String.fromCharCode(92)).join('/');
+            while (path.startsWith('./')) path = path.slice(2);
+            while (path.startsWith('/')) path = path.slice(1);
+            return path;
+        }
+
+        function getEncryptedSplitMediaPaths() {
+            const paths = [];
+            Object.values(mediaAssetMap).forEach(function(asset) {
+                if (!asset || asset.storage !== 'external-encrypted' || !Array.isArray(asset.chunks)) return;
+                asset.chunks.forEach(function(chunk) {
+                    const path = normalizeSplitMediaPath(chunk && chunk.url);
+                    if (path) paths.push(path);
+                });
+            });
+            return Array.from(new Set(paths));
+        }
+
+        function resolveAuthorizedSplitMediaFile(value) {
+            const path = normalizeSplitMediaPath(value);
+            if (!path) return null;
+            return authorizedSplitMediaFiles.get(path)
+                || authorizedSplitMediaFiles.get(path.startsWith('media/') ? path.slice(6) : path)
+                || null;
+        }
+
+        function indexAuthorizedSplitMediaFiles(files) {
+            authorizedSplitMediaFiles.clear();
+            Array.from(files || []).forEach(function(file) {
+                const relativePath = normalizeSplitMediaPath(file && (file.webkitRelativePath || file.name));
+                if (!file || !relativePath || !relativePath.toLowerCase().endsWith('.soraenc')) return;
+                const segments = relativePath.split('/').filter(Boolean);
+                for (let index = 0; index < segments.length; index++) {
+                    authorizedSplitMediaFiles.set(segments.slice(index).join('/'), file);
+                }
+            });
+            const expectedPaths = getEncryptedSplitMediaPaths();
+            const matched = expectedPaths.filter(path => !!resolveAuthorizedSplitMediaFile(path)).length;
+            return { expected: expectedPaths.length, matched };
+        }
+
+        function requiresLocalSplitMediaAuthorization() {
+            return SORA_PUBLICATION.splitMediaEncrypted === true
+                && (location.protocol === 'file:' || localSplitMediaAuthorizationForced);
+        }
+
+        function retryLocalSplitMediaLoads() {
+            document.querySelectorAll('.video-load-shell.is-error[data-placeholder-id]').forEach(function(errorPlaceholder) {
+                const placeholderId = errorPlaceholder.getAttribute('data-placeholder-id');
+                const freshPlaceholder = createVideoPlaceholder(placeholderId, '准备视频');
+                errorPlaceholder.replaceWith(freshPlaceholder);
+            });
+            loadLazyMedia();
+        }
+
+        function initLocalEncryptedMediaAuthorization(force = false) {
+            if (force) localSplitMediaAuthorizationForced = true;
+            if (!requiresLocalSplitMediaAuthorization()) return null;
+            const expectedPaths = getEncryptedSplitMediaPaths();
+            if (expectedPaths.length === 0) return null;
+            const existing = document.getElementById('localMediaAuthorization');
+            if (existing) return existing;
+            const container = document.querySelector('.content-area');
+            const contentBody = document.getElementById('contentBody');
+            if (!container || !contentBody) return null;
+
+            const banner = document.createElement('section');
+            banner.id = 'localMediaAuthorization';
+            banner.className = 'local-media-authorization';
+            banner.setAttribute('aria-labelledby', 'localMediaAuthorizationTitle');
+
+            const copy = document.createElement('div');
+            copy.className = 'local-media-authorization-copy';
+            const title = document.createElement('strong');
+            title.id = 'localMediaAuthorizationTitle';
+            title.className = 'local-media-authorization-title';
+            title.textContent = '授权读取本地加密媒体';
+            const status = document.createElement('span');
+            status.className = 'local-media-authorization-status';
+            status.setAttribute('role', 'status');
+            status.setAttribute('aria-live', 'polite');
+            status.textContent = '请选择本次导出的文件夹（其中应包含 index.html 和 media 目录）。授权仅在本页打开期间有效。';
+            copy.append(title, status);
+
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = '选择导出文件夹';
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.multiple = true;
+            input.hidden = true;
+            input.setAttribute('webkitdirectory', '');
+            input.setAttribute('directory', '');
+            input.setAttribute('data-local-media-input', '');
+            input.setAttribute('aria-label', '选择包含加密媒体的导出文件夹');
+            button.addEventListener('click', function() {
+                input.value = '';
+                input.click();
+            });
+            input.addEventListener('change', function() {
+                const result = indexAuthorizedSplitMediaFiles(input.files);
+                localSplitMediaAuthorizationReady = result.expected > 0 && result.matched === result.expected;
+                banner.classList.remove('is-ready', 'is-error');
+                if (localSplitMediaAuthorizationReady) {
+                    banner.classList.add('is-ready');
+                    status.textContent = '授权成功，已匹配 ' + result.matched + ' 个加密分块。媒体现在可以加载。';
+                    retryLocalSplitMediaLoads();
+                    showExportToast('本地加密媒体授权成功', 1800, 'success');
+                    banner.remove();
+                    return;
+                }
+                banner.classList.add('is-error');
+                status.textContent = result.matched > 0
+                    ? '只匹配到 ' + result.matched + '/' + result.expected + ' 个分块，请重新选择完整的导出文件夹。'
+                    : '所选文件夹不包含当前文档需要的加密媒体，请选择包含 index.html 和 media 的导出文件夹。';
+                button.textContent = '重新选择文件夹';
+            });
+
+            banner.append(copy, button, input);
+            container.insertBefore(banner, contentBody);
+            return banner;
+        }
+
         function resolveMediaInfo(placeholderId) {
             const reference = placeholderId ? mediaDataMap[placeholderId] : null;
             if (!reference) return null;
@@ -7686,9 +7889,18 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                         throw abortError;
                     }
                     const entry = entries[index] || {};
-                    const response = await fetch(entry.url, { cache: 'no-store' });
-                    if (!response.ok) throw new Error('无法读取加密媒体分块 ' + (index + 1));
-                    const encrypted = await response.arrayBuffer();
+                    const authorizedFile = resolveAuthorizedSplitMediaFile(entry.url);
+                    let encrypted;
+                    if (authorizedFile) {
+                        encrypted = await authorizedFile.arrayBuffer();
+                    } else {
+                        if (requiresLocalSplitMediaAuthorization()) {
+                            throw new Error('尚未授权读取本地加密媒体，请先点击页面顶部的“选择导出文件夹”');
+                        }
+                        const response = await fetch(entry.url, { cache: 'no-store' });
+                        if (!response.ok) throw new Error('无法读取加密媒体分块 ' + (index + 1));
+                        encrypted = await response.arrayBuffer();
+                    }
                     const plainLength = Number(entry.plainLength) || 0;
                     const plain = await crypto.subtle.decrypt({
                         name: 'AES-GCM',
@@ -7918,6 +8130,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         async function loadLazyMedia() {
             const contentBody = document.getElementById('contentBody');
             if (!contentBody) return;
+            if (requiresLocalSplitMediaAuthorization() && !localSplitMediaAuthorizationReady) return;
             if (typeof IntersectionObserver !== 'undefined') {
                 initMediaObserver();
                 return;
@@ -8427,9 +8640,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         handleSoraMethodTriggersCascade('open');
         scheduleTimeMethodTriggers();
         if (SORA_METHOD_DEBUG) initMethodDebugButton();
-        if (SORA_PUBLICATION.splitMediaEncrypted && location.protocol === 'file:') {
-            showExportToast('加密拆分媒体需要通过 HTTP/HTTPS 打开，直接打开本地文件无法读取媒体', 5200, 'warning');
-        }
+        initLocalEncryptedMediaAuthorization();
         if (SORA_PUBLICATION.deploymentMode === 'pwa-folder' && 'serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
             navigator.serviceWorker.register('./sora-service-worker.js').catch(function() {
                 showExportToast('离线缓存未启用，基础阅读仍可使用', 2600, 'warning');
@@ -8520,6 +8731,10 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
     if (deploymentDirectoryHandle) {
         const htmlHandle = await deploymentDirectoryHandle.getFileHandle('index.html', { create: true });
         await writeFinalHtml(htmlHandle);
+        if (splitMediaContext && splitMediaContext.assetCount > 0) {
+            await writePartsToDirectoryHandle(deploymentDirectoryHandle, 'sora-local-server.py', [buildLocalServerPythonSource()]);
+            await writePartsToDirectoryHandle(deploymentDirectoryHandle, '本地打开.cmd', [buildLocalServerCmdSource()]);
+        }
         if (publicationSettings.deploymentMode === 'pwa-folder') {
             const manifest = {
                 name: publicationSettings.title,
@@ -8570,7 +8785,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         }
     }
     showToast(deploymentDirectoryHandle
-        ? `已导出${publicationSettings.deploymentMode === 'pwa-folder' ? ' PWA' : ''}网站目录${splitMediaContext ? `（媒体已拆分${splitMediaContext.encrypted ? '并加密' : ''}）` : ''}：${filename}`
+        ? `已导出${publicationSettings.deploymentMode === 'pwa-folder' ? ' PWA' : ''}网站目录${splitMediaContext ? `（媒体已拆分${splitMediaContext.encrypted ? '并加密' : ''}${splitMediaContext.assetCount > 0 ? '，可双击“本地打开.cmd”' : ''}）` : ''}：${filename}`
         : `已导出${encrypt ? '加密' : ''}网页：${filename}`, 'success', 2500);
     return true;
 }
@@ -8607,11 +8822,11 @@ function generateEncryptedHtmlPrefix(title, metadata) {
     <meta http-equiv="Expires" content="0">
     <title>${safeTitle} - 加密文档</title>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #f5f5f5; color: #333; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #f5f5f5; color: #333; cursor:default; }
         .box { width: min(420px, calc(100vw - 32px)); box-sizing: border-box; background: #fff; padding: 30px; border-radius: 8px; border: 1px solid #ddd; text-align: center; }
         h3 { margin: 0 0 15px; color: #333; }
         .controls { display: flex; gap: 8px; }
-        input { min-width: 0; flex: 1; padding: 8px 12px; border: 1px solid #999; border-radius: 4px; }
+        input { min-width: 0; flex: 1; padding: 8px 12px; border: 1px solid #999; border-radius: 4px; color:#222; background:#fff; cursor:text; caret-color:#0066cc; }
         button { padding: 8px 16px; background: #0066cc; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
         button:hover { background: #0052a3; }
         button:disabled { cursor: wait; opacity: .65; }
@@ -8623,7 +8838,7 @@ function generateEncryptedHtmlPrefix(title, metadata) {
     <div class="box">
         <h3>${safeTitle}</h3>
         <div class="controls">
-            <input type="password" id="pwd" placeholder="输入密码" autofocus>
+            <input type="password" id="pwd" placeholder="输入密码">
             <button type="button" id="unlockBtn">解锁</button>
         </div>
         <div class="progress" id="progress" role="status" aria-live="polite"></div>
@@ -8690,7 +8905,6 @@ function generateEncryptedHtmlSuffix() {
                 error.style.display = 'block';
                 progress.textContent = '';
                 passwordInput.value = '';
-                passwordInput.focus();
                 unlockButton.disabled = false;
             }
         }

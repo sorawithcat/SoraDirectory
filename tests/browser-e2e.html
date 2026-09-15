@@ -324,6 +324,11 @@
                 check(splitAsset?.storage === 'external' && !splitIndex.includes('iVBORw0KGgo'), '拆分导出不再把媒体载荷写入 index.html');
                 check(splitFiles.has(splitFilePath) && splitFiles.get(splitFilePath).size === pngBytes.byteLength, '拆分导出生成独立原始媒体文件');
                 check(!splitIndex.includes('media_chunk_asset_'), '拆分导出的 HTML 不包含媒体 Base64 分块');
+                const localServerSource = await splitFiles.get('sora-local-server.py')?.text();
+                const localLauncherSource = await splitFiles.get('本地打开.cmd')?.text();
+                check(localServerSource?.includes('ThreadingHTTPServer(("127.0.0.1", 0)') && localLauncherSource?.includes('sora-local-server.py'), '有拆分媒体时生成仅监听本机的自动启动脚本');
+                const textOnlySplitFiles = await captureFolderExport(compactRows, { ...settings, defaultDirId: 'plain', deploymentMode: 'static-folder', splitMedia: true });
+                check(!textOnlySplitFiles.has('本地打开.cmd') && !textOnlySplitFiles.has('sora-local-server.py'), '纯文字拆分导出不生成本地服务脚本');
 
                 const encryptedSplitRows = [['mulu', '加密媒体页', 'encrypted_media_page', `<h1>加密媒体页</h1><img src="about:blank" alt="加密测试图片" data-media-storage-id="${mediaId}">`]];
                 const encryptedSplitFiles = await captureFolderExport(encryptedSplitRows, { ...settings, defaultDirId: 'encrypted_media_page', deploymentMode: 'static-folder', splitMedia: true }, { encrypt: true, password: 'e2e-password' });
@@ -339,19 +344,33 @@
                 document.body.appendChild(encryptedSplitReader);
                 encryptedSplitReader.srcdoc = encryptedSplitIndex;
                 await poll(() => encryptedSplitReader.contentDocument?.getElementById('unlockBtn'));
-                encryptedSplitReader.contentWindow.fetch = async input => {
-                    const requested = typeof input === 'string' ? input : input?.url || '';
-                    const match = encryptedMediaEntries.find(([path]) => requested.endsWith(path));
-                    return match
-                        ? new Response(match[1], { status: 200 })
-                        : new Response(null, { status: 404 });
-                };
-                encryptedSplitReader.contentDocument.getElementById('pwd').value = 'e2e-password';
+                const encryptedSplitPassword = encryptedSplitReader.contentDocument.getElementById('pwd');
+                const encryptedSplitPasswordStyle = getComputedStyle(encryptedSplitPassword);
+                check(!encryptedSplitPassword.hasAttribute('autofocus') && encryptedSplitPasswordStyle.cursor === 'text' && encryptedSplitPasswordStyle.caretColor !== 'rgba(0, 0, 0, 0)', '导出加密密码页不再强制聚焦且光标可见');
+                encryptedSplitReader.contentWindow.fetch = async () => { throw new Error('测试禁止网络读取媒体'); };
+                encryptedSplitPassword.value = 'e2e-password';
                 encryptedSplitReader.contentDocument.getElementById('unlockBtn').click();
                 const encryptedSplitImage = await poll(() => encryptedSplitReader.contentDocument?.querySelector('img[data-placeholder-id]'), 10000);
+                const authorizationBanner = encryptedSplitReader.contentWindow.initLocalEncryptedMediaAuthorization(true);
+                const authorizationInput = authorizationBanner?.querySelector('[data-local-media-input]');
+                check(Boolean(authorizationBanner && authorizationInput), '本地加密拆分页显示目录授权入口');
+                const wrongFile = new encryptedSplitReader.contentWindow.File(['wrong'], 'wrong.soraenc');
+                Object.defineProperty(wrongFile, 'webkitRelativePath', { value: 'wrong/wrong.soraenc' });
+                Object.defineProperty(authorizationInput, 'files', { configurable: true, value: [wrongFile] });
+                authorizationInput.dispatchEvent(new Event('change', { bubbles: true }));
+                check(authorizationBanner.classList.contains('is-error'), '选择错误目录时给出可恢复的匹配错误');
+                const authorizedFiles = encryptedMediaEntries.map(([path, blob]) => {
+                    const file = new encryptedSplitReader.contentWindow.File([blob], path.split('/').pop());
+                    Object.defineProperty(file, 'webkitRelativePath', { value: `soralist/${path}` });
+                    return file;
+                });
+                Object.defineProperty(authorizationInput, 'files', { configurable: true, value: authorizedFiles });
+                authorizationInput.dispatchEvent(new Event('change', { bubbles: true }));
+                await poll(() => !authorizationBanner.isConnected);
+                check(!encryptedSplitReader.contentDocument.getElementById('localMediaAuthorization'), '本地媒体授权成功后授权栏自动消失');
                 await encryptedSplitReader.contentWindow.loadSingleMedia(encryptedSplitImage);
                 await poll(() => encryptedSplitImage.src.startsWith('blob:'), 10000);
-                check(encryptedSplitImage.src.startsWith('blob:'), '加密拆分媒体输入密码后可按需解密显示');
+                check(encryptedSplitImage.src.startsWith('blob:'), '本地授权后加密拆分媒体无需网络即可解密显示');
 
                 const encrypted = await captureExport(compactRows, { ...settings, defaultDirId: 'plain' }, { encrypt: true, password: 'e2e-password' });
                 check(encrypted.includes('SoraDirectoryEncryptedHtml') && encrypted.includes('encrypted_html_chunk_0'), '加密网页使用分块格式');
