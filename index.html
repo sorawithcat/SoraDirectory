@@ -963,7 +963,7 @@
             width: 100%;
             height: 100%;
             background-color: rgba(0, 0, 0, 0.5);
-            z-index: 10000;
+            z-index: 13000;
             display: none;
             justify-content: center;
             align-items: center;
@@ -1028,6 +1028,7 @@
         .custom-dialog-body {
             padding: 20px;
             overflow-y: auto;
+            overscroll-behavior: contain;
             flex: 1;
         }
         
@@ -1659,7 +1660,7 @@
             position: fixed;
             top: 80px;
             right: 20px;
-            z-index: 10000;
+            z-index: 14000;
             display: flex;
             flex-direction: column;
             gap: 10px;
@@ -1676,8 +1677,9 @@
             max-width: 350px;
             opacity: 0;
             transform: translateX(100%);
-            transition: all 0.3s ease;
+            transition: opacity 0.3s ease, transform 0.3s ease;
             pointer-events: auto;
+            overflow-wrap: anywhere;
         }
         
         .toast.show {
@@ -2604,7 +2606,7 @@
         <div class="noneRightMouseMenu">取消</div>
     </div>
     
-    <div class="toast-container" id="toastContainer"></div>
+    <div class="toast-container" id="toastContainer" aria-live="polite" aria-atomic="true"></div>
     <div class="sora-load-progress" id="soraLoadProgress" role="status" aria-live="polite">
         <div class="sora-load-progress-header">
             <span id="soraLoadProgressTitle">正在加载 .sora</span>

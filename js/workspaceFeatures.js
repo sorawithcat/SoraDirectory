@@ -25,7 +25,7 @@ const FeatureDialog = (function() {
             .feature-dialog-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid #e2e8f0; background: #f8fafc; }
             .feature-dialog-title { margin: 0; font-size: 17px; }
             .feature-dialog-close { border: 0; background: transparent; font-size: 22px; cursor: pointer; color: #64748b; }
-            .feature-dialog-body { width: 100%; min-width: 0; padding: 14px 16px; overflow: auto; }
+            .feature-dialog-body { width: 100%; min-width: 0; padding: 14px 16px; overflow: auto; overscroll-behavior: contain; }
             .feature-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
             .feature-toolbar input[type="search"] { flex: 1; min-width: 200px; padding: 7px 10px; border: 1px solid #cbd5e1; border-radius: 6px; }
             .media-summary { color: #64748b; font-size: 13px; }

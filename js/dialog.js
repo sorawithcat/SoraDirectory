@@ -8,6 +8,7 @@ const toastContainer = document.getElementById('toastContainer');
 function showToast(message, type = 'info', duration = 3000) {
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
+    toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
     toast.textContent = message;
     toastContainer.appendChild(toast);
     requestAnimationFrame(() => {

@@ -10,14 +10,19 @@
     function load() {
         try {
             const value = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-            return Array.isArray(value) ? value : [];
+            return Array.isArray(value) ? value.filter(item => item && typeof item === 'object' && !Array.isArray(item)) : [];
         } catch (_) {
             return [];
         }
     }
 
-    function persist() {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(packs));
+    function persist(nextPacks = packs) {
+        try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(nextPacks));
+            return true;
+        } catch (_) {
+            return false;
+        }
     }
 
     function validate(pack) {
@@ -33,16 +38,19 @@
             if (pack[key] !== undefined) errors.push(`不允许的字段：${key}`);
         });
         const methodPresets = Array.isArray(pack.methodPresets) ? pack.methodPresets.slice(0, 100) : [];
+        if (methodPresets.length && !capabilities.includes('method-presets')) errors.push('方法预设未声明 method-presets 能力');
         methodPresets.forEach((preset, index) => {
             const config = preset && preset.config;
             const basic = window.SoraMethodRegistry ? window.SoraMethodRegistry.validateBasic(config) : [{ message: '方法注册表不可用' }];
             basic.forEach(error => errors.push(`方法预设 ${index + 1}：${error.message}`));
         });
         const componentPresets = Array.isArray(pack.componentPresets) ? pack.componentPresets.slice(0, 100) : [];
+        if (componentPresets.length && !capabilities.includes('component-presets')) errors.push('组件预设未声明 component-presets 能力');
         componentPresets.forEach((preset, index) => {
             if (!preset || !ALLOWED_COMPONENTS.has(String(preset.type || ''))) errors.push(`组件预设 ${index + 1}：类型不受支持`);
         });
         const styleTokens = Array.isArray(pack.styleTokens) ? pack.styleTokens.slice(0, 20).map(String) : [];
+        if (styleTokens.length && !capabilities.includes('style-tokens')) errors.push('样式令牌未声明 style-tokens 能力');
         styleTokens.forEach(token => { if (!ALLOWED_STYLES.has(token)) errors.push(`样式令牌不受支持：${token}`); });
         const normalized = {
             type: 'SoraExtensionPack',
@@ -61,8 +69,12 @@
     function install(pack) {
         const result = validate(pack);
         if (result.errors.length) return result;
-        packs = [result.normalized, ...packs.filter(item => item.id !== result.normalized.id)].slice(0, 30);
-        persist();
+        const nextPacks = [result.normalized, ...packs.filter(item => item.id !== result.normalized.id)].slice(0, 30);
+        if (!persist(nextPacks)) {
+            result.errors.push('浏览器拒绝写入本地存储，扩展包未导入');
+            return result;
+        }
+        packs = nextPacks;
         result.normalized.methodPresets.forEach(preset => window.SoraMethodWorkbench?.savePreset(preset.config, preset.name));
         return result;
     }
@@ -81,6 +93,16 @@
         };
     }
 
+    function getComponentPresets() {
+        return packs.flatMap(pack => (pack && Array.isArray(pack.componentPresets) ? pack.componentPresets : []).map((preset, index) => ({
+            id: `${pack.id || 'pack'}:${index}`,
+            packName: pack.name || '扩展包',
+            name: String(preset.name || preset.type || '未命名组件').slice(0, 80),
+            type: String(preset.type || ''),
+            label: String(preset.label || '').slice(0, 120)
+        }))).filter(preset => ALLOWED_COMPONENTS.has(preset.type));
+    }
+
     function describe(result) {
         if (result.errors.length) return `拒绝导入：\n${result.errors.map(error => `• ${error}`).join('\n')}`;
         const pack = result.normalized;
@@ -96,7 +118,7 @@
         let inspected = null;
         const renderInstalled = () => {
             const container = wrapper.querySelector('[data-installed]');
-            container.innerHTML = packs.length ? packs.map(pack => `<div class="method-preset-row"><span><strong>${escapeHtml(pack.name)}</strong><br><small>${escapeHtml(pack.capabilities.join('、') || '无额外能力')}</small></span><button type="button" data-remove-pack="${escapeHtml(pack.id)}">移除</button></div>`).join('') : '<p class="command-empty">尚未安装扩展包。</p>';
+            container.innerHTML = packs.length ? packs.map(pack => `<div class="method-preset-row"><span><strong>${escapeHtml(pack.name || '未命名扩展包')}</strong><br><small>${escapeHtml((Array.isArray(pack.capabilities) ? pack.capabilities : []).join('、') || '无额外能力')}</small></span><button type="button" data-remove-pack="${escapeHtml(pack.id || '')}">移除</button></div>`).join('') : '<p class="command-empty">尚未安装扩展包。</p>';
         };
         wrapper.querySelector('[data-example]').addEventListener('click', () => { textarea.value = JSON.stringify(example(), null, 2); });
         wrapper.querySelector('[data-inspect]').addEventListener('click', () => {
@@ -108,11 +130,13 @@
         installButton.addEventListener('click', () => {
             if (!inspected || inspected.errors.length) return;
             const result = install(inspected.normalized);
-            if (!result.errors.length) {
-                resultBox.textContent = `已导入“${result.normalized.name}”。${describe(result)}`;
-                installButton.disabled = true;
-                renderInstalled();
+            if (result.errors.length) {
+                resultBox.textContent = describe(result);
+                return;
             }
+            resultBox.textContent = `已导入“${result.normalized.name}”。${describe(result)}`;
+            installButton.disabled = true;
+            renderInstalled();
         });
         wrapper.querySelector('[data-copy-installed]').addEventListener('click', async () => {
             try {
@@ -125,15 +149,19 @@
             if (!button) return;
             const pack = packs.find(item => item.id === button.dataset.removePack);
             if (!pack || !await customConfirm(`移除扩展包“${pack.name}”？已写入正文的方法不会被删除。`, '移除', '取消', '移除扩展包')) return;
-            packs = packs.filter(item => item.id !== pack.id);
-            persist();
+            const nextPacks = packs.filter(item => item.id !== pack.id);
+            if (!persist(nextPacks)) {
+                resultBox.textContent = '浏览器拒绝写入本地存储，扩展包未移除。';
+                return;
+            }
+            packs = nextPacks;
             renderInstalled();
         });
         renderInstalled();
         FeatureDialog.open('声明式扩展包', wrapper);
     }
 
-    window.SoraExtensionPacks = { validate, install, list: () => packs.slice(), example, open };
+    window.SoraExtensionPacks = { validate, install, list: () => packs.slice(), getComponentPresets, example, open };
     window.SoraFeatureCommands = window.SoraFeatureCommands || [];
     window.SoraFeatureCommands.push({ key: 'extension-packs', title: '声明式扩展包', icon: '⬡', meta: '检查权限并导入受控方法和组件预设', keywords: '扩展 包 权限 兼容 方法 组件', run: open });
 })();

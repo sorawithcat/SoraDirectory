@@ -39,6 +39,7 @@
             window.addEventListener('error', event => failures.push(`父页面错误：${event.message}`));
             window.addEventListener('unhandledrejection', event => failures.push(`父页面异步错误：${event.reason?.message || event.reason}`));
             try {
+                localStorage.removeItem('sora_extension_packs_v1');
                 frame.src = `../index.html?test=browser-e2e-${viewport}-${Date.now()}`;
                 await poll(() => frame.contentWindow?.SoraMethodWorkbench && frame.contentWindow?.SoraKnowledgeBaseInterop);
                 const win = frame.contentWindow;
@@ -96,6 +97,71 @@
                 await wait(50);
                 check(Array.from(win.document.querySelectorAll('[data-action-name="edit"]')).some(button => button.textContent.includes('编辑')), '方法管理显示编辑动作');
                 win.FeatureDialog.close();
+
+                win.FeatureDialog.open('层级回归', '用于验证嵌套反馈');
+                const nestedConfirm = win.customConfirm('确认框应显示在功能弹窗之上');
+                await poll(() => win.document.getElementById('customDialogOverlay')?.classList.contains('active'));
+                const featureLayer = Number(getComputedStyle(win.document.querySelector('.feature-dialog-overlay')).zIndex);
+                const customLayer = Number(getComputedStyle(win.document.getElementById('customDialogOverlay')).zIndex);
+                win.showToast('层级提示', 'info', 500);
+                const toastLayer = Number(getComputedStyle(win.document.getElementById('toastContainer')).zIndex);
+                const liveToast = win.document.querySelector('#toastContainer .toast:last-child');
+                check(customLayer > featureLayer && toastLayer > customLayer, '确认框和提示不会被功能弹窗遮挡', `${featureLayer}/${customLayer}/${toastLayer}`);
+                check(liveToast?.getAttribute('role') === 'status', 'Toast 状态可被辅助技术感知');
+                win.document.getElementById('customDialogCancel').click();
+                await nestedConfirm;
+                win.FeatureDialog.close();
+
+                preview.innerHTML = '<p><a href="https://example.com" data-test-link>链接文字</a></p>';
+                const linkForColor = preview.querySelector('[data-test-link]');
+                const linkColorRange = win.document.createRange();
+                linkColorRange.selectNode(linkForColor);
+                const linkColorSelection = win.getSelection();
+                linkColorSelection.removeAllRanges();
+                linkColorSelection.addRange(linkColorRange);
+                win.eval('selectionRange = null');
+                const originalColorPickerDialog = win.colorPickerDialog;
+                win.colorPickerDialog = async () => '#B91C1C';
+                try { await win.applyFormat('color'); }
+                finally { win.colorPickerDialog = originalColorPickerDialog; }
+                const coloredLink = preview.querySelector('[data-test-link]');
+                check(coloredLink?.style.color === 'rgb(185, 28, 28)' && getComputedStyle(coloredLink).color === 'rgb(185, 28, 28)', '完整选中链接文字后可直接改变链接颜色');
+                const invalidPack = win.SoraExtensionPacks.validate({ type: 'SoraExtensionPack', version: 1, name: '未声明能力', capabilities: [], componentPresets: [{ name: '问答', type: 'faq', label: '常见问题' }] });
+                check(invalidPack.errors.some(error => error.includes('未声明 component-presets 能力')), '扩展包内容必须匹配能力声明');
+                const installedPack = win.SoraExtensionPacks.install({ type: 'SoraExtensionPack', version: 1, id: 'e2e-components', name: 'E2E 组件', capabilities: ['component-presets'], componentPresets: [{ name: '问答预设', type: 'faq', label: '常见问题' }] });
+                check(installedPack.errors.length === 0 && win.SoraExtensionPacks.getComponentPresets().length === 1, '扩展包组件预设可安装并被组件库读取');
+                preview.innerHTML = '<p><span id="component-start" class="sora-anchor" data-sora-anchor="true" data-anchor-name="component-start">\u200B</span><strong>组件内容</strong><span id="component-end" class="sora-anchor" data-sora-anchor="true" data-anchor-name="component-end">\u200B</span></p>';
+                win.syncPreviewToTextarea();
+                win.SoraReferencePicker.clearCache();
+                win.SoraComponentLibrary.open();
+                await poll(() => win.document.querySelector('[data-component-error]'));
+                const componentPreset = win.document.querySelector('[data-preset]');
+                componentPreset.value = '0';
+                componentPreset.dispatchEvent(new Event('change', { bubbles: true }));
+                check(win.document.querySelector('[data-type]').value === 'faq' && win.document.querySelector('[data-label]').value === '常见问题', '扩展包组件预设可在组件库中选择并回填');
+                win.document.querySelector('[data-insert]').click();
+                check(win.document.querySelector('[data-component-error]').textContent.includes('前锚点'), '组件缺少锚点时在弹窗内显示原因');
+                const componentFront = win.document.querySelector('[data-front]');
+                const componentBack = win.document.querySelector('[data-back]');
+                componentFront.value = '#component-start';
+                componentBack.value = '#component-end';
+                componentFront.dispatchEvent(new Event('input', { bubbles: true }));
+                componentBack.dispatchEvent(new Event('input', { bubbles: true }));
+                win.document.querySelector('[data-insert]').click();
+                await poll(() => !win.document.querySelector('.feature-dialog-overlay')?.classList.contains('active'));
+                const componentMethodLink = preview.querySelector('a[data-sora-link="method"]');
+                const componentMethods = JSON.parse(componentMethodLink?.dataset.soraMethods || '[]');
+                check(componentMethods[0]?.methodType === '插入组件' && componentMethods[0]?.componentType === 'faq' && componentMethods[0]?.frontAnchor === '#component-start' && componentMethods[0]?.backAnchor === '#component-end', '有效锚点可插入受控组件方法');
+                preview.innerHTML = '<p>引用插入位置</p>';
+                win.syncPreviewToTextarea();
+                win.SoraReusableBlocks.open();
+                await poll(() => win.document.querySelector('[data-block-error]'));
+                win.document.querySelector('.feature-dialog-body .method-workbench-actions button').click();
+                await poll(() => !win.document.querySelector('.feature-dialog-overlay')?.classList.contains('active'));
+                const reusableBlock = preview.querySelector('[data-sora-block-ref="e2e_second"]');
+                check(reusableBlock?.textContent.includes('第二页') && reusableBlock.querySelector('[data-edit-sora-block="e2e_second"]'), '可复用内容块可实际插入、展开并返回源目录');
+                preview.innerHTML = longBody;
+                win.syncPreviewToTextarea();
 
                 const issues = await win.collectExportPreflightIssues(data);
                 check(Boolean(issues && Array.isArray(issues.invalidMethods)), '导出预检可重复运行');
@@ -169,6 +235,7 @@
 
                 await win.DraftManager.clear();
                 await win.MediaStorage.deleteMedia(mediaId);
+                localStorage.removeItem('sora_extension_packs_v1');
                 check(runtimeErrors.length === 0, '场景运行无未处理脚本错误', runtimeErrors.join('；'));
             } catch (error) {
                 failures.push(`测试中断：${error.stack || error.message || error}`);

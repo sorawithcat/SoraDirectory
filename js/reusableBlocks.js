@@ -6,6 +6,10 @@
         return source.filter(row => Array.isArray(row) && row.length === 4);
     }
 
+    function getEditorRoot() {
+        return document.querySelector('.markdown-preview');
+    }
+
     function rowMap(data) {
         return new Map(rows(data).map(row => [String(row[2]), row]));
     }
@@ -71,7 +75,7 @@
         return root;
     }
 
-    function renderEditor(root = window.markdownPreview) {
+    function renderEditor(root = getEditorRoot()) {
         if (!root || !root.querySelectorAll) return;
         const sourceRows = rowMap();
         root.querySelectorAll('[data-sora-block-ref]').forEach((element, index) => expandElement(element, sourceRows, new Set(), String(index + 1), true));
@@ -117,7 +121,16 @@
 
     function insertReference(sourceId) {
         const currentId = window.DirectoryNavigation?.getCurrentDirId();
-        if (!currentId || !window.markdownPreview) return false;
+        const editorRoot = getEditorRoot();
+        const source = rowMap().get(String(sourceId || ''));
+        if (!currentId || !editorRoot) {
+            showToast('未找到当前编辑区，请重新选择目录后再试', 'warning', 2400);
+            return false;
+        }
+        if (!source || String(source[2]) === String(currentId)) {
+            showToast('请选择仍然存在的其他目录作为引用源', 'warning', 2400);
+            return false;
+        }
         if (wouldCreateCycle(currentId, sourceId)) {
             showToast('该引用会形成循环，已阻止插入', 'warning', 2400);
             return false;
@@ -128,14 +141,14 @@
         const selection = window.getSelection();
         let range = selection && selection.rangeCount ? selection.getRangeAt(0) : null;
         const container = range && (range.commonAncestorContainer.nodeType === Node.TEXT_NODE ? range.commonAncestorContainer.parentNode : range.commonAncestorContainer);
-        if (!container || !markdownPreview.contains(container)) {
+        if (!container || !editorRoot.contains(container)) {
             range = document.createRange();
-            range.selectNodeContents(markdownPreview);
+            range.selectNodeContents(editorRoot);
             range.collapse(false);
         }
         range.deleteContents();
         range.insertNode(wrapper);
-        renderEditor(markdownPreview);
+        renderEditor(editorRoot);
         syncPreviewToTextarea();
         return true;
     }
@@ -150,25 +163,40 @@
         wrapper.innerHTML = '<p>引用块默认只读；源目录更新后会同步。编辑时使用块内“编辑源块”，导出时展开为静态内容。</p>';
         const select = document.createElement('select');
         select.className = 'form-control';
-        rows().filter(row => String(row[2]) !== currentId).forEach(row => {
+        select.setAttribute('aria-label', '引用源目录');
+        const candidates = rows().filter(row => String(row[2]) !== currentId);
+        const enabledCandidates = [];
+        candidates.forEach(row => {
             const option = document.createElement('option');
             option.value = row[2];
             option.textContent = row[1] || row[2];
             option.disabled = wouldCreateCycle(currentId, String(row[2]));
+            if (!option.disabled) enabledCandidates.push(row);
             select.appendChild(option);
         });
+        if (enabledCandidates.length) select.value = String(enabledCandidates[0][2]);
         wrapper.appendChild(select);
+        const error = document.createElement('p');
+        error.className = 'method-field-error';
+        error.dataset.blockError = '';
+        error.setAttribute('role', 'alert');
+        if (!candidates.length) error.textContent = '当前没有其他目录可供引用，请先新建或加载其他目录。';
+        else if (!enabledCandidates.length) error.textContent = '其他目录都会形成循环引用，当前无法插入。';
+        wrapper.appendChild(error);
         const actions = document.createElement('div');
         actions.className = 'method-workbench-actions';
         const insert = document.createElement('button');
         insert.type = 'button';
         insert.textContent = '插入引用块';
-        insert.disabled = !select.options.length;
+        insert.disabled = !enabledCandidates.length;
+        select.addEventListener('change', () => { error.textContent = ''; });
         insert.addEventListener('click', () => {
             if (insertReference(select.value)) {
                 FeatureDialog.close();
                 showToast('已插入可复用内容块', 'success', 1800);
+                return;
             }
+            error.textContent = '未能插入引用块，请确认源目录仍存在且不会形成循环。';
         });
         actions.appendChild(insert);
         wrapper.appendChild(actions);

@@ -805,7 +805,8 @@ if (markdownPreview) {
 
             e.preventDefault();
             e.stopPropagation();
-            window.open(href, '_blank');
+            const opened = window.open(href, '_blank', 'noopener,noreferrer');
+            if (opened) opened.opener = null;
             return;
         }
 
@@ -1349,7 +1350,17 @@ async function applyFormat(command) {
                     return;
                 }
             }
-            formattedHtml = '<span style="color: ' + escapeHtml(selectedColor) + '">' + selectedHtml + '</span>';
+            const coloredSelection = document.createElement('div');
+            coloredSelection.innerHTML = selectedHtml;
+            // 链接有自己的默认颜色；选区完整包含链接时，需要把颜色直接写到链接节点。
+            coloredSelection.querySelectorAll('a').forEach(link => {
+                link.style.color = selectedColor;
+            });
+            if (coloredSelection.childNodes.length === 1 && coloredSelection.firstElementChild?.tagName === 'A') {
+                formattedHtml = coloredSelection.innerHTML;
+            } else {
+                formattedHtml = '<span style="color: ' + escapeHtml(selectedColor) + '">' + coloredSelection.innerHTML + '</span>';
+            }
             break;
         // 背景颜色
         case 'background-color':
