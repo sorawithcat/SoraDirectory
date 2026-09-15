@@ -115,6 +115,11 @@ assert.ok(runtime.includes('mediaBudget: []'), 'single HTML media budget preflig
 assert.ok(runtime.includes("['大媒体风险', issues.largeMediaRisks]"), 'large media risk preflight missing');
 assert.ok(runtime.includes('const mediaAssetMap = {}'), 'export unique media asset table missing');
 assert.ok(runtime.includes('id="mediaAssets"'), 'export media asset manifest missing');
+assert.ok(runtime.includes("storage: 'external'"), 'split media file manifest missing');
+assert.ok(runtime.includes("storage: 'external-encrypted'"), 'encrypted split media manifest missing');
+assert.ok(runtime.includes('SORA_SPLIT_MEDIA_MAGIC'), 'split media encryption format missing');
+assert.ok(runtime.includes('MediaStorage.writeMediaToWritable'), 'split media streaming writer missing');
+assert.ok(runtime.includes("url.pathname.includes('/media/')"), 'PWA must not cache split media payloads');
 assert.ok(runtime.includes('MAX_CONCURRENT_IMAGE_LOADS = 2'), 'export image load concurrency guard missing');
 assert.ok(runtime.includes("SORA_ENCRYPTED_HTML_MAGIC = 'SORA_ENCRYPTED_HTML_V2'"), 'chunked encrypted HTML format missing');
 assert.ok(runtime.includes('writeEncryptedHtmlSource(baseName, encryptedHtmlSource'), 'encrypted HTML streaming writer missing');
@@ -165,10 +170,14 @@ assert.ok(helpSource.includes('声明式扩展包'), 'extension pack guidance is
 assert.ok(helpSource.includes('Markdown / Obsidian 互操作'), 'knowledge base interoperability guidance is missing from built-in help');
 assert.ok(helpSource.includes('加密网页不能可靠注册 PWA'), 'encrypted PWA limitation is missing from built-in help');
 assert.ok(helpSource.includes('没有方法的文档会从产物中移除方法运行适配代码'), 'export pruning guidance is missing from built-in help');
+assert.ok(helpSource.includes('拆分媒体文件（适合大文件）'), 'split media export guidance is missing from built-in help');
+assert.ok(helpSource.includes('加密拆分会把媒体写成 AES-GCM 密文分块'), 'encrypted split media guidance is missing from built-in help');
 assert.ok(helpSource.includes('草稿按文档身份隔离'), 'document-scoped draft guidance is missing from built-in help');
 assert.ok(helpSource.includes('诊断摘要会脱敏'), 'diagnostic privacy guidance is missing from built-in help');
 assert.ok(publication.includes("const STORAGE_KEY = 'sora_publication_settings_v1'"), 'publication settings persistence missing');
 assert.ok(publication.includes("next.theme = 'light'"), 'publication settings must migrate old themes to the fixed light appearance');
+assert.ok(publication.includes('data-publication-split-media'), 'split media publication option missing');
+assert.ok(publication.includes("next.deploymentMode = 'static-folder'"), 'split media must use folder deployment');
 assert.equal(publication.includes("controls.theme = addField"), false, 'publication settings should not expose theme variants');
 assert.ok(workspace.includes('.feature-dialog, .feature-dialog * { box-sizing: border-box; }'), 'feature dialog box-sizing overflow guard missing');
 assert.ok(workspace.includes('overscroll-behavior: contain'), 'feature dialog scroll containment missing');

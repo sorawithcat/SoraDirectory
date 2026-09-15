@@ -77,6 +77,13 @@
                 let dialogBody = win.document.querySelector('.feature-dialog-body');
                 check(dialogBody.scrollWidth <= dialogBody.clientWidth + 1, '发布设置弹窗无横向溢出', `${dialogBody.scrollWidth}/${dialogBody.clientWidth}`);
                 check(!Array.from(dialogBody.querySelectorAll('label > span')).some(item => item.textContent === '主题'), '发布设置不再显示主题选项');
+                const splitMediaOption = dialogBody.querySelector('[data-publication-split-media]');
+                const deploymentField = Array.from(dialogBody.querySelectorAll('.publication-field')).find(field => field.querySelector(':scope > span')?.textContent === '部署方式');
+                const deploymentSelect = deploymentField?.querySelector('select');
+                check(Boolean(splitMediaOption && deploymentSelect), '发布设置显示拆分媒体导出选项');
+                splitMediaOption.checked = true;
+                splitMediaOption.dispatchEvent(new Event('change', { bubbles: true }));
+                check(deploymentSelect.value === 'static-folder', '拆分媒体自动切换为目录导出');
                 win.FeatureDialog.close();
                 win.DirectoryMetadata.openEditor('e2e_root');
                 await wait(30);
@@ -255,6 +262,33 @@
                     finally { win.PublicationSettings.resolve = originalResolve; }
                     return new Blob(parts, { type: 'text/html' }).text();
                 }
+                async function captureFolderExport(exportRows, settings, options = {}) {
+                    const files = new Map();
+                    const createDirectoryHandle = (prefix = '') => ({
+                        getDirectoryHandle: async name => createDirectoryHandle(`${prefix}${name}/`),
+                        getFileHandle: async name => ({
+                            name,
+                            createWritable: async () => {
+                                const parts = [];
+                                return {
+                                    write: async part => parts.push(part),
+                                    close: async () => files.set(`${prefix}${name}`, new Blob(parts)),
+                                    abort: async () => {}
+                                };
+                            }
+                        })
+                    });
+                    const originalDirectoryPicker = win.showDirectoryPicker;
+                    const originalResolve = win.PublicationSettings.resolve;
+                    win.showDirectoryPicker = async () => createDirectoryHandle();
+                    win.PublicationSettings.resolve = () => settings;
+                    try { await win.handleSaveAsWebpage(!!options.encrypt, options.password || null, exportRows, { mode: 'all' }); }
+                    finally {
+                        win.showDirectoryPicker = originalDirectoryPicker;
+                        win.PublicationSettings.resolve = originalResolve;
+                    }
+                    return files;
+                }
                 const settings = { title: 'E2E', description: '', icon: '', language: 'zh-CN', theme: 'light', defaultDirId: 'e2e_root', initialTreeState: 'expanded', navigationMode: 'sidebar', capabilityLevel: 'standard', searchEnabled: true, mediaPolicy: 'balanced', deploymentMode: 'single-html', debugEnabled: false };
                 const exported = await captureExport(data, settings);
                 check(exported.includes('createSoraMethodRuntimeCore') && exported.includes('data-sora-methods'), '有方法导出包含共享运行核心', `length=${exported.length},core=${exported.includes('createSoraMethodRuntimeCore')},method=${exported.includes('data-sora-methods')}`);
@@ -279,6 +313,45 @@
                 const referenceAssets = Object.values(mediaReferences).map(item => item.assetId);
                 check(Object.keys(mediaAssets).length === 1 && referenceAssets.length === 40 && new Set(referenceAssets).size === 1, '大量重复图片在单 HTML 中只嵌入一份分块资源');
                 check(!mediaDocument.getElementById('mediaData').textContent.includes('data:image/png;base64'), '图片载荷不再集中写入启动 JSON');
+
+                const splitFiles = await captureFolderExport(mediaRows, { ...settings, defaultDirId: 'media_page', deploymentMode: 'static-folder', splitMedia: true });
+                const splitIndexBlob = splitFiles.get('index.html');
+                const splitIndex = await splitIndexBlob.text();
+                const splitDocument = new DOMParser().parseFromString(splitIndex, 'text/html');
+                const splitAssets = JSON.parse(splitDocument.getElementById('mediaAssets').textContent);
+                const splitAsset = Object.values(splitAssets)[0];
+                const splitFilePath = String(splitAsset?.url || '').replace(/^\.\//, '');
+                check(splitAsset?.storage === 'external' && !splitIndex.includes('iVBORw0KGgo'), '拆分导出不再把媒体载荷写入 index.html');
+                check(splitFiles.has(splitFilePath) && splitFiles.get(splitFilePath).size === pngBytes.byteLength, '拆分导出生成独立原始媒体文件');
+                check(!splitIndex.includes('media_chunk_asset_'), '拆分导出的 HTML 不包含媒体 Base64 分块');
+
+                const encryptedSplitRows = [['mulu', '加密媒体页', 'encrypted_media_page', `<h1>加密媒体页</h1><img src="about:blank" alt="加密测试图片" data-media-storage-id="${mediaId}">`]];
+                const encryptedSplitFiles = await captureFolderExport(encryptedSplitRows, { ...settings, defaultDirId: 'encrypted_media_page', deploymentMode: 'static-folder', splitMedia: true }, { encrypt: true, password: 'e2e-password' });
+                const encryptedSplitIndex = await encryptedSplitFiles.get('index.html').text();
+                const encryptedMediaEntries = Array.from(encryptedSplitFiles.entries()).filter(([path]) => path.endsWith('.soraenc'));
+                check(encryptedSplitIndex.includes('mediaSalt') && encryptedMediaEntries.length > 0, '加密拆分导出包含媒体密钥参数和密文分块');
+                check(encryptedMediaEntries.every(([, blob]) => blob.size > pngBytes.byteLength), '加密拆分媒体不落地原始图片明文');
+                check(!encryptedSplitIndex.includes('iVBORw0KGgo'), '加密拆分 HTML 不泄露图片 Base64');
+
+                const encryptedSplitReader = document.createElement('iframe');
+                encryptedSplitReader.style.width = '640px';
+                encryptedSplitReader.style.height = '400px';
+                document.body.appendChild(encryptedSplitReader);
+                encryptedSplitReader.srcdoc = encryptedSplitIndex;
+                await poll(() => encryptedSplitReader.contentDocument?.getElementById('unlockBtn'));
+                encryptedSplitReader.contentWindow.fetch = async input => {
+                    const requested = typeof input === 'string' ? input : input?.url || '';
+                    const match = encryptedMediaEntries.find(([path]) => requested.endsWith(path));
+                    return match
+                        ? new Response(match[1], { status: 200 })
+                        : new Response(null, { status: 404 });
+                };
+                encryptedSplitReader.contentDocument.getElementById('pwd').value = 'e2e-password';
+                encryptedSplitReader.contentDocument.getElementById('unlockBtn').click();
+                const encryptedSplitImage = await poll(() => encryptedSplitReader.contentDocument?.querySelector('img[data-placeholder-id]'), 10000);
+                await encryptedSplitReader.contentWindow.loadSingleMedia(encryptedSplitImage);
+                await poll(() => encryptedSplitImage.src.startsWith('blob:'), 10000);
+                check(encryptedSplitImage.src.startsWith('blob:'), '加密拆分媒体输入密码后可按需解密显示');
 
                 const encrypted = await captureExport(compactRows, { ...settings, defaultDirId: 'plain' }, { encrypt: true, password: 'e2e-password' });
                 check(encrypted.includes('SoraDirectoryEncryptedHtml') && encrypted.includes('encrypted_html_chunk_0'), '加密网页使用分块格式');
@@ -341,12 +414,13 @@
                 await poll(() => encryptedReader.contentDocument?.querySelector('.content-body')?.textContent.includes('内容'), 10000);
                 check(Boolean(encryptedReader.contentDocument.querySelector('.content-body')), '分块加密网页可解锁并运行');
 
+                [encryptedSplitReader, reader, mediaReader, encryptedReader].forEach(item => item.remove());
                 await win.DraftManager.clear();
                 await win.MediaStorage.deleteMedia(mediaId);
                 localStorage.removeItem('sora_extension_packs_v1');
                 check(runtimeErrors.length === 0, '场景运行无未处理脚本错误', runtimeErrors.join('；'));
                 frame.src = `../index.html?test=asset-refresh-${viewport}-${Date.now()}`;
-                await poll(() => frame.contentWindow?.SoraMethodWorkbench && frame.contentWindow.SORA_ASSET_VERSION && frame.contentWindow.SORA_ASSET_VERSION !== loadedAssetVersion);
+                await poll(() => frame.contentWindow?.SoraMethodWorkbench && frame.contentWindow.SORA_ASSET_VERSION && frame.contentWindow.SORA_ASSET_VERSION !== loadedAssetVersion, 30000);
                 const refreshedWin = frame.contentWindow;
                 const refreshedVersion = refreshedWin.SORA_ASSET_VERSION;
                 const refreshedScripts = Array.from(refreshedWin.document.scripts).filter(script => /(?:\/js\/|SoraDirectoryJS\.js)/.test(script.src));

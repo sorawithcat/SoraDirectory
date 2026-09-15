@@ -128,7 +128,7 @@ async function runCase(edge, serverPort, viewport) {
             const response = await client.send('Runtime.evaluate', { expression: 'document.body && document.body.dataset.testStatus', returnByValue: true });
             const value = response.result?.value;
             return value === 'passed' || value === 'failed' ? value : '';
-        }, 45000, 150);
+        }, 90000, 150);
         if (result !== 'passed') {
             const dom = await client.send('Runtime.evaluate', { expression: 'document.documentElement.outerHTML', returnByValue: true });
             const screenshot = await client.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });

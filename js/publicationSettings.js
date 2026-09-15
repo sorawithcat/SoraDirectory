@@ -14,6 +14,7 @@ const PublicationSettings = (function() {
         searchEnabled: true,
         mediaPolicy: 'balanced',
         deploymentMode: 'single-html',
+        splitMedia: false,
         debugEnabled: false
     });
     const ALLOWED = {
@@ -48,6 +49,10 @@ const PublicationSettings = (function() {
             ? defaultDirectory
             : 'first';
         next.searchEnabled = source.searchEnabled !== false;
+        next.splitMedia = source.splitMedia === true;
+        if (next.splitMedia && next.deploymentMode === 'single-html') {
+            next.deploymentMode = 'static-folder';
+        }
         next.debugEnabled = source.debugEnabled === true;
         return next;
     }
@@ -176,6 +181,7 @@ const PublicationSettings = (function() {
             searchEnabled: controls.searchEnabled.checked,
             mediaPolicy: controls.mediaPolicy.value,
             deploymentMode: controls.deploymentMode.value,
+            splitMedia: controls.splitMedia.checked,
             debugEnabled: controls.debugEnabled.checked
         });
     }
@@ -194,7 +200,7 @@ const PublicationSettings = (function() {
         const labels = {
             title: '标题', description: '说明', icon: '图标', language: '语言',
             defaultDirectory: '默认目录', initialTreeState: '目录初始状态', navigationMode: '导航方式',
-            capabilityLevel: '产物等级', searchEnabled: '搜索', mediaPolicy: '媒体策略', deploymentMode: '部署方式', debugEnabled: '调试'
+            capabilityLevel: '产物等级', searchEnabled: '搜索', mediaPolicy: '媒体策略', deploymentMode: '部署方式', splitMedia: '拆分媒体', debugEnabled: '调试'
         };
         const left = sanitize(a);
         const right = sanitize(b);
@@ -266,6 +272,12 @@ const PublicationSettings = (function() {
         controls.deploymentMode = addField(grid, '部署方式', createSelect([
             ['single-html', '单 HTML（默认）'], ['static-folder', '静态托管目录'], ['pwa-folder', '可安装离线站点（PWA）']
         ], active.deploymentMode), '目录模式需浏览器支持目录写入；PWA 只在 HTTP/HTTPS 部署后注册缓存');
+        controls.splitMedia = createInput('checkbox', active.splitMedia);
+        controls.splitMedia.setAttribute('data-publication-split-media', '');
+        const splitMediaWrap = document.createElement('div');
+        splitMediaWrap.className = 'publication-check';
+        splitMediaWrap.append(controls.splitMedia, document.createTextNode('拆分媒体文件（适合大文件）'));
+        addField(grid, '媒体文件', splitMediaWrap, '生成 index.html 与 media/ 目录，需整目录上传；加密媒体不落明文，但播放时仍需解密单个媒体');
         controls.searchEnabled = createInput('checkbox', active.searchEnabled);
         const searchWrap = document.createElement('div');
         searchWrap.className = 'publication-check';
@@ -314,8 +326,19 @@ const PublicationSettings = (function() {
             const textBytes = rows.reduce((sum, row) => sum + (Array.isArray(row) ? String(row[3] || '').length * 2 : 0), 0);
             const methodCount = rows.reduce((sum, row) => sum + (Array.isArray(row) ? (String(row[3] || '').match(/data-sora-methods=/g) || []).length : 0), 0);
             const levelText = settings.capabilityLevel === 'compact' ? '精简：无搜索/调试' : settings.capabilityLevel === 'full' ? '完整：允许诊断' : '标准：搜索可用、无调试';
-            status.textContent = `正文约 ${(textBytes / 1024).toFixed(1)} KB · ${methodCount} 个方法入口 · ${levelText} · ${settings.deploymentMode === 'single-html' ? '单文件离线' : settings.deploymentMode === 'pwa-folder' ? 'PWA 目录' : '静态目录'}`;
+            const outputText = settings.splitMedia
+                ? `${settings.deploymentMode === 'pwa-folder' ? 'PWA' : '静态'}目录 · 媒体分离`
+                : settings.deploymentMode === 'single-html' ? '单文件离线' : settings.deploymentMode === 'pwa-folder' ? 'PWA 目录' : '静态目录';
+            status.textContent = `正文约 ${(textBytes / 1024).toFixed(1)} KB · ${methodCount} 个方法入口 · ${levelText} · ${outputText}`;
         };
+        controls.splitMedia.addEventListener('change', () => {
+            if (controls.splitMedia.checked && controls.deploymentMode.value === 'single-html') {
+                controls.deploymentMode.value = 'static-folder';
+            }
+        });
+        controls.deploymentMode.addEventListener('change', () => {
+            if (controls.deploymentMode.value === 'single-html') controls.splitMedia.checked = false;
+        });
         updateEstimate();
         wrapper.appendChild(status);
         Object.values(controls).forEach(control => control.addEventListener(control.type === 'checkbox' || control.tagName === 'SELECT' ? 'change' : 'input', updateEstimate));

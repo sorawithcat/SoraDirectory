@@ -177,6 +177,7 @@ const DirectoryViewState = (function() {
             markdownPreview.scrollTop = 0;
             return false;
         }
+        void markdownPreview.scrollHeight;
         markdownPreview.scrollTop = Math.max(0, Number(state.scrollTop) || 0);
         if (!state.selection) return true;
         const start = pointFromPath(markdownPreview, state.selection.start);

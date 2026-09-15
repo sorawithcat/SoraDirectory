@@ -12,6 +12,7 @@ const SORA_ENCRYPTED_PACKAGE_MAGIC = 'SORA_DIRECTORY_ENCRYPTED_PACKAGE_V1';
 const SORA_PACKAGE_MIME = 'application/x-sora-directory';
 const SORA_ENCRYPTED_CHUNK_SIZE = 8 * 1024 * 1024;
 const SORA_ENCRYPTED_HTML_MAGIC = 'SORA_ENCRYPTED_HTML_V2';
+const SORA_SPLIT_MEDIA_MAGIC = 'SORA_SPLIT_MEDIA_V1';
 let soraLoadProgressHideTimer = null;
 
 function formatSoraProgressBytes(bytes) {
@@ -2939,16 +2940,22 @@ async function collectExportPreflightIssues(data = mulufile) {
         const textEncoder = new TextEncoder();
         let textBytes = 0;
         rows.forEach(row => { textBytes += textEncoder.encode(String(row[3] || '')).byteLength; });
-        issues.mediaBudget.push(
-            `${mediaIds.size} 个唯一媒体，原始 ${formatSoraProgressBytes(totalMediaBytes)}，单 HTML 预计至少 ${formatSoraProgressBytes(estimatedEmbeddedBytes + textBytes)}`
+        const splitMedia = window.PublicationSettings && typeof window.PublicationSettings.get === 'function'
+            ? window.PublicationSettings.get().splitMedia === true
+            : false;
+        issues.mediaBudget.push(splitMedia
+            ? `${mediaIds.size} 个唯一媒体，原始 ${formatSoraProgressBytes(totalMediaBytes)}；拆分后 index.html 约 ${formatSoraProgressBytes(textBytes)}，媒体按需读取`
+            : `${mediaIds.size} 个唯一媒体，原始 ${formatSoraProgressBytes(totalMediaBytes)}，单 HTML 预计至少 ${formatSoraProgressBytes(estimatedEmbeddedBytes + textBytes)}`
         );
         if (unknownSizeCount) issues.largeMediaRisks.push(`${unknownSizeCount} 个媒体无法估算大小`);
-        if (estimatedEmbeddedBytes >= 512 * 1024 * 1024) {
+        if (!splitMedia && estimatedEmbeddedBytes >= 512 * 1024 * 1024) {
             issues.largeMediaRisks.push('预计单 HTML 超过 512 MB，打开和首次加载大媒体时可能占用较多内存');
         }
         largestMedia.sort((left, right) => right.size - left.size).slice(0, 3).forEach(item => {
             if (item.size >= 64 * 1024 * 1024) {
-                issues.largeMediaRisks.push(`${item.id}：${formatSoraProgressBytes(item.size)}，导出页将改为手动加载`);
+                issues.largeMediaRisks.push(splitMedia
+                    ? `${item.id}：${formatSoraProgressBytes(item.size)}，将按需读取；视频托管需支持 HTTP Range`
+                    : `${item.id}：${formatSoraProgressBytes(item.size)}，导出页将改为手动加载`);
             }
         });
     }
@@ -3399,8 +3406,13 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             searchEnabled: true,
             mediaPolicy: 'balanced',
             deploymentMode: 'single-html',
+            splitMedia: false,
             debugEnabled: false
         };
+    publicationSettings.splitMedia = publicationSettings.splitMedia === true;
+    if (publicationSettings.splitMedia && publicationSettings.deploymentMode === 'single-html') {
+        publicationSettings.deploymentMode = 'static-folder';
+    }
     if (encrypt && publicationSettings.deploymentMode === 'pwa-folder') {
         publicationSettings.deploymentMode = 'static-folder';
         showToast('加密网页无法注册 PWA，已改为静态网站目录', 'warning', 3200);
@@ -3409,12 +3421,20 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
     let filename = encrypt ? `${baseName}${partialSuffix}.encrypted.html` : `${baseName}${partialSuffix}.html`;
     let selectedFileHandle = null;
     let deploymentDirectoryHandle = null;
+    if (publicationSettings.deploymentMode !== 'single-html' && typeof window.showDirectoryPicker !== 'function' && publicationSettings.splitMedia) {
+        await customAlert('当前浏览器不支持选择导出目录，无法拆分媒体文件。请使用最新版 Edge 或 Chrome，或关闭“拆分媒体文件”。', '无法拆分媒体');
+        return false;
+    }
     if (publicationSettings.deploymentMode !== 'single-html' && typeof window.showDirectoryPicker === 'function') {
         try {
             deploymentDirectoryHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
             filename = 'index.html';
         } catch (err) {
             if (err.name === 'AbortError') return false;
+            if (publicationSettings.splitMedia) {
+                await customAlert(`无法写入导出目录：${err.message || err}`, '拆分媒体失败');
+                return false;
+            }
             console.warn('Deployment directory picker failed, using single HTML fallback:', err);
         }
     }
@@ -3429,9 +3449,40 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             console.warn('Webpage save picker failed, using fallback:', err);
         }
     }
+    let splitMediaContext = null;
+    if (publicationSettings.splitMedia) {
+        if (!deploymentDirectoryHandle) {
+            await customAlert('拆分媒体必须导出到一个目录，不能回退为单 HTML。', '无法拆分媒体');
+            return false;
+        }
+        try {
+            if (encrypt) assertSoraEncryptionSupported();
+            const bundleId = `assets-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+            const mediaRoot = await deploymentDirectoryHandle.getDirectoryHandle('media', { create: true });
+            const directoryHandle = await mediaRoot.getDirectoryHandle(bundleId, { create: true });
+            const mediaSalt = encrypt ? crypto.getRandomValues(new Uint8Array(16)) : null;
+            splitMediaContext = {
+                bundleId,
+                mediaRoot,
+                directoryHandle,
+                basePath: `./media/${bundleId}/`,
+                encrypted: !!encrypt,
+                mediaSalt,
+                mediaKey: mediaSalt ? await deriveKey(password, mediaSalt) : null
+            };
+            publicationSettings.splitMediaEncrypted = !!encrypt;
+            publicationSettings.splitMediaBasePath = splitMediaContext.basePath;
+        } catch (err) {
+            await customAlert(`无法创建媒体目录：${err.message || err}`, '拆分媒体失败');
+            return false;
+        }
+    } else {
+        publicationSettings.splitMediaEncrypted = false;
+        publicationSettings.splitMediaBasePath = '';
+    }
     let mediaChunkTemporary = null;
     let mediaChunkWriter = null;
-    if (isOpfsSupported()) {
+    if (!splitMediaContext && isOpfsSupported()) {
         try {
             const chunkFilename = `.chunks-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`;
             const root = await navigator.storage.getDirectory();
@@ -3525,7 +3576,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         });
     }
 
-    async function generateContentScripts(muluData, chunkWriter = null) {
+    async function generateContentScripts(muluData, chunkWriter = null, externalContext = null) {
         const contentScriptParts = [];
         const mediaDataMap = {};
         const mediaAssetMap = {};
@@ -3569,6 +3620,116 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             } catch (e) {
             }
             return fallback || 'application/octet-stream';
+        };
+
+        const extensionForMedia = (mimeType, type) => {
+            const extensions = {
+                'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp',
+                'image/avif': 'avif', 'image/svg+xml': 'svg', 'video/mp4': 'mp4', 'video/webm': 'webm',
+                'video/ogg': 'ogv', 'video/quicktime': 'mov', 'video/x-msvideo': 'avi',
+                'application/zip': 'zip', 'application/x-7z-compressed': '7z',
+                'application/x-rar-compressed': 'rar', 'application/vnd.rar': 'rar',
+                'application/gzip': 'gz', 'application/x-tar': 'tar'
+            };
+            return extensions[String(mimeType || '').toLowerCase()] || (type === 'image' ? 'img' : type === 'video' ? 'video' : 'bin');
+        };
+
+        const dataUrlToBlob = dataUrl => {
+            const value = String(dataUrl || '');
+            const commaIndex = value.indexOf(',');
+            if (commaIndex < 0 || !/;base64/i.test(value.slice(0, commaIndex))) return null;
+            const mimeMatch = value.slice(0, commaIndex).match(/^data:([^;,]+)/i);
+            const bytes = soraBase64ToBytes(value.slice(commaIndex + 1).replace(/\s+/g, ''));
+            return new Blob([bytes], { type: mimeMatch ? mimeMatch[1] : 'application/octet-stream' });
+        };
+
+        const writeStoredMediaFile = async (mediaId, fileName) => {
+            const fileHandle = await externalContext.directoryHandle.getFileHandle(fileName, { create: true });
+            const writable = await fileHandle.createWritable();
+            try {
+                const size = await MediaStorage.writeMediaToWritable(mediaId, writable);
+                await writable.close();
+                return size;
+            } catch (error) {
+                if (typeof writable.abort === 'function') {
+                    try { await writable.abort(); } catch (_) {}
+                }
+                throw error;
+            } finally {
+                if (typeof MediaStorage.hideProgressToast === 'function') MediaStorage.hideProgressToast();
+            }
+        };
+
+        const encryptAndWriteExternalChunk = async (assetId, index, bytes, chunkEntries) => {
+            const plainBytes = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+            const encrypted = await crypto.subtle.encrypt({
+                name: 'AES-GCM',
+                iv: buildSoraChunkIv(externalContext.ivPrefixes.get(assetId), index),
+                additionalData: new TextEncoder().encode(`${SORA_SPLIT_MEDIA_MAGIC}:${assetId}:${index}:${plainBytes.byteLength}`)
+            }, externalContext.mediaKey, plainBytes);
+            const fileName = `${assetId}-${index.toString(36)}.soraenc`;
+            await writePartsToDirectoryHandle(externalContext.directoryHandle, fileName, [new Uint8Array(encrypted)]);
+            chunkEntries.push({ url: externalContext.basePath + fileName, plainLength: plainBytes.byteLength });
+            await new Promise(resolve => setTimeout(resolve, 0));
+        };
+
+        const buildEncryptedExternalAsset = async (assetId, type, source) => {
+            const ivPrefix = crypto.getRandomValues(new Uint8Array(8));
+            externalContext.ivPrefixes.set(assetId, ivPrefix);
+            const chunks = [];
+            let info;
+            if (source.mediaId) {
+                info = await MediaStorage.exportMediaChunks(source.mediaId, (base64, index) =>
+                    encryptAndWriteExternalChunk(assetId, index, soraBase64ToBytes(base64), chunks), SORA_ENCRYPTED_CHUNK_SIZE
+                );
+            } else {
+                const blob = source.blob;
+                const chunkCount = Math.max(1, Math.ceil(blob.size / SORA_ENCRYPTED_CHUNK_SIZE));
+                for (let index = 0; index < chunkCount; index++) {
+                    const start = index * SORA_ENCRYPTED_CHUNK_SIZE;
+                    const bytes = new Uint8Array(await blob.slice(start, Math.min(blob.size, start + SORA_ENCRYPTED_CHUNK_SIZE)).arrayBuffer());
+                    await encryptAndWriteExternalChunk(assetId, index, bytes, chunks);
+                }
+                info = { type, mimeType: blob.type || 'application/octet-stream', size: blob.size };
+            }
+            return {
+                storage: 'external-encrypted',
+                format: SORA_SPLIT_MEDIA_MAGIC,
+                type: info.type || type,
+                mimeType: info.mimeType || 'application/octet-stream',
+                size: Number(info.size) || 0,
+                ivPrefix: soraBytesToBase64(ivPrefix),
+                chunks
+            };
+        };
+
+        const exportExternalMediaAsset = async (mediaId, dataUrl, assetId, type) => {
+            if (!externalContext) return null;
+            let sourceInfo = null;
+            if (mediaId && typeof MediaStorage !== 'undefined' && typeof MediaStorage.getMediaInfo === 'function') {
+                sourceInfo = await MediaStorage.getMediaInfo(mediaId);
+            }
+            const inlineBlob = sourceInfo ? null : dataUrlToBlob(dataUrl);
+            if (!sourceInfo && !inlineBlob) return null;
+            let asset;
+            if (externalContext.encrypted) {
+                asset = await buildEncryptedExternalAsset(assetId, type, sourceInfo ? { mediaId } : { blob: inlineBlob });
+            } else {
+                const mimeType = sourceInfo ? sourceInfo.mimeType : inlineBlob.type;
+                const assetType = sourceInfo ? sourceInfo.type || type : type;
+                const fileName = `${assetId}.${extensionForMedia(mimeType, assetType)}`;
+                const size = sourceInfo
+                    ? await writeStoredMediaFile(mediaId, fileName)
+                    : (await writePartsToDirectoryHandle(externalContext.directoryHandle, fileName, [inlineBlob]), inlineBlob.size);
+                asset = {
+                    storage: 'external',
+                    type: assetType,
+                    mimeType: mimeType || 'application/octet-stream',
+                    size: Number(size) || 0,
+                    url: externalContext.basePath + fileName
+                };
+            }
+            return asset;
         };
 
         const addMediaChunk = async (assetId, base64, index, chunkIds) => {
@@ -3618,7 +3779,14 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
 
             const assetId = 'asset_' + (++mediaAssetCounter).toString(36);
             let asset = null;
-            if (mediaId && typeof MediaStorage !== 'undefined' && MediaStorage && typeof MediaStorage.exportMediaChunks === 'function') {
+            if (externalContext) {
+                try {
+                    asset = await exportExternalMediaAsset(mediaId, dataUrl, assetId, type);
+                } catch (err) {
+                    console.error('拆分导出媒体失败:', mediaId || assetId, err);
+                    throw err;
+                }
+            } else if (mediaId && typeof MediaStorage !== 'undefined' && MediaStorage && typeof MediaStorage.exportMediaChunks === 'function') {
                 const chunkIds = [];
                 try {
                     const info = await MediaStorage.exportMediaChunks(mediaId, (base64, index) =>
@@ -3726,6 +3894,9 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                 content = temp.innerHTML;
             } catch (e) {
                 console.error('处理网页导出内容失败:', dirId, e);
+                if (externalContext) {
+                    throw new Error(`目录“${item[1] || dirId}”的媒体拆分失败：${e.message || e}`);
+                }
             }
 
             const scriptId = 'content_' + String(dirId);
@@ -3743,9 +3914,10 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
     const directoryHTML = generateDirectoryHTML(directoryTree);
     let generatedContent;
     try {
+        if (splitMediaContext && splitMediaContext.encrypted) splitMediaContext.ivPrefixes = new Map();
         generatedContent = window.SoraPerformance
-            ? await window.SoraPerformance.measure('exportPrepare', () => generateContentScripts(sourceData, mediaChunkWriter), window.SoraPerformance.BUDGETS.exportPrepareMs)
-            : await generateContentScripts(sourceData, mediaChunkWriter);
+            ? await window.SoraPerformance.measure('exportPrepare', () => generateContentScripts(sourceData, mediaChunkWriter, splitMediaContext), window.SoraPerformance.BUDGETS.exportPrepareMs)
+            : await generateContentScripts(sourceData, mediaChunkWriter, splitMediaContext);
         if (mediaChunkTemporary) {
             try {
                 await mediaChunkTemporary.writable.close();
@@ -3766,6 +3938,13 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                 await mediaChunkTemporary.directory.removeEntry(mediaChunkTemporary.filename);
             } catch (cleanupErr) {
                 console.warn('Unable to remove failed webpage media spool:', cleanupErr);
+            }
+        }
+        if (splitMediaContext && splitMediaContext.mediaRoot && typeof splitMediaContext.mediaRoot.removeEntry === 'function') {
+            try {
+                await splitMediaContext.mediaRoot.removeEntry(splitMediaContext.bundleId, { recursive: true });
+            } catch (cleanupErr) {
+                console.warn('Unable to remove failed split media export:', cleanupErr);
             }
         }
         throw err;
@@ -3804,6 +3983,9 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>${escapeHtml(publicationSettings.title)} - SoraDirectory</title>
     ${publicationSettings.description ? `<meta name="description" content="${publicationAttribute(publicationSettings.description)}">` : ''}
     ${publicationSettings.icon ? `<link rel="icon" href="${publicationAttribute(publicationSettings.icon)}">` : ''}
@@ -4636,6 +4818,8 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
     <script>
         ${methodRuntimeCoreSource}
         const SORA_PUBLICATION = ${publicationSettingsJson};
+        const SORA_SPLIT_MEDIA_KEY = window.__soraSplitMediaKey || null;
+        try { delete window.__soraSplitMediaKey; } catch (e) { window.__soraSplitMediaKey = null; }
         const contentCache = {};
         let mediaDataMap = {};
         let mediaAssetMap = {};
@@ -7472,6 +7656,70 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             return new Blob([bytes.buffer]);
         }
 
+        function decodeBase64Bytes(base64) {
+            const binary = atob(String(base64 || '').replace(/\\s+/g, ''));
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            return bytes;
+        }
+
+        function buildSplitMediaIv(prefix, index) {
+            const iv = new Uint8Array(12);
+            iv.set(prefix, 0);
+            new DataView(iv.buffer).setUint32(8, index, false);
+            return iv;
+        }
+
+        async function createExternalEncryptedMediaUrl(mediaInfo, media, epoch) {
+            const cacheKey = mediaInfo.assetId || '';
+            if (cacheKey && mediaUrlPromises.has(cacheKey)) return mediaUrlPromises.get(cacheKey);
+            const createUrl = async () => {
+                if (!SORA_SPLIT_MEDIA_KEY) throw new Error('拆分媒体密钥不可用，请重新输入密码打开网页');
+                const ivPrefix = decodeBase64Bytes(mediaInfo.ivPrefix || '');
+                const entries = Array.isArray(mediaInfo.chunks) ? mediaInfo.chunks : [];
+                if (ivPrefix.byteLength !== 8 || entries.length === 0) throw new Error('加密媒体清单不完整');
+                const blobParts = [];
+                for (let index = 0; index < entries.length; index++) {
+                    if (epoch !== mediaLoadEpoch) {
+                        const abortError = new Error('媒体加载已取消');
+                        abortError.name = 'AbortError';
+                        throw abortError;
+                    }
+                    const entry = entries[index] || {};
+                    const response = await fetch(entry.url, { cache: 'no-store' });
+                    if (!response.ok) throw new Error('无法读取加密媒体分块 ' + (index + 1));
+                    const encrypted = await response.arrayBuffer();
+                    const plainLength = Number(entry.plainLength) || 0;
+                    const plain = await crypto.subtle.decrypt({
+                        name: 'AES-GCM',
+                        iv: buildSplitMediaIv(ivPrefix, index),
+                        additionalData: new TextEncoder().encode('${SORA_SPLIT_MEDIA_MAGIC}:' + mediaInfo.assetId + ':' + index + ':' + plainLength)
+                    }, SORA_SPLIT_MEDIA_KEY, encrypted);
+                    blobParts.push(plain);
+                    if (media) updateVideoLoadProgress(media, index + 1, entries.length);
+                    await new Promise(resolve => setTimeout(resolve, 0));
+                }
+                const objectUrl = URL.createObjectURL(new Blob(blobParts, { type: mediaInfo.mimeType || 'application/octet-stream' }));
+                activeMediaUrls.add(objectUrl);
+                return objectUrl;
+            };
+            const pending = createUrl();
+            if (cacheKey) mediaUrlPromises.set(cacheKey, pending);
+            try {
+                return await pending;
+            } catch (error) {
+                if (cacheKey) mediaUrlPromises.delete(cacheKey);
+                throw error;
+            }
+        }
+
+        function resolveRuntimeMediaUrl(mediaInfo, media, epoch) {
+            if (mediaInfo.storage === 'external') return Promise.resolve(mediaInfo.url || '');
+            if (mediaInfo.storage === 'external-encrypted') return createExternalEncryptedMediaUrl(mediaInfo, media, epoch);
+            if (mediaInfo.storage === 'chunks' || Array.isArray(mediaInfo.chunks)) return createChunkedMediaUrl(mediaInfo, media, epoch);
+            return Promise.resolve(mediaInfo.data || '');
+        }
+
         async function createChunkedMediaUrl(mediaInfo, media, epoch) {
             const cacheKey = mediaInfo.assetId || '';
             if (cacheKey && mediaUrlPromises.has(cacheKey)) return mediaUrlPromises.get(cacheKey);
@@ -7528,11 +7776,8 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             let sourceUrl = '';
             try {
                 if (mediaInfo.error) throw new Error(mediaInfo.error);
-                if (mediaInfo.storage === 'chunks' || Array.isArray(mediaInfo.chunks)) {
-                    sourceUrl = await createChunkedMediaUrl(mediaInfo, media, epoch);
-                } else {
-                    sourceUrl = normalizeLegacyVideoDataUrl(mediaInfo.data || '', mediaInfo.mimeType || '');
-                }
+                sourceUrl = await resolveRuntimeMediaUrl(mediaInfo, media, epoch);
+                sourceUrl = normalizeLegacyVideoDataUrl(sourceUrl, mediaInfo.mimeType || '');
                 if (epoch !== mediaLoadEpoch || !media.isConnected) {
                     if (sourceUrl.startsWith('blob:')) {
                         URL.revokeObjectURL(sourceUrl);
@@ -7581,9 +7826,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         async function loadImageMedia(media, mediaInfo, epoch) {
             let sourceUrl = '';
             try {
-                sourceUrl = mediaInfo.storage === 'chunks' || Array.isArray(mediaInfo.chunks)
-                    ? await createChunkedMediaUrl(mediaInfo, null, epoch)
-                    : (mediaInfo.data || '');
+                sourceUrl = await resolveRuntimeMediaUrl(mediaInfo, null, epoch);
                 if (epoch !== mediaLoadEpoch || !media.isConnected) return;
                 if (!sourceUrl) throw new Error('图片数据不可用');
                 await new Promise((resolve, reject) => {
@@ -7703,9 +7946,9 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             if (!archiveInfo || archiveInfo.type !== 'archive') {
                 return null;
             }
-            if (archiveInfo.storage === 'chunks' || Array.isArray(archiveInfo.chunks)) {
-                return createChunkedMediaUrl(archiveInfo, null, mediaLoadEpoch);
-            }
+            if (archiveInfo.storage === 'external') return archiveInfo.url || null;
+            if (archiveInfo.storage === 'external-encrypted') return createExternalEncryptedMediaUrl(archiveInfo, null, mediaLoadEpoch);
+            if (archiveInfo.storage === 'chunks' || Array.isArray(archiveInfo.chunks)) return createChunkedMediaUrl(archiveInfo, null, mediaLoadEpoch);
             if (archiveInfo.data) {
                 return archiveInfo.data;
             }
@@ -8184,6 +8427,9 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         handleSoraMethodTriggersCascade('open');
         scheduleTimeMethodTriggers();
         if (SORA_METHOD_DEBUG) initMethodDebugButton();
+        if (SORA_PUBLICATION.splitMediaEncrypted && location.protocol === 'file:') {
+            showExportToast('加密拆分媒体需要通过 HTTP/HTTPS 打开，直接打开本地文件无法读取媒体', 5200, 'warning');
+        }
         if (SORA_PUBLICATION.deploymentMode === 'pwa-folder' && 'serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
             navigator.serviceWorker.register('./sora-service-worker.js').catch(function() {
                 showExportToast('离线缓存未启用，基础阅读仍可使用', 2600, 'warning');
@@ -8262,9 +8508,12 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
     const encryptedHtmlSource = encrypt && password
         ? new File(htmlParts, `${baseName}.plain.html`, { type: 'text/html;charset=utf-8' })
         : null;
+    const encryptedHtmlOptions = splitMediaContext && splitMediaContext.encrypted
+        ? { mediaSalt: soraBytesToBase64(splitMediaContext.mediaSalt) }
+        : {};
     const outputParts = encryptedHtmlSource ? null : htmlParts;
     const writeFinalHtml = fileHandle => encryptedHtmlSource
-        ? writeEncryptedHtmlToFileHandle(fileHandle, baseName, encryptedHtmlSource, password)
+        ? writeEncryptedHtmlToFileHandle(fileHandle, baseName, encryptedHtmlSource, password, encryptedHtmlOptions)
         : writePartsToFileHandle(fileHandle, outputParts);
 
     // 创建并下载文件
@@ -8283,7 +8532,8 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                 theme_color: '#075bbd',
                 icons: publicationSettings.icon ? [{ src: publicationSettings.icon, sizes: 'any', purpose: 'any' }] : []
             };
-            const serviceWorker = `const CACHE='sora-directory-v1';const FILES=['./','./index.html','./manifest.webmanifest'];self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(FILES)).then(()=>self.skipWaiting())));self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim())));self.addEventListener('fetch',event=>{if(event.request.method!=='GET')return;event.respondWith(caches.match(event.request).then(hit=>hit||fetch(event.request).then(response=>{const copy=response.clone();caches.open(CACHE).then(cache=>cache.put(event.request,copy));return response;}).catch(()=>caches.match('./index.html'))));});`;
+            const cacheName = `sora-directory-${splitMediaContext ? splitMediaContext.bundleId : Date.now().toString(36)}`;
+            const serviceWorker = `const CACHE=${JSON.stringify(cacheName)};const FILES=['./','./index.html','./manifest.webmanifest'];self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(FILES)).then(()=>self.skipWaiting())));self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim())));self.addEventListener('fetch',event=>{if(event.request.method!=='GET')return;const url=new URL(event.request.url);if(url.pathname.includes('/media/')){event.respondWith(fetch(event.request));return;}if(event.request.mode==='navigate'){event.respondWith(fetch(event.request).then(response=>{const copy=response.clone();caches.open(CACHE).then(cache=>cache.put('./index.html',copy));return response;}).catch(()=>caches.match('./index.html')));return;}event.respondWith(caches.match(event.request).then(hit=>hit||fetch(event.request).then(response=>{const copy=response.clone();caches.open(CACHE).then(cache=>cache.put(event.request,copy));return response;})));});`;
             await writePartsToDirectoryHandle(deploymentDirectoryHandle, 'manifest.webmanifest', [JSON.stringify(manifest, null, 2)]);
             await writePartsToDirectoryHandle(deploymentDirectoryHandle, 'sora-service-worker.js', [serviceWorker]);
         }
@@ -8304,7 +8554,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             await writeEncryptedHtmlSource(baseName, encryptedHtmlSource, password, part => {
                 encryptedParts.push(part);
                 return Promise.resolve();
-            });
+            }, encryptedHtmlOptions);
             file = new File(encryptedParts, filename, { type: 'text/html;charset=utf-8' });
         } else if (!file) {
             file = new File(outputParts, filename, { type: 'text/html;charset=utf-8' });
@@ -8320,7 +8570,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         }
     }
     showToast(deploymentDirectoryHandle
-        ? `已导出${publicationSettings.deploymentMode === 'pwa-folder' ? ' PWA' : ''}网站目录：${filename}`
+        ? `已导出${publicationSettings.deploymentMode === 'pwa-folder' ? ' PWA' : ''}网站目录${splitMediaContext ? `（媒体已拆分${splitMediaContext.encrypted ? '并加密' : ''}）` : ''}：${filename}`
         : `已导出${encrypt ? '加密' : ''}网页：${filename}`, 'success', 2500);
     return true;
 }
@@ -8352,6 +8602,9 @@ function generateEncryptedHtmlPrefix(title, metadata) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>${safeTitle} - 加密文档</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #f5f5f5; color: #333; }
@@ -8412,6 +8665,9 @@ function generateEncryptedHtmlSuffix() {
                 const ivPrefix = fromBase64(metadata.ivPrefix);
                 const keyMaterial = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
                 const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: metadata.iterations, hash: 'SHA-256' }, keyMaterial, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+                const mediaKey = metadata.mediaSalt
+                    ? await crypto.subtle.deriveKey({ name: 'PBKDF2', salt: fromBase64(metadata.mediaSalt), iterations: metadata.iterations, hash: 'SHA-256' }, keyMaterial, { name: 'AES-GCM', length: 256 }, false, ['decrypt'])
+                    : null;
                 const plainParts = [];
                 for (let index = 0; index < metadata.chunkCount; index++) {
                     progress.textContent = '正在解锁 ' + Math.round(index / metadata.chunkCount * 100) + '%';
@@ -8425,6 +8681,8 @@ function generateEncryptedHtmlSuffix() {
                 }
                 progress.textContent = '正在打开文档';
                 const html = await new Blob(plainParts, { type: 'text/html;charset=utf-8' }).text();
+                window.__soraSplitMediaKey = mediaKey;
+                passwordInput.value = '';
                 document.open();
                 document.write(html);
                 document.close();
@@ -8443,7 +8701,7 @@ function generateEncryptedHtmlSuffix() {
 </html>`;
 }
 
-async function writeEncryptedHtmlSource(title, sourceFile, password, writePart) {
+async function writeEncryptedHtmlSource(title, sourceFile, password, writePart, options = {}) {
     assertSoraEncryptionSupported();
     const salt = crypto.getRandomValues(new Uint8Array(16));
     const ivPrefix = crypto.getRandomValues(new Uint8Array(8));
@@ -8458,7 +8716,8 @@ async function writeEncryptedHtmlSource(title, sourceFile, password, writePart) 
         ivPrefix: bytesToExportBase64(ivPrefix),
         chunkSize: SORA_ENCRYPTED_CHUNK_SIZE,
         chunkCount,
-        plainSize: sourceFile.size
+        plainSize: sourceFile.size,
+        mediaSalt: options.mediaSalt || ''
     };
     await writePart(generateEncryptedHtmlPrefix(title, metadata));
     for (let index = 0; index < chunkCount; index++) {
@@ -8478,10 +8737,10 @@ async function writeEncryptedHtmlSource(title, sourceFile, password, writePart) 
     await writePart(generateEncryptedHtmlSuffix());
 }
 
-async function writeEncryptedHtmlToFileHandle(fileHandle, title, sourceFile, password) {
+async function writeEncryptedHtmlToFileHandle(fileHandle, title, sourceFile, password, options = {}) {
     const writable = await fileHandle.createWritable();
     try {
-        await writeEncryptedHtmlSource(title, sourceFile, password, part => writable.write(part));
+        await writeEncryptedHtmlSource(title, sourceFile, password, part => writable.write(part), options);
         await writable.close();
     } catch (error) {
         if (typeof writable.abort === 'function') {
