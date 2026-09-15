@@ -11,6 +11,7 @@ const media = read('js/imageHandler.js');
 const directoryUtils = read('js/directoryUtils.js');
 const preview = read('js/preview.js');
 const dialog = read('js/dialog.js');
+const referencePicker = read('js/referencePicker.js');
 const publication = read('js/publicationSettings.js');
 const referenceGraph = read('js/referenceGraph.js');
 const directoryMetadata = read('js/directoryMetadata.js');
@@ -39,6 +40,10 @@ assert.ok(workspace.includes('替换媒体并保留引用'), 'reference-preservi
 assert.ok(workspace.includes('aria-labelledby="soraFeatureDialogTitle"'), 'feature dialog title relation missing');
 assert.ok(workspace.includes("if (event.key !== 'Tab') return"), 'feature dialog focus trap missing');
 assert.ok(dialog.includes('function activateCustomDialog()'), 'custom dialog focus lifecycle missing');
+assert.ok(dialog.includes("usage === 'text'"), 'text color contrast context missing');
+assert.ok(dialog.includes('在白色正文背景上的对比度'), 'text color guidance must describe its background');
+assert.ok(dialog.includes('推荐搭配${best}文字'), 'background color foreground guidance missing');
+assert.ok(referencePicker.includes('wrapper.contains(document.activeElement)'), 'reference picker scope focus must not close results');
 assert.ok(index.includes('aria-labelledby="customDialogTitle"'), 'custom dialog title relation missing');
 assert.ok(media.includes('mediaDropIndicator'), 'drop insertion indicator contract missing');
 assert.equal(
@@ -93,7 +98,10 @@ assert.ok(runtime.includes("executionMode === 'parallel'"), 'parallel flow contr
 assert.ok(runtime.includes('function initReadingTools()'), 'export reading tools missing');
 assert.ok(runtime.includes('function buildContentOutline()'), 'export content outline missing');
 assert.ok(runtime.includes('class="reading-tools"'), 'export reading tools must use one collapsed entry');
-assert.ok(runtime.includes('@media print'), 'export print stylesheet missing');
+assert.ok(runtime.includes('id="sidebarCollapseBtn"'), 'export sidebar collapse action missing');
+assert.equal(runtime.includes('id="readingModeBtn"'), false, 'export must not restore centered reading mode');
+assert.equal(runtime.includes('id="printPageBtn"'), false, 'export must not expose browser print action');
+assert.equal(runtime.includes('body.reading-mode'), false, 'export must not apply reading-mode layout overrides');
 assert.equal(runtime.includes('html[data-theme="dark"]'), false, 'export dark theme variant should not return');
 assert.equal(runtime.includes('@media (prefers-color-scheme: dark)'), false, 'export appearance must not change with system theme');
 assert.ok(runtime.includes("navigator.serviceWorker.register('./sora-service-worker.js')"), 'PWA service worker registration missing');

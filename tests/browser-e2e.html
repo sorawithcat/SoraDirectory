@@ -63,6 +63,19 @@
                 dialogBody = win.document.querySelector('.feature-dialog-body');
                 check(dialogBody.scrollWidth <= dialogBody.clientWidth + 1, '目录字段弹窗无横向溢出', `${dialogBody.scrollWidth}/${dialogBody.clientWidth}`);
                 win.FeatureDialog.close();
+                const linkDialogResult = win.showLinkConfigDialog('dir:e2e_root', '编辑链接');
+                await poll(() => !win.document.querySelector('.reference-picker-panel')?.hidden);
+                const referenceScope = win.document.querySelector('.reference-picker-scope');
+                const referencePanel = win.document.querySelector('.reference-picker-panel');
+                referenceScope.focus();
+                await wait(180);
+                check(!referencePanel.hidden, '链接范围下拉框获得焦点时不关闭候选面板');
+                referenceScope.value = 'current';
+                referenceScope.dispatchEvent(new Event('change', { bubbles: true }));
+                await wait(30);
+                check(!referencePanel.hidden, '切换链接搜索范围后候选面板保持展开');
+                win.document.getElementById('customDialogCancel').click();
+                await linkDialogResult;
                 const preview = win.document.querySelector('.markdown-preview');
                 preview.style.setProperty('height', '240px', 'important');
                 preview.style.setProperty('max-height', '240px', 'important');
@@ -135,11 +148,24 @@
                 reader.srcdoc = exported;
                 await poll(() => reader.contentDocument?.querySelector('.content-body')?.textContent.includes('开始'), 10000);
                 check(Boolean(reader.contentDocument.querySelector('main[role="main"], main')), '导出网页真实运行并显示正文');
-                check(Boolean(reader.contentDocument.getElementById('readingTools') && reader.contentDocument.getElementById('readingModeBtn') && reader.contentDocument.getElementById('printPageBtn')), '折叠的阅读与打印入口可用');
+                const sidebarCollapseButton = reader.contentDocument.getElementById('sidebarCollapseBtn');
+                check(Boolean(reader.contentDocument.getElementById('readingTools') && sidebarCollapseButton), '折叠的目录工具入口可用');
+                check(!reader.contentDocument.getElementById('readingModeBtn') && !reader.contentDocument.getElementById('printPageBtn'), '导出页不再提供强制居中阅读模式和打印入口');
                 check(!reader.contentDocument.documentElement.hasAttribute('data-theme'), '导出页不再暴露多主题外观');
                 check(getComputedStyle(reader.contentDocument.body).backgroundColor === 'rgb(255, 255, 255)', '导出页固定旧版浅色背景');
                 if (viewport === 'mobile') check(getComputedStyle(reader.contentDocument.getElementById('mobileNavToggle')).display !== 'none', '移动宽度显示目录抽屉按钮');
-                else check(Boolean(reader.contentDocument.querySelector('[role="tree"]')), '桌面宽度显示语义目录树');
+                else {
+                    const exportSidebar = reader.contentDocument.getElementById('exportSidebar');
+                    const contentBody = reader.contentDocument.getElementById('contentBody');
+                    check(Boolean(reader.contentDocument.querySelector('[role="tree"]')), '桌面宽度显示语义目录树');
+                    sidebarCollapseButton.click();
+                    await poll(() => exportSidebar.getBoundingClientRect().width <= 1, 2000);
+                    check(exportSidebar.getBoundingClientRect().width <= 1 && sidebarCollapseButton.textContent === '展开目录', '桌面工具只收起目录并释放正文空间');
+                    check(getComputedStyle(contentBody).paddingLeft === '20px' && getComputedStyle(contentBody).paddingRight === '20px', '收起目录不改变正文对齐和边距');
+                    sidebarCollapseButton.click();
+                    await poll(() => exportSidebar.getBoundingClientRect().width >= 200, 2000);
+                    check(exportSidebar.getBoundingClientRect().width >= 200 && sidebarCollapseButton.textContent === '收起目录', '桌面目录可再次展开');
+                }
 
                 await win.DraftManager.clear();
                 await win.MediaStorage.deleteMedia(mediaId);

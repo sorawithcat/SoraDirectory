@@ -324,9 +324,10 @@ function codeEditDialog(code = '', language = 'javascript', langOptions = [], ti
  * 颜色选择对话框
  * @param {string} defaultValue - 默认颜色值（十六进制，如 #000000）
  * @param {string} title - 对话框标题，默认为"选择颜色"
+ * @param {'text'|'background'} usage - 颜色用途，用于显示正确的对比度提示
  * @returns {Promise<string|null>} - 用户点击确定返回颜色值（十六进制），取消返回 null
  */
-function colorPickerDialog(defaultValue = '#000000', title = '选择颜色') {
+function colorPickerDialog(defaultValue = '#000000', title = '选择颜色', usage = 'background') {
     return new Promise((resolve) => {
         const presetColors = ['#111827', '#475569', '#2563EB', '#0F766E', '#15803D', '#B45309', '#B91C1C', '#7E22CE', '#FDE68A', '#DBEAFE', '#DCFCE7', '#FCE7F3'];
         let recentColors = [];
@@ -365,6 +366,11 @@ function colorPickerDialog(defaultValue = '#000000', title = '选择颜色') {
         };
         const updateContrast = color => {
             const white = contrast(color, '#FFFFFF');
+            if (usage === 'text') {
+                contrastStatus.textContent = `在白色正文背景上的对比度 ${white.toFixed(1)}:1${white >= 4.5 ? '，符合正文可读性要求' : '，不适合正文文字'}`;
+                contrastStatus.classList.toggle('is-warning', white < 4.5);
+                return;
+            }
             const black = contrast(color, '#000000');
             const best = white >= black ? '白色' : '黑色';
             const ratio = Math.max(white, black);

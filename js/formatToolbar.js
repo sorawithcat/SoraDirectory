@@ -1330,7 +1330,7 @@ async function applyFormat(command) {
                     }
                 }
             }
-            const selectedColor = await colorPickerDialog(currentColor, '选择文字颜色');
+            const selectedColor = await colorPickerDialog(currentColor, '选择文字颜色', 'text');
             if (!selectedColor) return;
             // 如果已经有颜色样式，需要移除后重新应用
             if (colorElement) {
@@ -1374,7 +1374,7 @@ async function applyFormat(command) {
                     }
                 }
             }
-            const selectedBgColor = await colorPickerDialog(currentBgColor, '选择背景颜色');
+            const selectedBgColor = await colorPickerDialog(currentBgColor, '选择背景颜色', 'background');
             if (!selectedBgColor) return;
             // 如果已经有背景颜色样式，需要移除后重新应用
             if (bgColorElement) {

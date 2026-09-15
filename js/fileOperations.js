@@ -4005,9 +4005,14 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         .content-outline-menu button { min-height:32px; border:0; border-radius:4px; background:transparent; color:var(--text); text-align:left; cursor:pointer; }
         .reading-progress { position:fixed; inset:0 0 auto 0; z-index:10020; height:3px; background:transparent; pointer-events:none; }
         .reading-progress span { display:block; width:0; height:100%; background:var(--accent); transition:width .1s linear; }
-        body.reading-mode .sidebar { transform:translateX(-105%); }
-        body.reading-mode .content-area { width:100%; }
-        body.reading-mode .content-body { padding-inline:max(20px,calc((100vw - 82ch)/2)); }
+        @media (min-width: 769px) {
+            body.sidebar-collapsed:not(.content-first) .sidebar {
+                width: 0;
+                min-width: 0;
+                border-right: 0;
+            }
+        }
+        body.content-first .sidebar-collapse-action { display:none; }
         #contentTitle {
             min-width: 0;
             overflow: hidden;
@@ -4495,6 +4500,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         body.content-first.sidebar-open .sidebar-backdrop { display: block; }
         body.content-first .mobile-nav-toggle { display: inline-flex; align-items: center; }
         @media (max-width: 768px) {
+            .sidebar-collapse-action { display:none; }
             .sidebar {
                 position: fixed;
                 inset: 0 auto 0 0;
@@ -4534,16 +4540,6 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             .sidebar { transition: none; }
             .reading-progress span { transition:none; }
         }
-        @media print {
-            @page { size:auto; margin:16mm 14mm; }
-            .sidebar, .sidebar-backdrop, .content-header, .reading-progress, .image-viewer-overlay, .sora-method-debug-button, .sora-method-dialog-overlay, #soraExportToast { display:none !important; }
-            html, body, .app-container, .content-area, .content-body { display:block !important; width:auto !important; height:auto !important; min-height:0 !important; overflow:visible !important; background:#fff !important; color:#000 !important; }
-            .content-body { padding:0 !important; }
-            .content-body > * { max-width:none !important; }
-            pre, table, figure, blockquote { break-inside:avoid; }
-            h1, h2, h3, h4, h5, h6 { break-after:avoid; }
-            a { color:#000 !important; text-decoration:underline; }
-        }
     </style>
 </head>
 <body class="${publicationSettings.navigationMode === 'content-first' ? 'content-first' : ''}">
@@ -4574,8 +4570,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                     <summary>工具</summary>
                     <div class="reading-tools-menu">
                         <details class="content-outline" id="contentOutline"><summary>本页大纲</summary><div class="content-outline-menu" id="contentOutlineMenu"></div></details>
-                        <button type="button" id="readingModeBtn" aria-pressed="false">阅读模式</button>
-                        <button type="button" id="printPageBtn">打印</button>
+                        <button type="button" class="sidebar-collapse-action" id="sidebarCollapseBtn" aria-controls="exportSidebar" aria-expanded="true">收起目录</button>
                     </div>
                 </details>
             </div>
@@ -5102,19 +5097,14 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
 
         function initReadingTools() {
             const contentBody = document.getElementById('contentBody');
-            const readingButton = document.getElementById('readingModeBtn');
-            const printButton = document.getElementById('printPageBtn');
+            const sidebarCollapseButton = document.getElementById('sidebarCollapseBtn');
             const readingTools = document.getElementById('readingTools');
             if (contentBody) contentBody.addEventListener('scroll', updateReadingProgress, { passive: true });
-            if (readingButton) readingButton.addEventListener('click', function() {
-                const active = document.body.classList.toggle('reading-mode');
-                readingButton.setAttribute('aria-pressed', active ? 'true' : 'false');
-                readingButton.textContent = active ? '退出阅读' : '阅读模式';
+            if (sidebarCollapseButton) sidebarCollapseButton.addEventListener('click', function() {
+                const collapsed = document.body.classList.toggle('sidebar-collapsed');
+                sidebarCollapseButton.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+                sidebarCollapseButton.textContent = collapsed ? '展开目录' : '收起目录';
                 if (readingTools) readingTools.open = false;
-            });
-            if (printButton) printButton.addEventListener('click', function() {
-                if (readingTools) readingTools.open = false;
-                window.print();
             });
         }
 

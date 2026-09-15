@@ -90,7 +90,8 @@ if (changeMuluColor) {
         if (!target) return;
         const color = await colorPickerDialog(
             getDirectoryLevelBackground(target.level),
-            `修改${getDirectoryLevelDisplayName(target.level)}背景色`
+            `修改${getDirectoryLevelDisplayName(target.level)}背景色`,
+            'background'
         );
         if (!color || !setDirectoryLevelColor(target.level, color)) return;
         markDirectoryStructureChanged();

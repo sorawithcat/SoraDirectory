@@ -379,10 +379,18 @@
         input.addEventListener('blur', () => {
             blurTimer = setTimeout(() => {
                 blurTimer = null;
+                if (wrapper.contains(document.activeElement)) return;
                 setOpen(false);
             }, 120);
         });
         scopeSelect.addEventListener('mousedown', event => event.stopPropagation());
+        scopeSelect.addEventListener('focus', () => {
+            if (blurTimer) {
+                clearTimeout(blurTimer);
+                blurTimer = null;
+            }
+            setOpen(true);
+        });
         scopeSelect.addEventListener('change', () => {
             scope = scopeSelect.value;
             render();
