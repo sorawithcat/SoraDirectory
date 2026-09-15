@@ -425,12 +425,12 @@ if (saveAsBtn) {
             }
             let password = null;
             if (encrypt === 'yes') {
-                password = await customPrompt('设置加密密码：', '', '加密保存');
+                password = await customPasswordPrompt('设置加密密码：', '加密保存', 'new-password');
                 if (!password) {
                     showToast('已取消', 'info', 2000);
                     return;
                 }
-                const confirmPassword = await customPrompt('确认密码：', '', '加密保存');
+                const confirmPassword = await customPasswordPrompt('确认密码：', '加密保存', 'new-password');
                 if (confirmPassword !== password) {
                     customAlert('两次输入的密码不一致');
                     return;

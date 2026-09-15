@@ -644,9 +644,9 @@ async function handleSaveAsSoraPackage(customName = null, exportData = null, exp
         }
     }
     if (encrypt && !password) {
-        password = await customPrompt('设置 .sora 加密密码：', '', '加密 .sora');
+        password = await customPasswordPrompt('设置 .sora 加密密码：', '加密 .sora', 'new-password');
         if (!password) return false;
-        const confirmedPassword = await customPrompt('确认密码：', '', '加密 .sora');
+        const confirmedPassword = await customPasswordPrompt('确认密码：', '加密 .sora', 'new-password');
         if (confirmedPassword !== password) {
             await customAlert('两次输入的密码不一致', '加密 .sora');
             return false;
@@ -843,7 +843,7 @@ async function prepareSoraPackageForOpen(file) {
         return { file, cleanup: null, encrypted: false };
     }
     for (let attempt = 1; attempt <= 3; attempt++) {
-        const password = await customPrompt('输入 .sora 解密密码：', '', '解密 .sora');
+        const password = await customPasswordPrompt('输入 .sora 解密密码：', '解密 .sora');
         if (password === null) return null;
         if (!password) {
             showToast('请输入密码', 'warning', 1500);
@@ -1496,9 +1496,8 @@ async function parseEncryptedContent(content) {
     const encryptedData = content.substring(ENCRYPTED_FILE_HEADER.length + 1);
     // 最多尝试 3 次
     for (let attempt = 0; attempt < 3; attempt++) {
-        const password = await customPrompt(
+        const password = await customPasswordPrompt(
             attempt === 0 ? '此文件已加密，请输入密码：' : '密码错误，请重试：',
-            '',
             '解密文件'
         );
         if (password === null) {
@@ -1547,13 +1546,13 @@ async function saveEncryptedFile(data, filename, password) {
  */
 async function handleSaveEncrypted() {
     // 输入密码
-    const password = await customPrompt('设置加密密码：', '', '加密保存');
+    const password = await customPasswordPrompt('设置加密密码：', '加密保存', 'new-password');
     if (!password) {
         showToast('已取消', 'info', 2000);
         return;
     }
     // 确认密码
-    const confirmPassword = await customPrompt('确认密码：', '', '加密保存');
+    const confirmPassword = await customPasswordPrompt('确认密码：', '加密保存', 'new-password');
     if (confirmPassword !== password) {
         customAlert('两次输入的密码不一致');
         return;
@@ -1575,13 +1574,13 @@ async function handleSaveEncrypted() {
  */
 async function handleSaveEncryptedWebpage() {
     // 输入密码
-    const password = await customPrompt('设置加密密码：', '', '加密导出');
+    const password = await customPasswordPrompt('设置加密密码：', '加密导出', 'new-password');
     if (!password) {
         showToast('已取消', 'info', 2000);
         return;
     }
     // 确认密码
-    const confirmPassword = await customPrompt('确认密码：', '', '加密导出');
+    const confirmPassword = await customPasswordPrompt('确认密码：', '加密导出', 'new-password');
     if (confirmPassword !== password) {
         customAlert('两次输入的密码不一致');
         return;
@@ -1947,12 +1946,12 @@ async function handleSave() {
     // 3. 如果选择加密，获取密码
     let password = null;
     if (encrypt === 'yes') {
-        password = await customPrompt('设置加密密码：', '', '加密保存');
+        password = await customPasswordPrompt('设置加密密码：', '加密保存', 'new-password');
         if (!password) {
             showToast('已取消', 'info', 2000);
             return;
         }
-        const confirmPassword = await customPrompt('确认密码：', '', '加密保存');
+        const confirmPassword = await customPasswordPrompt('确认密码：', '加密保存', 'new-password');
         if (confirmPassword !== password) {
             customAlert('两次输入的密码不一致');
             return;
@@ -2100,12 +2099,12 @@ async function handleSaveFallback() {
     // 3. 如果选择加密，获取密码
     let password = null;
     if (encrypt === 'yes') {
-        password = await customPrompt('设置加密密码：', '', '加密保存');
+        password = await customPasswordPrompt('设置加密密码：', '加密保存', 'new-password');
         if (!password) {
             showToast('已取消', 'info', 2000);
             return;
         }
-        const confirmPassword = await customPrompt('确认密码：', '', '加密保存');
+        const confirmPassword = await customPasswordPrompt('确认密码：', '加密保存', 'new-password');
         if (confirmPassword !== password) {
             customAlert('两次输入的密码不一致');
             return;
@@ -3361,12 +3360,12 @@ async function handleSaveAsEncrypted(customName, password, exportData = null) {
 async function handleSaveAsWebpage(encrypt = false, password = null, exportData = null, exportScope = null) {
     // 如果需要加密但没有密码，询问用户
     if (encrypt && !password) {
-        password = await customPrompt('设置加密密码：', '', '加密导出');
+        password = await customPasswordPrompt('设置加密密码：', '加密导出', 'new-password');
         if (!password) {
             showToast('已取消', 'info', 2000);
             return;
         }
-        const confirmPassword = await customPrompt('确认密码：', '', '加密导出');
+        const confirmPassword = await customPasswordPrompt('确认密码：', '加密导出', 'new-password');
         if (confirmPassword !== password) {
             customAlert('两次输入的密码不一致');
             return;

@@ -152,12 +152,19 @@ function customConfirm(message, okText = '确定', cancelText = '取消', title 
  * @param {string} message - 显示的提示消息
  * @param {string} defaultValue - 输入框的默认值
  * @param {string} title - 对话框标题，默认为"输入"
+ * @param {{type?: 'text'|'password', autocomplete?: string}} inputOptions - 输入类型与自动填充设置
  * @returns {Promise<string|null>} - 用户点击确定返回输入值，取消返回 null
  */
-function customPrompt(message, defaultValue = '', title = '输入') {
+function customPrompt(message, defaultValue = '', title = '输入', inputOptions = {}) {
     return new Promise((resolve) => {
+        const inputType = inputOptions.type === 'password' ? 'password' : 'text';
         customDialogTitle.textContent = title;
         customDialogMessage.textContent = message;
+        customDialogInput.type = inputType;
+        customDialogInput.autocomplete = inputOptions.autocomplete || (inputType === 'password' ? 'current-password' : 'off');
+        customDialogInput.spellcheck = inputType !== 'password';
+        customDialogInput.autocapitalize = inputType === 'password' ? 'none' : 'sentences';
+        customDialogInput.setAttribute('aria-label', message.replace(/：$/, ''));
         customDialogInput.style.display = 'block';
         customDialogInput.value = defaultValue;
         customDialogInput.placeholder = defaultValue;
@@ -190,8 +197,16 @@ function customPrompt(message, defaultValue = '', title = '输入') {
             if (e.target === customDialogOverlay) closeDialog(null);
         };
         activateCustomDialog();
-        setTimeout(() => customDialogInput.focus(), 100);
+        setTimeout(() => {
+            customDialogInput.focus();
+            const cursorPosition = customDialogInput.value.length;
+            customDialogInput.setSelectionRange(cursorPosition, cursorPosition);
+        }, 100);
     });
+}
+
+function customPasswordPrompt(message, title = '输入密码', autocomplete = 'current-password') {
+    return customPrompt(message, '', title, { type: 'password', autocomplete });
 }
 /**
  * 自定义下拉选择对话框

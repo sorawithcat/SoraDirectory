@@ -54,6 +54,20 @@
                 check(Boolean(loadedAssetVersion) && loadedScripts.length > 20 && loadedScripts.every(script => new URL(script.src).searchParams.get('v') === loadedAssetVersion), '所有编辑器脚本使用本次刷新的统一版本参数');
                 check(new URL(versionedStyle?.href || location.href).searchParams.get('v') === loadedAssetVersion, '设计系统样式使用本次刷新的版本参数');
 
+                const passwordPrompt = win.customPasswordPrompt('设置测试密码：', '加密保存', 'new-password');
+                await poll(() => win.document.getElementById('customDialogOverlay')?.classList.contains('active'));
+                const passwordInput = win.document.getElementById('customDialogInput');
+                check(passwordInput.type === 'password' && passwordInput.autocomplete === 'new-password', '加密密码使用专用密码输入框');
+                const passwordInputStyle = getComputedStyle(passwordInput);
+                check(passwordInputStyle.cursor === 'text' && passwordInputStyle.caretColor !== 'rgba(0, 0, 0, 0)', '密码输入框保持可见文本光标');
+                win.document.getElementById('customDialogCancel').click();
+                await passwordPrompt;
+                const textPrompt = win.customPrompt('输入测试文件名', 'example.sora');
+                await poll(() => win.document.getElementById('customDialogOverlay')?.classList.contains('active'));
+                check(passwordInput.type === 'text' && passwordInput.autocomplete === 'off', '密码输入状态不会串到普通输入框');
+                win.document.getElementById('customDialogCancel').click();
+                await textPrompt;
+
                 const longBody = `<h2 id="intro">开始</h2>${'<p>用于验证目录滚动恢复的长段落。</p>'.repeat(180)}<a href="#" data-sora-link="method" data-sora-methods='[{"methodId":"e2e_method","methodType":"show_message","trigger":"click","message":"ok"}]'>测试方法</a>`;
                 const data = [['mulu', '首页', 'e2e_root', longBody], ['mulu', '第二页', 'e2e_second', '<h2>第二页</h2><p>内容</p>']];
                 win.eval(`mulufile = ${JSON.stringify(data)}; rebuildMulufileIndex(); currentMuluName = null; LoadMulu();`);
