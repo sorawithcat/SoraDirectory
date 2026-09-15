@@ -212,6 +212,18 @@
                 const mediaBlob = await win.MediaStorage.getChunkedBlob(mediaId);
                 check(Boolean(mediaId && mediaBlob && mediaBlob.size), '媒体写入与读取');
                 check(duplicateMediaId === mediaId, '相同图片导入复用同一媒体资源');
+                await win.MediaManager.open();
+                const libraryPreview = await poll(() => win.document.querySelector(`img[data-media-preview-id="${CSS.escape(mediaId)}"]`));
+                libraryPreview.scrollIntoView({ block: 'center' });
+                await poll(() => libraryPreview.src.startsWith('blob:'));
+                const libraryPreviewUrl = libraryPreview.src;
+                const sharedMediaUrl = await win.MediaStorage.getMediaAsUrl(mediaId);
+                win.FeatureDialog.close();
+                const [previewUrlState, sharedUrlState] = await Promise.all([
+                    fetch(libraryPreviewUrl).then(() => 'available').catch(() => 'revoked'),
+                    fetch(sharedMediaUrl).then(response => response.ok && response.blob()).then(blob => blob && blob.size ? 'available' : 'invalid').catch(() => 'revoked')
+                ]);
+                check(previewUrlState === 'revoked' && sharedUrlState === 'available', '关闭媒体库只释放缩略图地址，不破坏正文媒体地址');
 
                 const currentData = win.eval('mulufile.map(row => row.slice())');
                 const packageBlob = await win.buildSoraPackageBlob(currentData);

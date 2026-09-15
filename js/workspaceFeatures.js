@@ -1215,14 +1215,20 @@ const MediaManager = (function() {
                 if (!img || img.dataset.mediaPreviewLoaded === 'true' || previewsClosed) return;
                 img.dataset.mediaPreviewLoaded = 'true';
                 try {
-                    const url = await MediaStorage.getMediaAsUrl(img.dataset.mediaPreviewId);
+                    const previewBlob = typeof MediaStorage.getChunkedBlob === 'function'
+                        ? await MediaStorage.getChunkedBlob(img.dataset.mediaPreviewId)
+                        : null;
+                    const ownsPreviewUrl = !!previewBlob;
+                    const url = previewBlob
+                        ? URL.createObjectURL(previewBlob)
+                        : await MediaStorage.getMediaAsUrl(img.dataset.mediaPreviewId);
                     if (!url) return;
                     if (previewsClosed || !img.isConnected) {
-                        if (url.startsWith('blob:')) URL.revokeObjectURL(url);
+                        if (ownsPreviewUrl && url.startsWith('blob:')) URL.revokeObjectURL(url);
                         return;
                     }
                     img.src = url;
-                    if (url.startsWith('blob:')) previewUrls.add(url);
+                    if (ownsPreviewUrl && url.startsWith('blob:')) previewUrls.add(url);
                 } catch (_) {
                     delete img.dataset.mediaPreviewLoaded;
                 }
