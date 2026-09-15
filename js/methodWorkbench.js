@@ -33,17 +33,15 @@ const SoraMethodWorkbench = (function() {
             .method-workbench-actions button:hover, .method-workbench-btn:hover { border-color:#2563eb; color:#1d4ed8; }
             .method-workbench-danger { color:#b91c1c; }
             .method-workbench-empty { padding:26px; border:1px dashed #cbd5e1; border-radius:8px; text-align:center; color:#64748b; }
-            .method-test-layout { display:grid; grid-template-columns:minmax(0,1fr) minmax(240px,.7fr); gap:12px; }
-            .method-test-panel { border:1px solid #dbe3ee; border-radius:8px; padding:12px; background:#f8fafc; }
-            .method-test-panel h3 { margin:0 0 8px; font-size:15px; }
-            .method-test-target { min-height:100px; padding:10px; border:1px solid #cbd5e1; border-radius:6px; background:#fff; overflow:auto; }
-            .method-test-log { margin:0; padding-left:20px; color:#334155; }
+            .method-info-panel { border:1px solid #dbe3ee; border-radius:8px; padding:12px; background:#f8fafc; }
+            .method-info-panel h3 { margin:0 0 8px; font-size:15px; }
+            .method-flow-log { margin:0; padding-left:20px; color:#334155; }
             .method-preset-list { display:grid; gap:8px; margin-top:12px; }
             .method-preset-row { display:flex; align-items:center; justify-content:space-between; gap:10px; border:1px solid #e2e8f0; border-radius:7px; padding:9px; }
             @media(max-width:720px) {
                 .method-workbench-toolbar { grid-template-columns:1fr 1fr; }
                 .method-workbench-toolbar input { grid-column:1 / -1; }
-                .method-workbench-main, .method-test-layout { display:block; }
+                .method-workbench-main { display:block; }
                 .method-workbench-actions { justify-content:flex-start; margin-top:9px; }
             }
         `;
@@ -272,100 +270,12 @@ const SoraMethodWorkbench = (function() {
         FeatureDialog.open('方法关系', wrapper);
     }
 
-    function simulate(config, container, log) {
-        const index = window.SoraReferencePicker && window.SoraReferencePicker.buildIndex();
-        const target = index && window.SoraReferencePicker.resolve(config.frontAnchor, index, window.SoraReferencePicker.getCurrentDirectoryId());
-        let content = '';
-        if (target && target.directory) {
-            const row = typeof getMulufileByDirId === 'function' ? getMulufileByDirId(target.directory.id) : null;
-            content = row ? String(row[3] || '') : '';
-        }
-        container.innerHTML = content || '<p>此方法不依赖内容目标，沙盒将只验证配置和流程。</p>';
-        const core = window.SoraMethodRuntimeCore;
-        const conditionsMet = core ? core.evaluateConditions(config, condition => {
-            if (condition.type === 'current_dir') return window.SoraReferencePicker?.getCurrentDirectoryId() || '';
-            if (condition.type === 'visible') return !container.hidden;
-            if (condition.type === 'execution_count') return 0;
-            return condition.value;
-        }) : true;
-        if (!conditionsMet) {
-            log.push('条件未满足，主动作未执行');
-            return;
-        }
-        const handlerMap = registry() ? registry().getRuntimeHandlerMap() : {};
-        const result = core ? core.dispatchAction(config, handlerMap, handler => {
-            if (handler === 'visibility_hide' || handler === 'visibility_hide_initially_visible') container.hidden = true;
-            else if (handler === 'visibility_show') container.hidden = false;
-            else if (handler === 'visibility_toggle') container.hidden = !container.hidden;
-            else if (handler === 'clear_range' || handler === 'delete_range') container.innerHTML = '';
-            else if (handler === 'insert_content' && config.contentSourceType !== 'reference') container.insertAdjacentHTML(config.insertPosition === 'before' ? 'afterbegin' : 'beforeend', escapeHtml(config.contentText || ''));
-            else if (handler === 'change_content' && config.replaceText) container.textContent = config.replaceText;
-            else if (handler === 'class_control') container.classList.toggle(`sora-style-${config.classToken || 'accent'}`);
-            else if (handler === 'component') container.dataset.soraSandboxComponent = config.componentType || 'collapse';
-            return true;
-        }) : { ok: false, reason: '共享执行核心不可用' };
-        log.push(result.ok ? `已通过共享执行核心模拟“${config.methodType}”` : `动作未执行：${result.reason || '不支持'}`);
-        if (config.conditions && config.conditions.length) log.push(`已由共享执行核心计算 ${config.conditions.length} 个条件`);
-        if (config.delayMs) log.push(`正式执行会延迟 ${config.delayMs} 毫秒`);
-    }
-
-    function test(config) {
-        injectStyles();
-        const steps = window.SoraMethodRuntimeCore ? window.SoraMethodRuntimeCore.flattenFlow(config) : [{ method: config, branch: 'main', depth: 0 }];
-        const wrapper = document.createElement('div');
-        wrapper.className = 'method-test-layout';
-        wrapper.innerHTML = `
-            <section class="method-test-panel"><h3>隔离内容副本</h3><div class="method-test-target" data-target></div></section>
-            <section class="method-test-panel"><h3>执行记录</h3><p class="method-workbench-meta">暂停和单步只作用于此隔离沙盒，不会进入发布网页。</p><ol class="method-test-log" data-log></ol><div class="method-workbench-actions" style="margin-top:12px"><button type="button" data-run>运行全部</button><button type="button" data-step>单步</button><button type="button" data-reset>重置沙盒</button></div></section>`;
-        let stepIndex = 0;
-        const messages = [];
-        const reset = () => {
-            const target = wrapper.querySelector('[data-target]');
-            target.hidden = false;
-            target.removeAttribute('data-sora-sandbox-component');
-            messages.length = 0;
-            stepIndex = 0;
-            containerReset(target);
-            wrapper.querySelector('[data-log]').innerHTML = messages.map(message => `<li>${escapeHtml(message)}</li>`).join('');
-        };
-        const renderLog = () => {
-            wrapper.querySelector('[data-log]').innerHTML = messages.map(message => `<li>${escapeHtml(message)}</li>`).join('');
-        };
-        const runStep = () => {
-            if (stepIndex >= steps.length) {
-                messages.push('流程已完成');
-                renderLog();
-                return;
-            }
-            const step = steps[stepIndex++];
-            messages.push(`步骤 ${stepIndex}/${steps.length} · ${step.branch}`);
-            simulate(clone(step.method), wrapper.querySelector('[data-target]'), messages);
-            renderLog();
-        };
-        const runAll = () => { while (stepIndex < steps.length) runStep(); };
-        function containerReset(target) {
-            target.innerHTML = content || '<p>此方法不依赖内容目标，沙盒将只验证配置和流程。</p>';
-        }
-        const index = window.SoraReferencePicker && window.SoraReferencePicker.buildIndex();
-        const resolved = index && window.SoraReferencePicker.resolve(config.frontAnchor, index, window.SoraReferencePicker.getCurrentDirectoryId());
-        let content = '';
-        if (resolved && resolved.directory) {
-            const row = typeof getMulufileByDirId === 'function' ? getMulufileByDirId(resolved.directory.id) : null;
-            content = row ? String(row[3] || '') : '';
-        }
-        wrapper.querySelector('[data-run]').addEventListener('click', runAll);
-        wrapper.querySelector('[data-step]').addEventListener('click', runStep);
-        wrapper.querySelector('[data-reset]').addEventListener('click', reset);
-        reset();
-        FeatureDialog.open('方法沙盒测试', wrapper);
-    }
-
     function showFlow(config) {
         const core = window.SoraMethodRuntimeCore;
         const steps = core ? core.flattenFlow(config) : [{ method: config, branch: 'main', depth: 0, trigger: config.trigger || 'click', type: config.methodType || '未知动作' }];
         const branchNames = { main: '主流程', nested: '嵌套', fallback: '失败备用', confirm: '确认分支', cancel: '取消分支' };
         const wrapper = document.createElement('div');
-        wrapper.innerHTML = `<p class="method-workbench-meta">按实际嵌套顺序展示；运行耗时和结果请在测试沙盒或完整互动导出的诊断时间线中查看。</p><ol class="method-test-log">${steps.map((step, index) => `<li style="margin-left:${Math.min(4, step.depth) * 18}px"><strong>${index + 1}. ${escapeHtml(step.type)}</strong><br><small>${escapeHtml(branchNames[step.branch] || step.branch)} · ${escapeHtml(step.trigger || 'click')} · ${escapeHtml(step.methodId || '未保存 ID')}</small></li>`).join('')}</ol>`;
+        wrapper.innerHTML = `<p class="method-workbench-meta">按实际嵌套顺序展示配置；运行耗时和结果可在完整互动导出的诊断时间线中查看。</p><ol class="method-flow-log">${steps.map((step, index) => `<li style="margin-left:${Math.min(4, step.depth) * 18}px"><strong>${index + 1}. ${escapeHtml(step.type)}</strong><br><small>${escapeHtml(branchNames[step.branch] || step.branch)} · ${escapeHtml(step.trigger || 'click')} · ${escapeHtml(step.methodId || '未保存 ID')}</small></li>`).join('')}</ol>`;
         FeatureDialog.open('方法流程视图', wrapper);
     }
 
@@ -405,7 +315,7 @@ const SoraMethodWorkbench = (function() {
                     <div class="method-workbench-main"><div><div class="method-workbench-title">${escapeHtml(registry() ? registry().summarize(entry.method) : entry.method.methodType)}</div>
                     <div class="method-workbench-meta">${escapeHtml(entry.dirName)} · 显示为“${escapeHtml(entry.displayText)}” · ${escapeHtml(entry.method.methodId || '无 ID')}</div></div>
                     <div class="method-workbench-actions">
-                        <button type="button" data-action-name="locate">定位</button><button type="button" data-action-name="test">测试</button><button type="button" data-action-name="flow">流程</button><button type="button" data-action-name="relations">关系</button>
+                        <button type="button" data-action-name="locate">定位</button><button type="button" data-action-name="flow">流程</button><button type="button" data-action-name="relations">关系</button>
                         <button type="button" data-action-name="toggle">${entry.method.enabled === false ? '启用' : '禁用'}</button><button type="button" data-action-name="copy">复制</button><button type="button" data-action-name="edit">编辑</button><button type="button" class="method-workbench-danger" data-action-name="delete">删除</button>
                     </div></div>
                 </article>`).join('');
@@ -416,7 +326,6 @@ const SoraMethodWorkbench = (function() {
                 const entry = filtered[Number(card.dataset.visibleIndex)];
                 const name = button.dataset.actionName;
                 if (name === 'locate') return locateEntry(entry);
-                if (name === 'test') return test(entry.method);
                 if (name === 'flow') return showFlow(entry.method);
                 if (name === 'relations') return showRelations(entry.method.methodId);
                 if (name === 'edit') {
@@ -453,7 +362,7 @@ const SoraMethodWorkbench = (function() {
             render();
         });
         render();
-        FeatureDialog.open('方法管理与调试', wrapper);
+        FeatureDialog.open('方法管理', wrapper);
     }
 
     function init() {
@@ -465,7 +374,7 @@ const SoraMethodWorkbench = (function() {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
     else init();
 
-    return { collectEntries, test, savePreset, choosePreset, showRelations, openManager, migrateStoredMethods };
+    return { collectEntries, savePreset, choosePreset, showRelations, openManager, migrateStoredMethods };
 })();
 
 window.SoraMethodWorkbench = SoraMethodWorkbench;

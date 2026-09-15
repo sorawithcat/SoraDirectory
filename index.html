@@ -4,6 +4,9 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <title>SoraList</title>
     <style>
         :root {
@@ -2421,7 +2424,14 @@
             }
         }
     </style>
-    <link rel="stylesheet" href="css/design-system.css?v=20260915-design-tokens-1">
+    <script>
+        window.SORA_ASSET_VERSION = Date.now().toString(36);
+        const soraDesignSystem = document.createElement('link');
+        soraDesignSystem.rel = 'stylesheet';
+        soraDesignSystem.href = `css/design-system.css?v=${window.SORA_ASSET_VERSION}`;
+        soraDesignSystem.dataset.soraVersionedAsset = 'true';
+        document.head.appendChild(soraDesignSystem);
+    </script>
 </head>
 <body>
 
@@ -2493,7 +2503,7 @@
             <button class="top-toolbar-btn" id="globalCommandBtn" title="全局搜索与命令 (Ctrl+K)">全局搜索</button>
             <button class="top-toolbar-btn" id="replaceBtn" title="替换 (Ctrl+H)">替换</button>
             <button class="top-toolbar-btn" id="mediaManagerBtn" title="查看媒体引用和孤立资源">媒体库</button>
-            <button class="top-toolbar-btn" id="methodManagerBtn" title="集中管理、测试和检查方法">方法管理</button>
+            <button class="top-toolbar-btn" id="methodManagerBtn" title="集中管理和检查方法">方法管理</button>
             <button class="top-toolbar-btn" id="referenceGraphBtn" title="查看目录入链、出链和循环">关系</button>
             <button class="top-toolbar-btn" id="directoryMetadataBtn" title="编辑目录标签、状态和自定义字段">字段</button>
             <button class="top-toolbar-btn" id="issueCenterBtn" title="查看目录、链接、锚点、方法和媒体问题">问题 <span id="issueCountBadge"></span></button>
@@ -2700,11 +2710,10 @@
     </div>
     
     
-    <script src="js/scriptLoader.js?v=20260709-partial-fast-save"></script>
     <script>
         (async function() {
             const bootStatus = document.getElementById('bootStatus');
-            const assetVersion = '20260915-export-ui-restore-1';
+            const assetVersion = window.SORA_ASSET_VERSION || Date.now().toString(36);
             const runtimeErrors = [];
             const captureRuntimeError = event => {
                 const source = String(event.filename || '');
@@ -2714,6 +2723,15 @@
             };
             window.addEventListener('error', captureRuntimeError);
             const versionScript = src => src + (src.includes('?') ? '&' : '?') + 'v=' + assetVersion;
+            const loadBootstrapScript = src => new Promise((resolve, reject) => {
+                const script = document.createElement('script');
+                script.src = src;
+                script.async = false;
+                script.dataset.soraScript = src;
+                script.onload = resolve;
+                script.onerror = () => reject(new Error(`加载启动模块失败: ${src}`));
+                document.head.appendChild(script);
+            });
             function setBootStatus(message, isError) {
                 if (!bootStatus) return;
                 if (!message) {
@@ -2772,6 +2790,8 @@
             const mainScriptUrl = versionScript(mainScript);
             
             try {
+                setBootStatus('正在加载启动模块...');
+                await loadBootstrapScript(versionScript('js/scriptLoader.js'));
                 ScriptLoader.preloadScripts(coreScriptUrls.concat(featureScriptUrls, [mainScriptUrl]));
 
                 setBootStatus('正在加载核心模块...');

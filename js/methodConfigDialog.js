@@ -194,7 +194,7 @@ function showMethodConfigDialog(existing, parentStack) {
                     <h4>条件与流程</h4>
                     <label class="method-checkbox-row">
                         <input type="checkbox" id="methodEnabled"${cfg.enabled === false ? '' : ' checked'} />
-                        <span><strong>启用此方法</strong><small>禁用后配置仍保留，但编辑器测试和导出网页都不会执行。</small></span>
+                        <span><strong>启用此方法</strong><small>禁用后配置仍保留，但导出网页不会执行。</small></span>
                     </label>
                     <div id="methodConditionsList" class="method-condition-list"></div>
                     <button type="button" id="addMethodConditionBtn" class="custom-dialog-btn custom-dialog-btn-secondary method-full-button">添加条件</button>
@@ -256,7 +256,6 @@ function showMethodConfigDialog(existing, parentStack) {
             </div>
         `;
         customDialogFooter.innerHTML =
-            '<button class="custom-dialog-btn custom-dialog-btn-secondary" id="methodTestBtn">测试</button>' +
             '<button class="custom-dialog-btn custom-dialog-btn-secondary" id="methodApplyPresetBtn">套用预设</button>' +
             '<button class="custom-dialog-btn custom-dialog-btn-secondary" id="methodPresetBtn">存为预设</button>' +
             '<button class="custom-dialog-btn custom-dialog-btn-secondary" id="methodRelationsBtn">关系</button>' +
@@ -264,6 +263,14 @@ function showMethodConfigDialog(existing, parentStack) {
             '<button class="custom-dialog-btn custom-dialog-btn-primary" id="customDialogOk">保存方法</button>';
 
         const byId = id => document.getElementById(id);
+        const hideMethodDialogOverlay = () => {
+            customDialogOverlay.classList.remove('active');
+            customDialogOverlay.setAttribute('aria-hidden', 'true');
+        };
+        const showMethodDialogOverlay = () => {
+            customDialogOverlay.setAttribute('aria-hidden', 'false');
+            customDialogOverlay.classList.add('active');
+        };
         const triggerSelect = byId('methodTrigger');
         const triggerFields = byId('triggerFields');
         const triggerDynamicFields = byId('triggerDynamicFields');
@@ -894,7 +901,7 @@ function showMethodConfigDialog(existing, parentStack) {
         addNestedMethodBtn.addEventListener('click', async () => {
             const currentFormData = collectCurrentFormData();
             const newParentStack = [...currentParentStack, currentFormData];
-            customDialogOverlay.classList.remove('active');
+            hideMethodDialogOverlay();
             const nestedMethod = await showMethodConfigDialog(null, newParentStack);
             if (nestedMethod) currentFormData.formatMethods.push(nestedMethod);
             const result = await showMethodConfigDialog(currentFormData, currentParentStack);
@@ -904,7 +911,7 @@ function showMethodConfigDialog(existing, parentStack) {
         addFallbackMethodBtn.addEventListener('click', async () => {
             const currentFormData = collectCurrentFormData();
             const newParentStack = [...currentParentStack, currentFormData];
-            customDialogOverlay.classList.remove('active');
+            hideMethodDialogOverlay();
             const fallbackMethod = await showMethodConfigDialog(null, newParentStack);
             if (fallbackMethod) currentFormData.elseMethods.push(fallbackMethod);
             const result = await showMethodConfigDialog(currentFormData, currentParentStack);
@@ -935,7 +942,7 @@ function showMethodConfigDialog(existing, parentStack) {
             }
             const currentFormData = collectCurrentFormData();
             const newParentStack = [...currentParentStack, currentFormData];
-            customDialogOverlay.classList.remove('active');
+            hideMethodDialogOverlay();
             const updated = await showMethodConfigDialog(fallbackMethods[index], newParentStack);
             if (updated) currentFormData.elseMethods[index] = updated;
             const result = await showMethodConfigDialog(currentFormData, currentParentStack);
@@ -945,7 +952,7 @@ function showMethodConfigDialog(existing, parentStack) {
         const addBranchMethod = async branch => {
             const currentFormData = collectCurrentFormData();
             const newParentStack = [...currentParentStack, currentFormData];
-            customDialogOverlay.classList.remove('active');
+            hideMethodDialogOverlay();
             const method = await showMethodConfigDialog(null, newParentStack);
             if (method) currentFormData[branch === 'confirm' ? 'confirmMethods' : 'cancelMethods'].push(method);
             const result = await showMethodConfigDialog(currentFormData, currentParentStack);
@@ -977,7 +984,7 @@ function showMethodConfigDialog(existing, parentStack) {
             }
             const currentFormData = collectCurrentFormData();
             const newParentStack = [...currentParentStack, currentFormData];
-            customDialogOverlay.classList.remove('active');
+            hideMethodDialogOverlay();
             const updated = await showMethodConfigDialog(methods[index], newParentStack);
             if (updated) currentFormData[branch === 'confirm' ? 'confirmMethods' : 'cancelMethods'][index] = updated;
             const result = await showMethodConfigDialog(currentFormData, currentParentStack);
@@ -1026,7 +1033,7 @@ function showMethodConfigDialog(existing, parentStack) {
                 if (!Number.isInteger(index) || index < 0 || index >= nestedMethods.length) return;
                 const currentFormData = collectCurrentFormData();
                 const newParentStack = [...currentParentStack, currentFormData];
-                customDialogOverlay.classList.remove('active');
+                hideMethodDialogOverlay();
                 const updated = await showMethodConfigDialog(nestedMethods[index], newParentStack);
                 if (updated) currentFormData.formatMethods[index] = updated;
                 const result = await showMethodConfigDialog(currentFormData, currentParentStack);
@@ -1043,7 +1050,7 @@ function showMethodConfigDialog(existing, parentStack) {
         const closeDialog = result => {
             pickerInstances.forEach(picker => picker && picker.destroy());
             destroyDynamicPickers();
-            customDialogOverlay.classList.remove('active');
+            hideMethodDialogOverlay();
             customDialogMessage.innerHTML = '';
             customDialog.style.maxWidth = '';
             customDialog.style.width = '';
@@ -1090,16 +1097,12 @@ function showMethodConfigDialog(existing, parentStack) {
         };
 
         const workbench = () => window.SoraMethodWorkbench;
-        byId('methodTestBtn').onclick = () => {
-            const validation = validateForm(true);
-            if (!validation.errors.length && workbench()) workbench().test(validation.data);
-        };
         byId('methodApplyPresetBtn').onclick = async () => {
             if (!workbench()) return;
             const currentData = collectCurrentFormData();
             pickerInstances.forEach(picker => picker && picker.destroy());
             destroyDynamicPickers();
-            customDialogOverlay.classList.remove('active');
+            hideMethodDialogOverlay();
             customDialogMessage.innerHTML = '';
             customDialog.style.maxWidth = '';
             customDialog.style.width = '';
@@ -1127,7 +1130,7 @@ function showMethodConfigDialog(existing, parentStack) {
         customDialog.style.width = 'min(94vw, 760px)';
         const dialogBody = document.getElementById('customDialogBody');
         if (dialogBody) dialogBody.scrollTop = 0;
-        customDialogOverlay.classList.add('active');
+        showMethodDialogOverlay();
         setTimeout(() => frontAnchorInput.focus(), 100);
     });
 }

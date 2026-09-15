@@ -3,6 +3,7 @@ const FeatureDialog = (function() {
     let titleElement = null;
     let bodyElement = null;
     let returnFocus = null;
+    let coveredDialog = null;
 
     function ensure() {
         if (overlay) return;
@@ -19,6 +20,7 @@ const FeatureDialog = (function() {
             .workspace-nav-btn.workspace-nav-text { font-size: 12px; white-space: nowrap; }
             .workspace-nav-select { max-width: 150px; padding: 3px 6px; }
             .feature-dialog-overlay { position: fixed; inset: 0; z-index: 12000; display: none; align-items: center; justify-content: center; padding: 18px; background: rgba(15, 23, 42, 0.42); }
+            .feature-dialog-overlay.above-custom-dialog { z-index: 13500; }
             .feature-dialog-overlay.active { display: flex; }
             .feature-dialog, .feature-dialog * { box-sizing: border-box; }
             .feature-dialog { width: min(920px, 96vw); max-width: 100%; max-height: 88vh; display: flex; flex-direction: column; border: 1px solid #cbd5e1; border-radius: 10px; background: #fff; box-shadow: 0 18px 50px rgba(15, 23, 42, 0.28); overflow: hidden; }
@@ -127,6 +129,19 @@ const FeatureDialog = (function() {
             bodyElement.appendChild(content);
         }
         returnFocus = document.activeElement;
+        if (!overlay.classList.contains('active')) {
+            const activeCustomDialog = document.getElementById('customDialogOverlay');
+            if (activeCustomDialog?.classList.contains('active')) {
+                coveredDialog = {
+                    element: activeCustomDialog,
+                    ariaHidden: activeCustomDialog.getAttribute('aria-hidden'),
+                    hadInert: activeCustomDialog.hasAttribute('inert')
+                };
+                activeCustomDialog.setAttribute('aria-hidden', 'true');
+                activeCustomDialog.setAttribute('inert', '');
+                overlay.classList.add('above-custom-dialog');
+            }
+        }
         overlay.setAttribute('aria-hidden', 'false');
         overlay.classList.add('active');
         requestAnimationFrame(() => {
@@ -139,8 +154,16 @@ const FeatureDialog = (function() {
     function close() {
         if (!overlay) return;
         overlay.classList.remove('active');
+        overlay.classList.remove('above-custom-dialog');
         overlay.setAttribute('aria-hidden', 'true');
         if (bodyElement) bodyElement.innerHTML = '';
+        const covered = coveredDialog;
+        coveredDialog = null;
+        if (covered?.element?.isConnected) {
+            if (covered.ariaHidden === null) covered.element.removeAttribute('aria-hidden');
+            else covered.element.setAttribute('aria-hidden', covered.ariaHidden);
+            if (!covered.hadInert) covered.element.removeAttribute('inert');
+        }
         const target = returnFocus;
         returnFocus = null;
         if (target && target.isConnected && typeof target.focus === 'function') target.focus();

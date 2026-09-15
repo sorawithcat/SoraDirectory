@@ -111,7 +111,7 @@
 
     function open() {
         const wrapper = document.createElement('div');
-        wrapper.innerHTML = `<p>粘贴扩展包 JSON 后先检查权限与兼容性；只有受控方法预设、组件预设和样式令牌可以导入。</p><textarea class="form-control" rows="12" aria-label="扩展包 JSON"></textarea><pre class="method-test-panel" data-result>尚未检查。</pre><div class="method-workbench-actions"><button type="button" data-example>填入示例</button><button type="button" data-copy-installed>复制已安装清单</button><button type="button" data-inspect>检查</button><button type="button" data-install disabled>导入兼容项</button></div><h3>已安装扩展包</h3><div data-installed></div>`;
+        wrapper.innerHTML = `<p>粘贴扩展包 JSON 后先检查权限与兼容性；只有受控方法预设、组件预设和样式令牌可以导入。</p><textarea class="form-control" rows="12" aria-label="扩展包 JSON"></textarea><pre class="method-info-panel" data-result>尚未检查。</pre><div class="method-workbench-actions"><button type="button" data-example>填入示例</button><button type="button" data-copy-installed>复制已安装清单</button><button type="button" data-inspect>检查</button><button type="button" data-install disabled>导入兼容项</button></div><h3>已安装扩展包</h3><div data-installed></div>`;
         const textarea = wrapper.querySelector('textarea');
         const resultBox = wrapper.querySelector('[data-result]');
         const installButton = wrapper.querySelector('[data-install]');

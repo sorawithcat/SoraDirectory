@@ -48,6 +48,11 @@
                 win.addEventListener('unhandledrejection', event => runtimeErrors.push(event.reason?.message || String(event.reason)));
                 check(!win.document.getElementById('bootStatus')?.classList.contains('is-error'), '应用初始化无启动错误');
                 check(Boolean(win.SoraDiagnostics && win.SoraPerformance && win.SoraReusableBlocks && win.SoraComponentLibrary && win.SoraExtensionPacks && win.SoraKnowledgeBaseInterop), '扩展模块完整加载');
+                const loadedAssetVersion = win.SORA_ASSET_VERSION;
+                const loadedScripts = Array.from(win.document.scripts).filter(script => /(?:\/js\/|SoraDirectoryJS\.js)/.test(script.src));
+                const versionedStyle = win.document.querySelector('link[data-sora-versioned-asset="true"]');
+                check(Boolean(loadedAssetVersion) && loadedScripts.length > 20 && loadedScripts.every(script => new URL(script.src).searchParams.get('v') === loadedAssetVersion), '所有编辑器脚本使用本次刷新的统一版本参数');
+                check(new URL(versionedStyle?.href || location.href).searchParams.get('v') === loadedAssetVersion, '设计系统样式使用本次刷新的版本参数');
 
                 const longBody = `<h2 id="intro">开始</h2>${'<p>用于验证目录滚动恢复的长段落。</p>'.repeat(180)}<a href="#" data-sora-link="method" data-sora-methods='[{"methodId":"e2e_method","methodType":"show_message","trigger":"click","message":"ok"}]'>测试方法</a>`;
                 const data = [['mulu', '首页', 'e2e_root', longBody], ['mulu', '第二页', 'e2e_second', '<h2>第二页</h2><p>内容</p>']];
@@ -96,7 +101,23 @@
                 win.SoraMethodWorkbench.openManager();
                 await wait(50);
                 check(Array.from(win.document.querySelectorAll('[data-action-name="edit"]')).some(button => button.textContent.includes('编辑')), '方法管理显示编辑动作');
+                check(!win.document.querySelector('[data-action-name="test"]'), '方法管理不再显示测试入口');
                 win.FeatureDialog.close();
+                const methodConfigResult = win.showMethodConfigDialog(methodEntries[0].method);
+                await poll(() => win.document.getElementById('customDialogOverlay')?.classList.contains('active'));
+                check(!win.document.getElementById('methodTestBtn'), '方法配置弹窗不再显示测试入口');
+                win.document.getElementById('methodRelationsBtn').click();
+                await poll(() => win.document.querySelector('.feature-dialog-overlay')?.classList.contains('active'));
+                const methodFeatureOverlay = win.document.querySelector('.feature-dialog-overlay');
+                const methodCustomOverlay = win.document.getElementById('customDialogOverlay');
+                const methodFeatureLayer = Number(getComputedStyle(methodFeatureOverlay).zIndex);
+                const methodCustomLayer = Number(getComputedStyle(methodCustomOverlay).zIndex);
+                check(methodFeatureLayer > methodCustomLayer, '方法配置打开的新弹窗显示在前面', `${methodFeatureLayer}/${methodCustomLayer}`);
+                check(methodCustomOverlay.hasAttribute('inert') && methodCustomOverlay.getAttribute('aria-hidden') === 'true', '后层方法配置暂停交互');
+                win.FeatureDialog.close();
+                check(!methodCustomOverlay.hasAttribute('inert') && methodCustomOverlay.getAttribute('aria-hidden') === 'false', '关闭新弹窗后恢复方法配置');
+                win.document.getElementById('customDialogCancel').click();
+                await methodConfigResult;
 
                 win.FeatureDialog.open('层级回归', '用于验证嵌套反馈');
                 const nestedConfirm = win.customConfirm('确认框应显示在功能弹窗之上');
@@ -237,6 +258,12 @@
                 await win.MediaStorage.deleteMedia(mediaId);
                 localStorage.removeItem('sora_extension_packs_v1');
                 check(runtimeErrors.length === 0, '场景运行无未处理脚本错误', runtimeErrors.join('；'));
+                frame.src = `../index.html?test=asset-refresh-${viewport}-${Date.now()}`;
+                await poll(() => frame.contentWindow?.SoraMethodWorkbench && frame.contentWindow.SORA_ASSET_VERSION && frame.contentWindow.SORA_ASSET_VERSION !== loadedAssetVersion);
+                const refreshedWin = frame.contentWindow;
+                const refreshedVersion = refreshedWin.SORA_ASSET_VERSION;
+                const refreshedScripts = Array.from(refreshedWin.document.scripts).filter(script => /(?:\/js\/|SoraDirectoryJS\.js)/.test(script.src));
+                check(refreshedScripts.length > 20 && refreshedScripts.every(script => new URL(script.src).searchParams.get('v') === refreshedVersion), '刷新后全部脚本切换到新的统一版本参数');
             } catch (error) {
                 failures.push(`测试中断：${error.stack || error.message || error}`);
             }
