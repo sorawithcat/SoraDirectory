@@ -111,6 +111,16 @@ assert.ok(runtime.includes("element.setAttribute('rel', 'noopener noreferrer')")
 assert.ok(runtime.includes("['不安全的发布内容', issues.unsafeContent]"), 'unsafe content must block export preflight');
 assert.ok(runtime.includes('headingJumps: []'), 'heading hierarchy quality check missing');
 assert.ok(runtime.includes('missingAltText: []'), 'image alt text quality check missing');
+assert.ok(runtime.includes('mediaBudget: []'), 'single HTML media budget preflight missing');
+assert.ok(runtime.includes("['大媒体风险', issues.largeMediaRisks]"), 'large media risk preflight missing');
+assert.ok(runtime.includes('const mediaAssetMap = {}'), 'export unique media asset table missing');
+assert.ok(runtime.includes('id="mediaAssets"'), 'export media asset manifest missing');
+assert.ok(runtime.includes('MAX_CONCURRENT_IMAGE_LOADS = 2'), 'export image load concurrency guard missing');
+assert.ok(runtime.includes("SORA_ENCRYPTED_HTML_MAGIC = 'SORA_ENCRYPTED_HTML_V2'"), 'chunked encrypted HTML format missing');
+assert.ok(runtime.includes('writeEncryptedHtmlSource(baseName, encryptedHtmlSource'), 'encrypted HTML streaming writer missing');
+assert.equal(runtime.includes("encryptData(htmlParts.join('')"), false, 'encrypted HTML still joins the complete document in memory');
+assert.ok(media.includes('async function optimizeImageFile'), 'blob-based image optimization missing');
+assert.ok(read('js/videoStorage.js').includes("CONTENT_HASH_INDEX = 'contentHash'"), 'media content hash deduplication missing');
 assert.ok(runtime.includes('longParagraphs: []'), 'long paragraph quality check missing');
 assert.ok(runtime.includes('IntersectionObserver'), 'visible trigger contract missing');
 assert.ok(runtime.includes('entry.intersectionRatio >= threshold'), 'configured visible threshold contract missing');

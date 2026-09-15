@@ -137,6 +137,66 @@ function renderMediaImportQueue() {
         <div class="media-import-queue-actions">${mediaImportActive ? '<button type="button" data-cancel-import>取消剩余任务</button>' : ''}${failed ? '<button type="button" data-retry-import>重试失败项</button>' : ''}${!mediaImportActive ? '<button type="button" data-close-import>关闭</button>' : ''}</div>`;
 }
 
+function canvasToImageBlob(canvas, type, quality) {
+    return new Promise(resolve => canvas.toBlob(resolve, type, quality));
+}
+
+async function optimizeImageFile(file, options = {}) {
+    const config = { ...IMAGE_COMPRESS_CONFIG, ...options };
+    if (!file || !config.enabled || file.size < config.minSizeToCompress || /image\/(?:gif|svg\+xml)/i.test(file.type || '')) {
+        return file;
+    }
+    let source = null;
+    let sourceUrl = '';
+    try {
+        if (typeof createImageBitmap === 'function') {
+            source = await createImageBitmap(file, { imageOrientation: 'from-image' });
+        } else {
+            sourceUrl = URL.createObjectURL(file);
+            source = await new Promise((resolve, reject) => {
+                const image = new Image();
+                image.onload = () => resolve(image);
+                image.onerror = () => reject(new Error('图片解码失败'));
+                image.src = sourceUrl;
+            });
+        }
+        let width = source.width || source.naturalWidth;
+        let height = source.height || source.naturalHeight;
+        if (width > config.maxWidth || height > config.maxHeight) {
+            const ratio = Math.min(config.maxWidth / width, config.maxHeight / height);
+            width = Math.max(1, Math.round(width * ratio));
+            height = Math.max(1, Math.round(height * ratio));
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext('2d');
+        context.drawImage(source, 0, 0, width, height);
+        const candidates = [];
+        if (config.preferWebP) {
+            const webp = await canvasToImageBlob(canvas, 'image/webp', config.quality);
+            if (webp?.size && webp.type === 'image/webp') candidates.push(webp);
+        }
+        if (/image\/jpe?g/i.test(file.type || '')) {
+            const jpeg = await canvasToImageBlob(canvas, 'image/jpeg', config.quality);
+            if (jpeg?.size) candidates.push(jpeg);
+        } else if (/image\/png/i.test(file.type || '') && (width !== source.width || height !== source.height)) {
+            const png = await canvasToImageBlob(canvas, 'image/png');
+            if (png?.size) candidates.push(png);
+        }
+        const best = candidates.reduce((smallest, candidate) => !smallest || candidate.size < smallest.size ? candidate : smallest, null);
+        if (!best || best.size >= file.size) return file;
+        window.SoraDiagnostics?.info('图片文件优化完成', `${(file.size / 1024).toFixed(1)}KB → ${(best.size / 1024).toFixed(1)}KB`);
+        return best;
+    } catch (error) {
+        console.warn('图片文件优化失败，保留原图:', error);
+        return file;
+    } finally {
+        if (source && typeof source.close === 'function') source.close();
+        if (sourceUrl) URL.revokeObjectURL(sourceUrl);
+    }
+}
+
 function isSupportedImageFile(file) {
     return !!file && (file.type.startsWith('image/') || MEDIA_IMAGE_EXT_RE.test(file.name || ''));
 }
@@ -216,6 +276,8 @@ function wrapMediaWithCaption(mediaElement, caption) {
 function createImageMediaNode(src, storageId, displayName, caption = '') {
     const img = document.createElement('img');
     img.src = src;
+    img.loading = 'lazy';
+    img.decoding = 'async';
     img.setAttribute('data-media-storage-id', storageId);
     img.alt = displayName;
     if (caption) img.title = caption;
@@ -244,20 +306,18 @@ async function createImageImportNode(file, caption = '') {
     if (typeof MediaStorage === 'undefined') {
         throw new Error('MediaStorage 未初始化');
     }
-    const rawImageData = await readFileAsDataURL(file);
-    const imageData = await compressImage(rawImageData);
-    const useBlobStorage = file.size > 5 * 1024 * 1024;
+    const optimizedImage = await optimizeImageFile(file);
     let imageStorageId;
     try {
-        imageStorageId = useBlobStorage
-            ? await MediaStorage.save(file, 'image')
-            : await MediaStorage.saveImage(imageData);
-        if (useBlobStorage) MediaStorage.hideProgressToast();
+        imageStorageId = await MediaStorage.save(optimizedImage, 'image', null, { deduplicate: true });
+        MediaStorage.hideProgressToast();
     } catch (err) {
-        if (useBlobStorage && MediaStorage.hideProgressToast) MediaStorage.hideProgressToast();
+        if (MediaStorage.hideProgressToast) MediaStorage.hideProgressToast();
         throw err;
     }
-    return createImageMediaNode(imageData, imageStorageId, mediaDisplayName(file), caption);
+    const imageUrl = await MediaStorage.getMediaAsUrl(imageStorageId);
+    if (!imageUrl) throw new Error('优化后的图片无法读取');
+    return createImageMediaNode(imageUrl, imageStorageId, mediaDisplayName(file), caption);
 }
 
 async function createVideoImportNode(file, caption = '') {

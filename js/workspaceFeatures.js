@@ -122,6 +122,9 @@ const FeatureDialog = (function() {
     function open(title, content) {
         ensure();
         titleElement.textContent = title;
+        if (bodyElement.childNodes.length) {
+            overlay.dispatchEvent(new CustomEvent('sora:feature-dialog-clear', { detail: { reason: 'replace' } }));
+        }
         bodyElement.innerHTML = '';
         if (typeof content === 'string') {
             bodyElement.textContent = content;
@@ -156,7 +159,12 @@ const FeatureDialog = (function() {
         overlay.classList.remove('active');
         overlay.classList.remove('above-custom-dialog');
         overlay.setAttribute('aria-hidden', 'true');
-        if (bodyElement) bodyElement.innerHTML = '';
+        if (bodyElement) {
+            if (bodyElement.childNodes.length) {
+                overlay.dispatchEvent(new CustomEvent('sora:feature-dialog-clear', { detail: { reason: 'close' } }));
+            }
+            bodyElement.innerHTML = '';
+        }
         const covered = coveredDialog;
         coveredDialog = null;
         if (covered?.element?.isConnected) {
@@ -933,7 +941,10 @@ const MediaManager = (function() {
             }
             try {
                 showToast('正在替换媒体并保留引用…', 'info', 1800);
-                const newId = await MediaStorage.save(file, item.info.type);
+                const mediaPayload = family === 'image' && typeof optimizeImageFile === 'function'
+                    ? await optimizeImageFile(file)
+                    : file;
+                const newId = await MediaStorage.save(mediaPayload, item.info.type, null, { deduplicate: family === 'image' });
                 let changed = 0;
                 mulufile.forEach(row => {
                     const template = document.createElement('template');
@@ -1083,10 +1094,10 @@ const MediaManager = (function() {
         if (isImage) {
             const img = document.createElement('img');
             img.alt = item.reference.name || '媒体缩略图';
+            img.loading = 'lazy';
+            img.decoding = 'async';
+            img.dataset.mediaPreviewId = item.id;
             preview.appendChild(img);
-            MediaStorage.getMediaAsUrl(item.id).then(url => {
-                if (url && img.isConnected) img.src = url;
-            }).catch(() => {});
         } else {
             preview.textContent = item.info.type === 'video' ? '🎬' : (item.info.type === 'archive' ? '📦' : '📄');
         }
@@ -1197,6 +1208,44 @@ const MediaManager = (function() {
             grid.className = 'media-grid';
             items.forEach(item => grid.appendChild(createCard(item)));
             wrapper.appendChild(grid);
+            const previewImages = Array.from(grid.querySelectorAll('img[data-media-preview-id]'));
+            const previewUrls = new Set();
+            let previewsClosed = false;
+            const loadPreview = async img => {
+                if (!img || img.dataset.mediaPreviewLoaded === 'true' || previewsClosed) return;
+                img.dataset.mediaPreviewLoaded = 'true';
+                try {
+                    const url = await MediaStorage.getMediaAsUrl(img.dataset.mediaPreviewId);
+                    if (!url) return;
+                    if (previewsClosed || !img.isConnected) {
+                        if (url.startsWith('blob:')) URL.revokeObjectURL(url);
+                        return;
+                    }
+                    img.src = url;
+                    if (url.startsWith('blob:')) previewUrls.add(url);
+                } catch (_) {
+                    delete img.dataset.mediaPreviewLoaded;
+                }
+            };
+            let previewObserver = null;
+            if (typeof IntersectionObserver === 'undefined') {
+                previewImages.forEach(loadPreview);
+            } else {
+                previewObserver = new IntersectionObserver(entries => {
+                    entries.forEach(entry => {
+                        if (!entry.isIntersecting) return;
+                        previewObserver?.unobserve(entry.target);
+                        loadPreview(entry.target);
+                    });
+                }, { root: wrapper.closest('.feature-dialog-body'), rootMargin: '180px 0px' });
+                previewImages.forEach(img => previewObserver.observe(img));
+            }
+            wrapper.closest('.feature-dialog-overlay')?.addEventListener('sora:feature-dialog-clear', () => {
+                previewsClosed = true;
+                previewObserver?.disconnect();
+                previewUrls.forEach(url => URL.revokeObjectURL(url));
+                previewUrls.clear();
+            }, { once: true });
             const applyFilter = () => {
                 const keyword = search.value.trim().toLowerCase();
                 grid.querySelectorAll('.media-card').forEach(card => {

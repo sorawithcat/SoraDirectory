@@ -116,7 +116,11 @@ async function runCase(edge, serverPort, viewport) {
             if (message.method === 'Runtime.consoleAPICalled') {
                 consoleLog.push(`${message.params.type}: ${(message.params.args || []).map(arg => arg.value ?? arg.description ?? '').join(' ')}`);
             }
-            if (message.method === 'Runtime.exceptionThrown') consoleLog.push(`exception: ${message.params.exceptionDetails?.text || 'Unknown exception'}`);
+            if (message.method === 'Runtime.exceptionThrown') {
+                const details = message.params.exceptionDetails || {};
+                const location = details.url ? `${details.url}:${Number(details.lineNumber || 0) + 1}:${Number(details.columnNumber || 0) + 1}` : '';
+                consoleLog.push(`exception: ${details.exception?.description || details.text || 'Unknown exception'}${location ? `\n${location}` : ''}`);
+            }
         });
         await client.send('Runtime.enable');
         await client.send('Page.enable');

@@ -322,7 +322,14 @@
 
     async function applyImportPlan(plan, mode) {
         const mediaByPath = new Map();
-        for (const [path, asset] of plan.assets) { const file = await asset.handle.getFile(); const type = mediaType(file); mediaByPath.set(path, { id: await MediaStorage.save(file, type), type, name: file.name }); }
+        for (const [path, asset] of plan.assets) {
+            const file = await asset.handle.getFile();
+            const type = mediaType(file);
+            const mediaPayload = type === 'image' && typeof optimizeImageFile === 'function'
+                ? await optimizeImageFile(file)
+                : file;
+            mediaByPath.set(path, { id: await MediaStorage.save(mediaPayload, type, null, { deduplicate: type === 'image' }), type, name: file.name });
+        }
         const usedIds = new Set(mode === 'merge' ? rows().map(row => String(row[2]).toLocaleLowerCase()) : []);
         const idMap = new Map();
         plan.notes.forEach(note => idMap.set(note.id, uniqueValue(note.id, usedIds)));

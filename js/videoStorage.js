@@ -1,7 +1,8 @@
 const MediaStorage = (function() {
     const DB_NAME = 'SoraDirectoryMediaDB';
-    const DB_VERSION = 1;
+    const DB_VERSION = 2;
     const STORE_NAME = 'media';
+    const CONTENT_HASH_INDEX = 'contentHash';
     const OPFS_DIRECTORY_NAME = 'sora-media';
     let db = null;
     let opfsDirectoryPromise = null;
@@ -110,8 +111,11 @@ function initDB() {
             };
             request.onupgradeneeded = (event) => {
                 const database = event.target.result;
-                if (!database.objectStoreNames.contains(STORE_NAME)) {
-                    database.createObjectStore(STORE_NAME, { keyPath: 'id' });
+                const store = !database.objectStoreNames.contains(STORE_NAME)
+                    ? database.createObjectStore(STORE_NAME, { keyPath: 'id' })
+                    : event.target.transaction.objectStore(STORE_NAME);
+                if (!store.indexNames.contains(CONTENT_HASH_INDEX)) {
+                    store.createIndex(CONTENT_HASH_INDEX, CONTENT_HASH_INDEX, { unique: false });
                 }
             };
         });
@@ -133,6 +137,25 @@ function initDB() {
     function putRecord(database, record) {
         const transaction = database.transaction([STORE_NAME], 'readwrite');
         return requestToPromise(transaction.objectStore(STORE_NAME).put(record));
+    }
+
+    async function hashBlobContent(blob) {
+        if (!blob || !globalThis.crypto?.subtle || blob.size > 32 * 1024 * 1024) return '';
+        const digest = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+        return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+    }
+
+    async function findDuplicateRecord(database, contentHash, type) {
+        if (!contentHash) return null;
+        const transaction = database.transaction([STORE_NAME], 'readonly');
+        const store = transaction.objectStore(STORE_NAME);
+        if (!store.indexNames.contains(CONTENT_HASH_INDEX)) return null;
+        const records = await requestToPromise(store.index(CONTENT_HASH_INDEX).getAll(contentHash));
+        for (const record of records || []) {
+            if (!record || record.type !== type || String(record.id).includes('_chunk_')) continue;
+            if (!isOpfsRecord(record) || await getOpfsFile(record)) return record;
+        }
+        return null;
     }
 
     function deleteRecordKeys(database, keys) {
@@ -391,6 +414,7 @@ function generateMediaId(type = 'media') {
                 opfsFileName,
                 mimeType: blob.type || 'application/octet-stream',
                 totalSize: blob.size,
+                contentHash: options.contentHash || '',
                 timestamp: Date.now()
             });
         } catch (err) {
@@ -435,17 +459,27 @@ function generateMediaId(type = 'media') {
      */
     async function saveMedia(mediaData, type = 'media', mediaId = null, options = {}) {
         const database = await initDB();
+        const contentHash = options.contentHash || (
+            !mediaId && options.deduplicate !== false && type === 'image' && mediaData instanceof Blob
+                ? await hashBlobContent(mediaData)
+                : ''
+        );
+        if (!mediaId && contentHash) {
+            const duplicate = await findDuplicateRecord(database, contentHash, type);
+            if (duplicate) return duplicate.id;
+        }
         const id = mediaId || generateMediaId(type);
+        const storageOptions = { ...options, contentHash };
         // Blob/File 优先写入 OPFS，失败时回退到 IndexedDB 分块存储
         if (mediaData instanceof Blob || mediaData instanceof File) {
             if (supportsOpfsMediaStorage()) {
                 try {
-                    return await saveBlobToOpfs(database, mediaData, type, id, options);
+                    return await saveBlobToOpfs(database, mediaData, type, id, storageOptions);
                 } catch (err) {
                     console.warn('MediaStorage: OPFS 保存失败，回退到 IndexedDB', err);
                 }
             }
-            return saveBlobChunked(database, mediaData, type, id, options);
+            return saveBlobChunked(database, mediaData, type, id, storageOptions);
         }
         // 字符串数据（base64）
         if (typeof mediaData === 'string') {
@@ -458,6 +492,7 @@ function generateMediaId(type = 'media') {
                         id: id,
                         data: mediaData,
                         type: type,
+                        contentHash,
                         timestamp: Date.now()
                     });
                     request.onsuccess = () => resolve(id);
@@ -465,7 +500,7 @@ function generateMediaId(type = 'media') {
                 });
             }
             // 大文件分块存储
-            return saveBase64Chunked(database, mediaData, type, id);
+            return saveBase64Chunked(database, mediaData, type, id, storageOptions);
         }
         throw new Error('不支持的数据类型');
     }
@@ -579,6 +614,7 @@ function reportProgress(current, total, action, options = {}) {
                 mimeType: mimeType,
                 chunks: chunks,
                 totalSize: blob.size,
+                contentHash: options.contentHash || '',
                 timestamp: Date.now()
             });
             request.onsuccess = () => {
@@ -590,7 +626,7 @@ function reportProgress(current, total, action, options = {}) {
             };
         });
     }
-    async function saveBase64Chunked(database, mediaData, type, id) {
+    async function saveBase64Chunked(database, mediaData, type, id, options = {}) {
         const commaIndex = mediaData.indexOf(',');
         const header = mediaData.substring(0, commaIndex + 1);
         const base64Data = mediaData.substring(commaIndex + 1);
@@ -629,6 +665,7 @@ function reportProgress(current, total, action, options = {}) {
                 header: header,
                 chunks: chunks,
                 totalSize: base64Data.length,
+                contentHash: options.contentHash || '',
                 timestamp: Date.now()
             });
             request.onsuccess = () => resolve(id);
@@ -664,6 +701,7 @@ function reportProgress(current, total, action, options = {}) {
                 opfsFileName,
                 mimeType: getRecordMimeType(record),
                 totalSize: Number.isFinite(record.totalSize) ? record.totalSize : 0,
+                contentHash: record.contentHash || '',
                 timestamp: Date.now()
             };
             await putRecord(database, migrated);
@@ -830,7 +868,8 @@ function reportProgress(current, total, action, options = {}) {
             size,
             storage: isOpfsRecord(record) ? 'opfs' : 'indexeddb',
             chunked: !!record.chunked,
-            blobChunked: !!record.blobChunked
+            blobChunked: !!record.blobChunked,
+            contentHash: record.contentHash || ''
         };
     }
     async function writeMediaToWritable(mediaId, writable) {

@@ -671,25 +671,52 @@ function initializeArchiveDownloadButtons() {
     });
 }
 
+let storedImageObserver = null;
+
+async function loadStoredImage(img) {
+    if (!img || !img.isConnected || img.hasAttribute('data-loading-media')) return;
+    const mediaId = img.getAttribute('data-media-storage-id');
+    if (!mediaId) return;
+    img.setAttribute('data-loading-media', 'true');
+    try {
+        const url = await MediaStorage.getMediaAsUrl(mediaId);
+        if (url && img.isConnected) {
+            img.setAttribute('src', url);
+            if (typeof limitImageSize === 'function') limitImageSize(img);
+        }
+    } catch (err) {
+        console.warn('加载图片失败:', mediaId, err);
+    } finally {
+        img.removeAttribute('data-loading-media');
+    }
+}
+
 function initializeStoredImages() {
     if (!markdownPreview || typeof MediaStorage === 'undefined') return;
-    markdownPreview.querySelectorAll('img[data-media-storage-id]').forEach(img => {
+    if (storedImageObserver) storedImageObserver.disconnect();
+    storedImageObserver = null;
+    const pendingImages = Array.from(markdownPreview.querySelectorAll('img[data-media-storage-id]')).filter(img => {
         const src = img.getAttribute('src');
         const hasValidSrc = src && src !== 'about:blank' && !/^\s*$/.test(src);
-        if (hasValidSrc || img.hasAttribute('data-loading-media')) return;
-        const mediaId = img.getAttribute('data-media-storage-id');
-        if (!mediaId) return;
-        img.setAttribute('data-loading-media', 'true');
-        MediaStorage.getMediaAsUrl(mediaId).then(url => {
-            if (url) {
-                img.setAttribute('src', url);
-                if (typeof limitImageSize === 'function') limitImageSize(img);
-            }
-        }).catch(err => {
-            console.warn('加载图片失败:', mediaId, err);
-        }).finally(() => {
-            img.removeAttribute('data-loading-media');
+        return !hasValidSrc && !img.hasAttribute('data-loading-media') && !!img.getAttribute('data-media-storage-id');
+    });
+    if (!pendingImages.length) return;
+    if (typeof IntersectionObserver === 'undefined') {
+        pendingImages.forEach(loadStoredImage);
+        return;
+    }
+    storedImageObserver = new IntersectionObserver(entries => {
+        entries.forEach(entry => {
+            if (!entry.isIntersecting) return;
+            storedImageObserver?.unobserve(entry.target);
+            loadStoredImage(entry.target);
         });
+    }, { root: markdownPreview, rootMargin: '240px 0px' });
+    pendingImages.forEach(img => {
+        img.loading = img.loading || 'lazy';
+        img.decoding = 'async';
+        if (img.loading === 'eager') loadStoredImage(img);
+        else storedImageObserver.observe(img);
     });
 }
 /**
@@ -984,19 +1011,20 @@ if (markdownPreview) {
             if (items[i].type.indexOf('image') !== -1) {
                 hasImage = true;
                 const file = items[i].getAsFile();
-                const reader = new FileReader();
-                reader.onload = async function(e) {
-                    const rawImageData = e.target.result;
+                (async function() {
                     const caption = await customPrompt('输入图片图注（可选，直接按确定跳过，取消则不上传）:', '');
                     if (caption === null) {
                         return;
                     }
-                    const imageData = typeof compressImage === 'function' 
-                        ? await compressImage(rawImageData) 
-                        : rawImageData;
+                    const optimizedImage = typeof optimizeImageFile === 'function'
+                        ? await optimizeImageFile(file)
+                        : file;
                     const imageStorageId = typeof MediaStorage !== 'undefined'
-                        ? await MediaStorage.saveImage(imageData)
+                        ? await MediaStorage.save(optimizedImage, 'image', null, { deduplicate: true })
                         : null;
+                    const imageData = imageStorageId
+                        ? await MediaStorage.getMediaAsUrl(imageStorageId)
+                        : URL.createObjectURL(optimizedImage);
                     const img = document.createElement('img');
                     img.src = imageData;
                     img.alt = '粘贴的图片';
@@ -1033,8 +1061,10 @@ if (markdownPreview) {
                         markdownPreview.appendChild(document.createElement('br'));
                     }
                     syncPreviewToTextarea();
-                };
-                reader.readAsDataURL(file);
+                })().catch(error => {
+                    console.error('粘贴图片失败:', error);
+                    showToast(`粘贴图片失败：${error.message || error}`, 'error', 2500);
+                });
                 break;
             }
         }

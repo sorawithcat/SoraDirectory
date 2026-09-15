@@ -87,10 +87,12 @@
                 preview.style.setProperty('max-height', '240px', 'important');
                 preview.style.setProperty('flex', '0 0 240px', 'important');
                 preview.style.setProperty('overflow', 'auto', 'important');
+                await poll(() => preview.scrollHeight > preview.clientHeight + 520);
                 preview.scrollTop = 520;
-                await wait(50);
+                await poll(() => preview.scrollTop > 300);
                 await win.DirectoryNavigation.open('e2e_second', { viewMode: 'top' });
                 await win.DirectoryNavigation.open('e2e_root', { viewMode: 'restore' });
+                await poll(() => preview.scrollTop > 300, 1000);
                 check(preview.scrollTop > 300, '目录切换恢复滚动位置', `scrollTop=${Math.round(preview.scrollTop)}`);
                 const beforeRepeat = preview.scrollTop;
                 await win.DirectoryNavigation.open('e2e_root', { viewMode: 'restore' });
@@ -189,9 +191,13 @@
                 const inventory = await win.SoraPerformance.analyze(data, { force: true });
                 check(inventory.rows === 2 && inventory.durationMs >= 0, 'Worker/回退性能清单可运行', `${inventory.durationMs.toFixed(1)}ms`);
 
-                const mediaId = await win.MediaStorage.save(new win.Blob(['e2e-media'], { type: 'image/png' }), 'image');
+                const pngBytes = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='), char => char.charCodeAt(0));
+                const mediaBlobSource = new win.Blob([pngBytes], { type: 'image/png' });
+                const mediaId = await win.MediaStorage.save(mediaBlobSource, 'image');
+                const duplicateMediaId = await win.MediaStorage.save(mediaBlobSource, 'image');
                 const mediaBlob = await win.MediaStorage.getChunkedBlob(mediaId);
                 check(Boolean(mediaId && mediaBlob && mediaBlob.size), '媒体写入与读取');
+                check(duplicateMediaId === mediaId, '相同图片导入复用同一媒体资源');
 
                 const currentData = win.eval('mulufile.map(row => row.slice())');
                 const packageBlob = await win.buildSoraPackageBlob(currentData);
@@ -210,12 +216,16 @@
                 check(parsed.data.title === '样例' && parsed.body.includes('# 正文'), 'Front Matter 解析');
                 check(kb.findCycles(new Map([['a', ['b']], ['b', ['a']]])).length === 1, '知识库循环链接预检');
 
-                async function captureExport(exportRows, settings) {
+                async function captureExport(exportRows, settings, options = {}) {
                     const parts = [];
-                    win.showSaveFilePicker = async () => ({ name: 'e2e.html', createWritable: async () => ({ write: async part => parts.push(part), close: async () => {}, abort: async () => {} }) });
+                    win.showSaveFilePicker = async () => ({ name: 'e2e.html', createWritable: async () => ({
+                        write: async part => parts.push(part && typeof part.arrayBuffer === 'function' ? await part.arrayBuffer() : part),
+                        close: async () => {},
+                        abort: async () => {}
+                    }) });
                     const originalResolve = win.PublicationSettings.resolve;
                     win.PublicationSettings.resolve = () => settings;
-                    try { await win.handleSaveAsWebpage(false, null, exportRows, { mode: 'all' }); }
+                    try { await win.handleSaveAsWebpage(!!options.encrypt, options.password || null, exportRows, { mode: 'all' }); }
                     finally { win.PublicationSettings.resolve = originalResolve; }
                     return new Blob(parts, { type: 'text/html' }).text();
                 }
@@ -227,6 +237,26 @@
                 const compact = await captureExport(compactRows, { ...settings, defaultDirId: 'plain', capabilityLevel: 'compact', searchEnabled: false });
                 check(!compact.includes('function executeSingleMethod') && compact.includes('function handleSoraMethodTriggersCascade() {}'), '无方法精简导出裁剪方法运行适配');
                 check(!compact.includes('id="exportSearchInput"'), '精简导出裁剪搜索界面');
+                const repeatedImages = Array.from({ length: 40 }, (_, index) => `<img src="about:blank" alt="测试图片 ${index + 1}" data-media-storage-id="${mediaId}">`).join('');
+                const mediaRows = [['mulu', '媒体页', 'media_page', `<h1>媒体页</h1>${repeatedImages}`]];
+                const mediaIssues = await win.collectExportPreflightIssues(mediaRows);
+                check(mediaIssues.mediaBudget.length === 1 && mediaIssues.mediaBudget[0].includes('1 个唯一媒体'), '预检显示单 HTML 唯一媒体预算');
+                let mediaExport;
+                try {
+                    mediaExport = await captureExport(mediaRows, { ...settings, defaultDirId: 'media_page' });
+                } catch (error) {
+                    throw new Error(`媒体单文件导出失败：${error.name || 'Error'} ${error.message || error}\n${error.stack || ''}`);
+                }
+                const mediaDocument = new DOMParser().parseFromString(mediaExport, 'text/html');
+                const mediaAssets = JSON.parse(mediaDocument.getElementById('mediaAssets').textContent);
+                const mediaReferences = JSON.parse(mediaDocument.getElementById('mediaData').textContent);
+                const referenceAssets = Object.values(mediaReferences).map(item => item.assetId);
+                check(Object.keys(mediaAssets).length === 1 && referenceAssets.length === 40 && new Set(referenceAssets).size === 1, '大量重复图片在单 HTML 中只嵌入一份分块资源');
+                check(!mediaDocument.getElementById('mediaData').textContent.includes('data:image/png;base64'), '图片载荷不再集中写入启动 JSON');
+
+                const encrypted = await captureExport(compactRows, { ...settings, defaultDirId: 'plain' }, { encrypt: true, password: 'e2e-password' });
+                check(encrypted.includes('SoraDirectoryEncryptedHtml') && encrypted.includes('encrypted_html_chunk_0'), '加密网页使用分块格式');
+                check(!encrypted.includes("const D='"), '加密网页不再生成单个完整密文字符串');
 
                 const reader = document.createElement('iframe');
                 reader.style.width = viewport === 'mobile' ? '360px' : '1100px';
@@ -253,6 +283,37 @@
                     await poll(() => exportSidebar.getBoundingClientRect().width >= 200, 2000);
                     check(exportSidebar.getBoundingClientRect().width >= 200 && sidebarCollapseButton.textContent === '收起目录', '桌面目录可再次展开');
                 }
+
+                const mediaReader = document.createElement('iframe');
+                mediaReader.style.width = '640px';
+                mediaReader.style.height = '400px';
+                document.body.appendChild(mediaReader);
+                const mediaRuntimeErrors = [];
+                mediaReader.contentWindow.addEventListener('error', event => mediaRuntimeErrors.push(event.message || 'unknown error'));
+                mediaReader.srcdoc = mediaExport;
+                mediaReader.scrollIntoView({ block: 'start' });
+                let exportedImage;
+                try {
+                    exportedImage = await poll(() => mediaReader.contentDocument?.querySelector('img[data-placeholder-id]'), 10000);
+                } catch (error) {
+                    const mediaWindow = mediaReader.contentWindow;
+                    const mediaBody = mediaReader.contentDocument?.getElementById('contentBody')?.innerHTML || '';
+                    throw new Error(`媒体导出页未显示图片：title=${mediaReader.contentDocument?.title || ''}, ready=${mediaReader.contentDocument?.readyState || ''}, select=${typeof mediaWindow?.selectDirectory}, lazy=${typeof mediaWindow?.loadLazyMedia}, errors=${mediaRuntimeErrors.join(' | ')}, content=${mediaBody.slice(0, 600)}`);
+                }
+                await mediaReader.contentWindow.loadSingleMedia(exportedImage);
+                await poll(() => mediaReader.contentDocument?.querySelector('img[data-placeholder-id]')?.src.startsWith('blob:'), 10000);
+                check(Boolean(mediaReader.contentDocument.querySelector('img[data-placeholder-id]')?.src.startsWith('blob:')), '导出图片进入视区后按需解码为 Blob URL');
+
+                const encryptedReader = document.createElement('iframe');
+                encryptedReader.style.width = '640px';
+                encryptedReader.style.height = '400px';
+                document.body.appendChild(encryptedReader);
+                encryptedReader.srcdoc = encrypted;
+                await poll(() => encryptedReader.contentDocument?.getElementById('unlockBtn'));
+                encryptedReader.contentDocument.getElementById('pwd').value = 'e2e-password';
+                encryptedReader.contentDocument.getElementById('unlockBtn').click();
+                await poll(() => encryptedReader.contentDocument?.querySelector('.content-body')?.textContent.includes('内容'), 10000);
+                check(Boolean(encryptedReader.contentDocument.querySelector('.content-body')), '分块加密网页可解锁并运行');
 
                 await win.DraftManager.clear();
                 await win.MediaStorage.deleteMedia(mediaId);
