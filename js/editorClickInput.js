@@ -1,10 +1,8 @@
-/* 正文点击定位输入；按内容流寻找落点，不依赖具体格式命令。 */
+/* 正文外层空白点击定位；组件内部保留原生编辑行为。 */
 (function() {
     'use strict';
     const root = markdownPreview;
     if (!root) return;
-    const flowContainers = 'div,section,article,main,aside,blockquote,li,td,th,dd,figcaption';
-    const controls = '[contenteditable="false"],a,button,input,textarea,select,summary,pre,code,video,audio,img,[role="button"]';
     let gesture = null;
 
     function ready() {
@@ -62,21 +60,13 @@
         paragraph.append(fragment);
     }
     function locate(event) {
-        const target = event.target instanceof Element ? event.target : event.target.parentElement;
-        if (!target || !root.contains(target) || target.closest(controls)) return false;
-        const paragraph = target.tagName === 'BR' ? target.parentElement : target;
-        if (paragraph !== root && blankParagraph(paragraph)) {
-            focusLine(paragraph, event.clientY);
-            return true;
-        }
-        if (target !== root && (!target.matches(flowContainers) || !target.isContentEditable)) return false;
-        const display = getComputedStyle(target).display;
-        if (display !== 'block' && display !== 'flow-root' && display !== 'list-item' && display !== 'table-cell') return false;
-        const bounds = target.getBoundingClientRect();
-        const left = bounds.left + target.clientLeft, top = bounds.top + target.clientTop;
-        if (event.clientX < left || event.clientX >= left + target.clientWidth ||
-            event.clientY < top || event.clientY >= top + target.clientHeight) return false;
-        const gap = gapAt(target, event.clientY);
+        // 单元格及其他组件的内边距不是正文空行；连空段落的点击也交给原生定位。
+        if (event.target !== root) return false;
+        const bounds = root.getBoundingClientRect();
+        const left = bounds.left + root.clientLeft, top = bounds.top + root.clientTop;
+        if (event.clientX < left || event.clientX >= left + root.clientWidth ||
+            event.clientY < top || event.clientY >= top + root.clientHeight) return false;
+        const gap = gapAt(root, event.clientY);
         if (!gap) return false;
         const empty = [gap.previous, gap.next].filter(blankParagraph)
             .sort((a, b) => Math.abs(a.getBoundingClientRect().top - event.clientY) - Math.abs(b.getBoundingClientRect().top - event.clientY))[0];
@@ -88,7 +78,7 @@
         const range = document.createRange();
         if (empty) range.selectNodeContents(empty);
         else if (gap.next) range.setStartBefore(gap.next);
-        else range.setStart(target, target.childNodes.length);
+        else range.setStart(root, root.childNodes.length);
         range.collapse(true);
         const token = SoraEditor.capture(range);
         if (!token) return false;
@@ -96,7 +86,7 @@
             const line = empty || document.createElement('p');
             if (!empty) {
                 line.append(document.createElement('br'));
-                target.insertBefore(line, gap.next);
+                root.insertBefore(line, gap.next);
             }
             if (extend) fillToLine(line, event.clientY);
             focusLine(line, event.clientY);
@@ -105,7 +95,7 @@
 
     root.addEventListener('pointerdown', event => {
         gesture = null;
-        if (!ready() || !event.isPrimary || event.button !== 0 || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return;
+        if (event.target !== root || !ready() || !event.isPrimary || event.button !== 0 || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return;
         gesture = { id: event.pointerId, x: event.clientX, y: event.clientY, started: performance.now() };
     }, true);
     root.addEventListener('pointermove', event => {

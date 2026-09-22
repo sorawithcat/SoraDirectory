@@ -12,10 +12,12 @@
 }
 
 .markdown-preview[contenteditable="true"] { padding-bottom:max(15px, 1.6em); }
-.markdown-preview[contenteditable="true"] p:empty { min-height:1.6em; min-height:1lh; }
+.markdown-preview[contenteditable="true"] > p:empty { min-height:1.6em; min-height:1lh; }
 
 .sora-format-form { display:grid; gap:16px; }
 .sora-format-form label { display:grid; gap:6px; min-width:0; }
+.sora-format-form label.sora-checkbox-field { display:flex; align-items:center; gap:10px; min-height:44px; line-height:1.5; cursor:pointer; }
+.sora-format-form .sora-checkbox-field > input[type="checkbox"] { flex:0 0 18px; width:18px; height:18px; min-height:18px; margin:0; padding:0; accent-color:var(--color-primary,#2563eb); cursor:pointer; }
 .sora-format-form :is(input:not([type="checkbox"]),textarea,select), .sora-format-menu > input { width:100%; min-height:44px; box-sizing:border-box; padding:8px; border:1px solid var(--color-border,#94a3b8); border-radius:5px; background:var(--color-panel,#fff); color:var(--color-text,#172033); font:inherit; }
 .sora-format-form textarea { min-height:100px; resize:vertical; }
 .sora-format-actions { display:flex; flex-wrap:wrap; gap:8px; }

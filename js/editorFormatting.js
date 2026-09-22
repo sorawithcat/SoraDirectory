@@ -16,6 +16,7 @@
     let activeKey = '';
     const caretNodes = new Set();
     const blockSelector = 'p,div:not([class]),h1,h2,h3,h4,h5,h6,li,td,th,dt,dd,summary';
+    const contentHostSelector = 'div,section,article,main,aside,details,blockquote,li,td,th,dd,figcaption';
     const inlineDefinitions = {
         bold: ['strong', 'b'], italic: ['em', 'i'], underline: ['u'], strikethrough: ['s', 'strike', 'del'],
         code: ['code'], highlight: ['mark'], spoiler: ['spoiler'], superscript: ['sup'], subscript: ['sub'], kbd: ['kbd']
@@ -318,15 +319,78 @@
             if (parent.tagName === 'SPAN' && !parent.attributes.length) unwrap(parent);
         });
     }
-    function ensureBlocks() {
-        // 旧文档允许根节点直接放行内内容，先把连续行内节点组成段落。
+    function ensureBlocks(container = root) {
+        // 旧文档及单元格、列表项允许直接放行内内容，先组成当前区域的段落。
         let paragraph = null;
-        Array.from(root.childNodes).forEach(node => {
+        Array.from(container.childNodes).forEach(node => {
+            if (node.nodeType === Node.COMMENT_NODE || (node.nodeType === Node.ELEMENT_NODE && node.matches('input.task-list-item-checkbox'))) { paragraph = null; return; }
             if (node.nodeType === Node.TEXT_NODE && !node.textContent.trim() && !paragraph) return;
-            if (node.nodeType === Node.ELEMENT_NODE && /^(P|DIV|H[1-6]|UL|OL|TABLE|PRE|BLOCKQUOTE|ASIDE|DETAILS|SECTION|DL|FIGURE|HR)$/.test(node.tagName)) { paragraph = null; return; }
+            if (node.nodeType === Node.ELEMENT_NODE && /^(P|DIV|H[1-6]|UL|OL|TABLE|PRE|BLOCKQUOTE|ASIDE|DETAILS|SUMMARY|SECTION|ARTICLE|MAIN|DL|FIGURE|HR)$/.test(node.tagName)) { paragraph = null; return; }
             if (!paragraph) { paragraph = document.createElement('p'); node.before(paragraph); }
             paragraph.append(node);
         });
+    }
+    function contentHost(node) {
+        const origin = element(node);
+        if (protectedNode(node) || origin?.closest('summary,dt,.sora-callout-title,.sora-callout-kind')) throw new Error('请把光标放在内容正文中，标题或只读内容内不能插入块');
+        for (let parent = origin; parent && root.contains(parent); parent = parent.parentElement) {
+            if (parent.matches('details[data-sora-details],.sora-callout')) throw new Error('请把光标放进内容块的正文区域');
+            if (parent === root || parent.matches(contentHostSelector)) return parent;
+            if (parent.matches('table,thead,tbody,tfoot,tr,ul,ol,dl')) break;
+        }
+        throw new Error('请把光标放在正文、单元格或列表项内');
+    }
+    function prepareBlockRange(range) {
+        const host = contentHost(range.startContainer);
+        if (contentHost(range.endContainer) !== host) throw new Error('请选择同一正文区域的内容，不要跨越不同单元格或内容块层级');
+        const savePoint = (node, offset) => node === host ? { boundary: true, next: host.childNodes[offset] || null } : { node, offset };
+        const start = savePoint(range.startContainer, range.startOffset), end = savePoint(range.endContainer, range.endOffset);
+        ensureBlocks(host);
+        const restorePoint = point => point.boundary
+            ? point.next ? { node: point.next.parentNode, offset: Array.prototype.indexOf.call(point.next.parentNode.childNodes, point.next) } : { node: host, offset: host.childNodes.length }
+            : point;
+        const first = restorePoint(start), last = restorePoint(end);
+        range.setStart(first.node, first.offset); range.setEnd(last.node, last.offset);
+        return host;
+    }
+    function contentBlocks(range) {
+        const host = prepareBlockRange(range);
+        let selected;
+        if (range.collapsed) {
+            let node = range.startContainer === host ? host.childNodes[range.startOffset] : range.startContainer;
+            while (node && node.parentNode !== host) node = node.parentNode;
+            selected = node?.nodeType === Node.ELEMENT_NODE ? [node] : [];
+            if (!selected.length) { const p = document.createElement('p'); p.append(document.createElement('br')); range.insertNode(p); selected = [p]; }
+        } else selected = Array.from(host.children).filter(node => range.intersectsNode(node));
+        if (!selected.length || selected.some(node => node.matches('summary,.sora-callout-title,.sora-callout-kind,input.task-list-item-checkbox'))) throw new Error('请选择内容正文，不要包含块标题或任务勾选框');
+        return selected;
+    }
+    function paragraphAfter(node) {
+        let next = node.nextSibling;
+        while (next && (next.nodeType === Node.COMMENT_NODE || (next.nodeType === Node.TEXT_NODE && !next.textContent.trim()))) next = next.nextSibling;
+        if (next?.nodeType === Node.ELEMENT_NODE && next.tagName === 'P' && !protectedNode(next) && !next.matches('.sora-callout-title')) return next;
+        const paragraph = document.createElement('p'); paragraph.append(document.createElement('br')); node.after(paragraph);
+        return paragraph;
+    }
+    function insertContainerBlock(range, wrapper, body = wrapper) {
+        if (range.collapsed) {
+            const p = document.createElement('p'); p.append(document.createElement('br')); body.append(p);
+            insertBlock(range, wrapper);
+            const next = document.createRange(); next.selectNodeContents(p); next.collapse(true); setRange(next);
+        } else {
+            const selected = contentBlocks(range);
+            selected[0].before(wrapper); selected.forEach(node => body.append(node));
+            paragraphAfter(wrapper); selectBlocks(selected);
+        }
+    }
+    function currentContentBlock(range, kind) {
+        const selector = kind === 'callout' ? '.sora-callout' : 'details[data-sora-details]';
+        const node = element(range.startContainer)?.closest(selector);
+        return node && root.contains(node) && node === element(range.endContainer)?.closest(selector) ? node : null;
+    }
+    function currentListItem(node) {
+        const host = element(node)?.closest(contentHostSelector);
+        return host?.tagName === 'LI' ? host : null;
     }
     function blocks(range) {
         const nodes = range.collapsed ? [range.startContainer] : textNodes(range, false).map(part => part.node);
@@ -373,18 +437,17 @@
         selectBlocks(changed);
     }
     function insertBlock(range, node) {
-        if (element(range.startContainer)?.closest('summary,dt')) throw new Error('请在正文段落中插入内容块');
+        const host = prepareBlockRange(range);
         range.deleteContents();
         const block = element(range.startContainer)?.closest('p,h1,h2,h3,h4,h5,h6');
-        if (block && root.contains(block)) {
+        if (block && host.contains(block)) {
             const tailRange = document.createRange(); tailRange.selectNodeContents(block); tailRange.setStart(range.startContainer, range.startOffset);
             const tail = cloneShell(block); tail.append(tailRange.extractContents());
             block.after(node);
             if (tail.hasChildNodes()) node.after(tail);
-            if (!block.textContent && !block.querySelector('img,video,input,.sora-anchor')) block.remove();
+            if (!block.textContent && !block.id && !block.querySelector('img,video,input,.sora-anchor')) block.remove();
         } else range.insertNode(node);
-        const after = document.createElement('p'); after.append(document.createElement('br'));
-        node.after(after);
+        const after = paragraphAfter(node);
         const next = document.createRange(); next.selectNodeContents(after); next.collapse(true); setRange(next);
     }
 
@@ -420,7 +483,7 @@
                 Array.from(item.attributes).filter(attr => !['class', 'value'].includes(attr.name)).forEach(attr => p.setAttribute(attr.name, attr.value));
                 const nested = [];
                 Array.from(item.childNodes).forEach(node => {
-                    if (node.nodeType === 1 && /^(P|DIV|H[1-6]|UL|OL|PRE|TABLE|BLOCKQUOTE)$/.test(node.tagName)) nested.push(node);
+                    if (node.nodeType === 1 && /^(P|DIV|H[1-6]|UL|OL|PRE|TABLE|BLOCKQUOTE|ASIDE|DETAILS|DL|SECTION|FIGURE|HR)$/.test(node.tagName)) nested.push(node);
                     else p.append(node);
                 });
                 if (p.hasChildNodes() || !nested.length) { replacement.append(p); changed.push(p); }
@@ -432,7 +495,8 @@
         return changed;
     }
     function list(range, kind, forceRemove = false) {
-        const selected = blocks(range).map(block => block.closest('li') || block);
+        if (contentHost(range.startContainer) === contentHost(range.endContainer)) prepareBlockRange(range);
+        const selected = blocks(range).map(block => currentListItem(block) || block);
         const unique = [...new Set(selected)].filter(node => !selected.some(other => other !== node && other.contains(node)));
         const remove = forceRemove || unique.every(node => node.tagName === 'LI' && listKind(node.parentElement) === kind);
         const changed = [];
@@ -459,7 +523,7 @@
         selectBlocks(changed);
     }
     function indent(range, out = false) {
-        const items = [...new Set(blocks(range).map(block => block.closest('li')).filter(Boolean))];
+        const items = [...new Set(blocks(range).map(currentListItem).filter(Boolean))];
         if (!items.length) throw new Error('请把光标放在列表项内');
         if (items.some(item => item.parentElement !== items[0].parentElement)) throw new Error('请选择同一级列表项');
         const container = items[0].parentElement;
@@ -486,18 +550,10 @@
         selectBlocks(items);
     }
     function quote(range) {
-        const selected = blocks(range);
-        const remove = selected.length && selected.every(node => node.closest('blockquote'));
-        selected.forEach(block => {
-            if (remove) {
-                const parent = block.closest('blockquote');
-                let branch = block;
-                while (branch.parentElement !== parent) { isolateBranch(branch, branch.parentElement); branch = branch.parentElement; }
-                isolateBranch(branch, parent); unwrap(parent);
-            } else if (!block.closest('blockquote')) {
-                const wrapper = document.createElement('blockquote'); block.before(wrapper); wrapper.append(block);
-            }
-        });
+        const selected = contentBlocks(range);
+        const remove = selected.every(node => node.parentElement.tagName === 'BLOCKQUOTE');
+        if (remove) selected.forEach(block => { const parent = block.parentElement; isolateBranch(block, parent); unwrap(parent); });
+        else { const wrapper = document.createElement('blockquote'); selected[0].before(wrapper); selected.forEach(node => wrapper.append(node)); paragraphAfter(wrapper); }
         selectBlocks(selected);
     }
     function form(title, fields, initial = {}, validate) {
@@ -517,7 +573,10 @@
                 if (field.type === 'number') control.step = '1';
                 if (field.required) control.required = true;
                 if (!field.options && field.type !== 'number') control.maxLength = field.maxLength || 10000;
-                control.name = field.key; label.append(control); wrapper.append(label); controls[field.key] = control;
+                control.name = field.key;
+                if (field.type === 'checkbox') { label.className = 'sora-checkbox-field'; label.prepend(control); }
+                else label.append(control);
+                wrapper.append(label); controls[field.key] = control;
             });
             const error = document.createElement('p'); error.className = 'sora-form-error'; error.setAttribute('role', 'alert'); wrapper.append(error);
             const actions = document.createElement('div'); actions.className = 'sora-format-actions';
@@ -545,9 +604,9 @@
     function tableEdit(range, action) {
         const cell = tableCell(range), table = cell?.closest('table');
         if (!cell || !table) throw new Error('请把光标放在表格单元格内');
-        if (table.querySelector('[rowspan]:not([rowspan="1"]),[colspan]:not([colspan="1"])')) throw new Error('此表格含合并单元格，请先在原工具拆分后再调整行列');
         const row = cell.parentElement, column = cell.cellIndex;
         const rows = Array.from(table.rows);
+        if (rows.some(item => Array.from(item.cells).some(td => td.rowSpan !== 1 || td.colSpan !== 1))) throw new Error('此表格含合并单元格，请先在原工具拆分后再调整行列');
         if (action === 'delete-table') { const p = document.createElement('p'); p.append(document.createElement('br')); table.replaceWith(p); selectBlocks([p]); return; }
         if (action.startsWith('row-')) {
             if (action === 'row-delete') { if (rows.length === 1) throw new Error('最后一行请使用“删除表格”'); row.remove(); selectBlocks([rows.find(item => item !== row).cells[0]]); return; }
@@ -604,10 +663,11 @@
         ['indent', '增加列表缩进', '增加缩进', '段落'], ['outdent', '减少列表缩进', '减少缩进', '段落'], ['quote', '引用', '引用', '段落'],
         ['link', '链接', '链接', '插入'], ['anchor', '锚点', '锚点', '插入'], ['method', '方法', '方法', '插入'],
         ['code-block', '代码块', '代码块', '插入'], ['hr', '分隔线', '分隔线', '插入'], ['table', '插入表格', '表格', '插入'],
-        ['callout', '提示块', '提示块', '插入'], ['details', '折叠块', '折叠块', '插入'], ['footnote', '脚注 / 尾注', '脚注', '插入'], ['definition', '术语解释', '术语解释', '插入'],
+        ['callout', '插入提示块', '提示块', '插入'], ['details', '插入折叠块', '折叠块', '插入'], ['quote-block', '插入引用块（可嵌套）', '引用块', '插入'], ['footnote', '脚注 / 尾注', '脚注', '插入'], ['definition', '术语解释', '术语解释', '插入'],
         ['row-before', '上方插入行', '上方插行', '表格'], ['row-after', '下方插入行', '下方插行', '表格'], ['row-delete', '删除当前行', '删除行', '表格'],
         ['column-before', '左侧插入列', '左侧插列', '表格'], ['column-after', '右侧插入列', '右侧插列', '表格'], ['column-delete', '删除当前列', '删除列', '表格'],
         ['table-header', '切换首行表头', '首行表头', '表格'], ['cell-left', '单元格左对齐', '左对齐', '表格'], ['cell-center', '单元格居中', '居中', '表格'], ['cell-right', '单元格右对齐', '右对齐', '表格'], ['delete-table', '删除表格', '删除表格', '表格'],
+        ['edit-callout', '编辑当前提示块', '编辑提示块', '编辑'], ['edit-details', '编辑当前折叠块', '编辑折叠块', '编辑'],
         ['brush-copy', '复制文字和段落样式', '复制样式', '编辑'], ['brush-apply', '应用已复制样式', '应用样式', '编辑'],
         ['undo', '撤销正文编辑', '撤销正文', '编辑'], ['redo', '重做正文编辑', '重做正文', '编辑']
     ].map(([command, label, text, group]) => ({ command, label, text, group }));
@@ -638,6 +698,7 @@
         executing = true;
         try {
             let value = null;
+            const contentKind = ['callout', 'details'].find(kind => command === kind || command === 'edit-' + kind);
             if (textProperties.includes(command)) {
                 const current = colorValue(token.range, command);
                 value = await colorPickerDialog(current.value, `${command === 'color' ? '文字颜色' : '背景颜色'}${current.mixed ? '（选区包含多种颜色）' : ''}`, command === 'color' ? 'text' : 'background');
@@ -664,12 +725,15 @@
                     { key: 'margin-top', label: '段前间距', options: [['', '默认'], ['0px', '无'], ['8px', '小'], ['16px', '中'], ['24px', '大']] },
                     { key: 'margin-bottom', label: '段后间距', options: [['', '默认'], ['0px', '无'], ['8px', '小'], ['16px', '中'], ['24px', '大']] }
                 ], Object.fromEntries(paragraphProperties.map(name => [name, parent?.style.getPropertyValue(name) || '']))); if (!value) return;
-            } else if (command === 'callout' || command === 'details') {
-                const existing = element(token.range.startContainer)?.closest(command === 'callout' ? '.sora-callout' : 'details[data-sora-details]');
+            } else if (contentKind) {
+                const editing = command.startsWith('edit-');
+                const existing = editing ? currentContentBlock(token.range, contentKind) : null;
+                if (editing && !existing) throw new Error('请把光标放在需要编辑的内容块内');
+                const titleSelector = contentKind === 'callout' ? ':scope > .sora-callout-title' : ':scope > summary';
                 const fields = [{ key: 'title', label: '标题', required: true, maxLength: 200 }];
-                if (command === 'callout') fields.push({ key: 'type', label: '类型', options: [['info', '提示'], ['warning', '注意'], ['danger', '警告'], ['success', '成功']] });
+                if (contentKind === 'callout') fields.push({ key: 'type', label: '类型', options: [['info', '提示'], ['warning', '注意'], ['danger', '警告'], ['success', '成功']] });
                 else fields.push({ key: 'open', label: '导出后默认展开', type: 'checkbox' });
-                value = await form(command === 'callout' ? '提示块' : '折叠块', fields, { title: existing?.querySelector(command === 'callout' ? '.sora-callout-title' : 'summary')?.textContent || (command === 'callout' ? '提示' : '补充说明'), type: existing?.dataset.callout || 'info', open: existing?.dataset.defaultOpen === 'true' });
+                value = await form(labels.get(command), fields, { title: existing?.querySelector(titleSelector)?.textContent || (contentKind === 'callout' ? '提示' : '补充说明'), type: existing?.dataset.callout || 'info', open: existing?.dataset.defaultOpen === 'true' });
                 if (!value) return;
                 value.existing = existing;
             } else if (command === 'footnote') {
@@ -694,6 +758,7 @@
                 else if (['unordered-list', 'ordered-list', 'task-list'].includes(command)) list(range, command);
                 else if (command === 'indent' || command === 'outdent') indent(range, command === 'outdent');
                 else if (command === 'quote') quote(range);
+                else if (command === 'quote-block') insertContainerBlock(range, document.createElement('blockquote'));
                 else if (command === 'paragraph-settings') blocks(range).forEach(block => paragraphProperties.forEach(name => value[name] ? block.style.setProperty(name, value[name]) : block.style.removeProperty(name)));
                 else if (command === 'link') inlineLink(range, link => applyLinkAttributesToElement(link, value), value);
                 else if (command === 'method') inlineLink(range, link => { link.href = '#'; writeMethodsToElement(link, [value]); }, '方法');
@@ -715,26 +780,26 @@
                     insertBlock(range, table); const next = document.createRange(); next.selectNodeContents(table.rows[0].cells[0]); next.collapse(true); setRange(next);
                 } else if (command.startsWith('cell-')) {
                     const cell = tableCell(range); if (!cell) throw new Error('请把光标放在单元格内');
-                    const cells = Array.from(cell.closest('table').querySelectorAll('td,th')).filter(node => range.collapsed ? node === cell : range.intersectsNode(node));
+                    const table = cell.closest('table');
+                    const cells = Array.from(table.querySelectorAll('td,th')).filter(node => node.closest('table') === table && (range.collapsed ? node === cell : range.intersectsNode(node)));
                     cells.forEach(node => { node.style.textAlign = command.slice(5); });
                 } else if (labels.has(command) && definitions.find(item => item.command === command)?.group === '表格') tableEdit(range, command);
-                else if (command === 'callout' || command === 'details') {
+                else if (contentKind) {
                     if (value.existing) {
                         const node = value.existing;
-                        node.querySelector(command === 'callout' ? '.sora-callout-title' : 'summary').textContent = value.title;
-                        if (command === 'callout') node.dataset.callout = value.type;
+                        const title = node.querySelector(contentKind === 'callout' ? ':scope > .sora-callout-title' : ':scope > summary');
+                        if (!title) throw new Error('此内容块缺少标题，请先恢复标题结构');
+                        title.textContent = value.title;
+                        if (contentKind === 'callout') node.dataset.callout = value.type;
                         else node.dataset.defaultOpen = String(value.open);
                     } else {
-                        const wrapper = document.createElement(command === 'callout' ? 'aside' : 'details');
-                        const title = document.createElement(command === 'callout' ? 'p' : 'summary'), body = document.createElement('div');
+                        const wrapper = document.createElement(contentKind === 'callout' ? 'aside' : 'details');
+                        const title = document.createElement(contentKind === 'callout' ? 'p' : 'summary'), body = document.createElement('div');
                         title.textContent = value.title;
-                        if (command === 'callout') { wrapper.className = 'sora-callout'; wrapper.dataset.callout = value.type; title.className = 'sora-callout-title'; body.className = 'sora-callout-body'; }
+                        if (contentKind === 'callout') { wrapper.className = 'sora-callout'; wrapper.dataset.callout = value.type; title.className = 'sora-callout-title'; body.className = 'sora-callout-body'; }
                         else { wrapper.dataset.soraDetails = ''; wrapper.dataset.defaultOpen = String(value.open); wrapper.open = true; body.className = 'sora-details-body'; }
-                        const selected = blocks(range);
-                        if (selected.some(node => node.parentNode !== selected[0].parentNode || /^(LI|TD|TH|SUMMARY|DT|DD)$/.test(node.tagName))) throw new Error('请选择同一内容区域的正文段落');
                         wrapper.append(title, body);
-                        if (selected.length) { selected[0].before(wrapper); selected.forEach(node => body.append(node)); selectBlocks(selected); }
-                        else { const p = document.createElement('p'); p.append(document.createElement('br')); body.append(p); insertBlock(range, wrapper); selectBlocks([p]); }
+                        insertContainerBlock(range, wrapper, body);
                     }
                 } else if (command === 'footnote') footnote(range, value.text);
                 else if (command === 'definition') {
@@ -753,6 +818,7 @@
 
     function state(command, range = getRange()) {
         if (!key() || !range || composing || restoring) return { disabled: true, pressed: 'false' };
+        if (command === 'edit-callout' || command === 'edit-details') return { disabled: !currentContentBlock(range, command.slice(5)), pressed: 'false' };
         if (command === 'undo' || command === 'redo') return { disabled: !history()[command === 'undo' ? 'undo' : 'redo'].length, pressed: 'false' };
         if (command === 'brush-apply') return { disabled: !brush, pressed: 'false' };
         const def = definitions.find(item => item.command === command);
@@ -766,8 +832,9 @@
         if (['unordered-list', 'ordered-list', 'task-list', 'quote'].includes(command)) {
             const nodes = stateNodes(range);
             const statuses = nodes.map(node => {
-                const container = element(node)?.closest(command === 'quote' ? 'blockquote' : 'ul,ol');
-                return !!container && (command === 'quote' || listKind(container) === command);
+                if (command === 'quote') return element(node)?.closest(contentHostSelector)?.tagName === 'BLOCKQUOTE';
+                const container = currentListItem(node)?.parentElement;
+                return !!container && listKind(container) === command;
             });
             return { disabled: false, pressed: statuses.length && statuses.every(Boolean) ? 'true' : statuses.some(Boolean) ? 'mixed' : 'false' };
         }
@@ -890,7 +957,7 @@
         const ctrl = event.ctrlKey || event.metaKey;
         const command = ctrl && ({ b: 'bold', i: 'italic', u: 'underline', z: event.shiftKey ? 'redo' : 'undo', y: 'redo' })[event.key.toLowerCase()];
         if (command) { event.preventDefault(); event.stopImmediatePropagation(); apply(command); return; }
-        const range = currentRange(), item = range && element(range.startContainer)?.closest('li');
+        const range = currentRange(), item = range && currentListItem(range.startContainer);
         if (event.key === 'Tab' && item && !item.closest('[data-sora-footnotes]')) { event.preventDefault(); apply(event.shiftKey ? 'outdent' : 'indent'); }
         if (event.key === 'Enter' && !event.shiftKey && item && !item.closest('[data-sora-footnotes]') && !item.textContent.replace(/\u200B/g, '').trim() && !item.querySelector('img,video,table,ul,ol')) {
             event.preventDefault(); event.stopImmediatePropagation();
