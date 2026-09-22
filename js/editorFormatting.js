@@ -178,16 +178,15 @@
         (redo ? stack.undo : stack.redo).push({ ...snapshot(), label: state.label });
         await restoreSnapshot(state);
     }
-    function capture() {
+    function capture(range = getRange()) {
         if (!key() || composing || restoring) return null;
-        const range = getRange();
-        if (!range) return null;
+        if (!inside(range)) return null;
         return { key: key(), generation, html: contentStamp(), range: range.cloneRange() };
     }
     function valid(token) {
         return !!token && token.key === key() && token.generation === generation && token.html === contentStamp() && inside(token.range);
     }
-    function transaction(label, token, action) {
+    function transaction(label, token, action, options = {}) {
         if (!valid(token)) { showToast('正文或选区已变化，请重新选择后操作', 'warning'); return false; }
         flushInput();
         setRange(token.range);
@@ -195,7 +194,9 @@
         transactionDepth++;
         try {
             action(token.range);
-            refresh();
+            // 普通补行只需同步正文，避免重置组件当前的展开等显示状态。
+            if (options.refreshWidgets === false) syncPreviewToTextarea();
+            else refresh();
             commit(before, label);
             remember();
             return true;
