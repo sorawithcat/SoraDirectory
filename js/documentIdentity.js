@@ -6,7 +6,7 @@
 
     function readStored() {
         try {
-            const value = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+            const value = JSON.parse(sessionStorage.getItem(STORAGE_KEY) || 'null');
             return value && typeof value.id === 'string' ? value : null;
         } catch (_) {
             return null;
@@ -21,7 +21,8 @@
     }
 
     function persist() {
-        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(current)); } catch (_) {}
+        // 当前项目属于标签页；草稿仍按文档 ID 共享存储，其他项目可从草稿列表恢复。
+        try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify(current)); } catch (_) {}
     }
 
     function hashText(text) {

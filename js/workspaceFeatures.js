@@ -177,15 +177,39 @@ const FeatureDialog = (function() {
         if (target && target.isConnected && typeof target.focus === 'function') target.focus();
     }
 
+    function showRetry(container, message, retry) {
+        if (!container.isConnected) return;
+        const description = document.createElement('p');
+        description.setAttribute('role', 'status');
+        description.textContent = message;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = '重试';
+        button.addEventListener('click', retry);
+        container.replaceChildren(description, button);
+    }
+
     ensure();
-    return { open, close };
+    return { open, close, showRetry };
 })();
 window.FeatureDialog = FeatureDialog;
 
 const DraftManager = (function() {
     const DB_NAME = 'SoraDirectoryDraftDB';
     const STORE_NAME = 'drafts';
-    let dbPromise = null;
+    const databaseConnection = SoraStorageDatabase.create({
+        name: DB_NAME,
+        version: 2,
+        label: '草稿',
+        upgrade(db, transaction) {
+            if (!db.objectStoreNames.contains(STORE_NAME)) {
+                db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+            }
+            const store = transaction.objectStore(STORE_NAME);
+            if (!store.indexNames.contains('documentId')) store.createIndex('documentId', 'documentId');
+            if (!db.objectStoreNames.contains('documents')) db.createObjectStore('documents', { keyPath: 'id' });
+        }
+    });
     let saveTimer = null;
     let restoring = false;
     const snapshotStates = new Map();
@@ -213,26 +237,7 @@ const DraftManager = (function() {
     }
 
     function openDB() {
-        if (dbPromise) return dbPromise;
-        dbPromise = new Promise((resolve, reject) => {
-            const request = indexedDB.open(DB_NAME, 2);
-            request.onupgradeneeded = () => {
-                const db = request.result;
-                if (!db.objectStoreNames.contains(STORE_NAME)) {
-                    db.createObjectStore(STORE_NAME, { keyPath: 'id' });
-                }
-                const store = request.transaction.objectStore(STORE_NAME);
-                if (!store.indexNames.contains('documentId')) store.createIndex('documentId', 'documentId');
-                if (!db.objectStoreNames.contains('documents')) db.createObjectStore('documents', { keyPath: 'id' });
-            };
-            request.onsuccess = () => {
-                request.result.onversionchange = () => { request.result.close(); dbPromise = null; };
-                resolve(request.result);
-            };
-            request.onerror = () => reject(request.error);
-            request.onblocked = () => setStatus('草稿升级等待中', '请关闭其他旧版编辑器标签页');
-        }).catch(error => { dbPromise = null; throw error; });
-        return dbPromise;
+        return databaseConnection.open();
     }
 
     async function read(documentId = documentIdentity().id) {
@@ -245,25 +250,21 @@ const DraftManager = (function() {
             });
         } catch (err) {
             console.warn('读取自动草稿失败:', err);
+            setStatus('草稿读取失败', err.message || '请打开草稿窗口重试');
             return null;
         }
     }
 
     async function listSnapshots(documentId = documentIdentity().id) {
-        try {
-            const db = await openDB();
-            const records = await new Promise((resolve, reject) => {
-                const request = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).index('documentId').getAll(documentId);
-                request.onsuccess = () => resolve(request.result || []);
-                request.onerror = () => reject(request.error);
-            });
-            const prefix = `snapshot:${documentId}:`;
-            return records.filter(record => String(record.id || '').startsWith(prefix))
-                .sort((a, b) => Number(b.updatedAt) - Number(a.updatedAt));
-        } catch (error) {
-            console.warn('读取草稿快照失败:', error);
-            return [];
-        }
+        const db = await openDB();
+        const prefix = `snapshot:${documentId}:`;
+        const records = await new Promise((resolve, reject) => {
+            const request = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME)
+                .getAll(IDBKeyRange.bound(prefix, `${prefix}\uffff`));
+            request.onsuccess = () => resolve(request.result || []);
+            request.onerror = () => reject(request.error);
+        });
+        return records.sort((a, b) => Number(b.updatedAt) - Number(a.updatedAt));
     }
 
     function fingerprint(data) {
@@ -543,14 +544,19 @@ const DraftManager = (function() {
         const wrapper = document.createElement('div');
         wrapper.textContent = '正在读取草稿快照…';
         FeatureDialog.open('草稿与恢复', wrapper);
-        const snapshots = await listSnapshots();
-        wrapper.innerHTML = '';
         const identity = documentIdentity();
-        const latestSection = document.createElement('section');
-        latestSection.className = 'issue-section';
-        latestSection.innerHTML = '<h3>各文档的最新草稿</h3>';
+        try {
+            const [snapshots, latest] = await Promise.all([listSnapshots(identity.id), listLatestDrafts()]);
+            if (!wrapper.isConnected) return;
+            renderManager(wrapper, snapshots, latest, identity);
+        } catch (error) {
+            FeatureDialog.showRetry(wrapper, `读取草稿失败：${error.message || error}`, openManager);
+        }
+    }
+
+    async function listLatestDrafts() {
         const db = await openDB();
-        const latest = await new Promise((resolve, reject) => {
+        return new Promise((resolve, reject) => {
             const items = [];
             const request = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME)
                 .openCursor(IDBKeyRange.bound('latest:', 'latest:\uffff'));
@@ -563,6 +569,13 @@ const DraftManager = (function() {
             };
             request.onerror = () => reject(request.error);
         });
+    }
+
+    function renderManager(wrapper, snapshots, latest, identity) {
+        wrapper.innerHTML = '';
+        const latestSection = document.createElement('section');
+        latestSection.className = 'issue-section';
+        latestSection.innerHTML = '<h3>各文档的最新草稿</h3>';
         if (!latest.length) latestSection.appendChild(Object.assign(document.createElement('p'), { textContent: '暂无最新草稿。' }));
         latest.forEach(record => {
             const row = document.createElement('div');
@@ -597,9 +610,12 @@ const DraftManager = (function() {
         wrapper.append(controls, estimate);
         controls.querySelector('[data-create-snapshot]').addEventListener('click', async () => {
             const name = controls.querySelector('input').value.trim();
-            await createNamedSnapshot(name);
-            FeatureDialog.close();
-            openManager();
+            try {
+                await createNamedSnapshot(name);
+                if (wrapper.isConnected) openManager();
+            } catch (error) {
+                showToast(`建立快照失败：${error.message || error}`, 'warning');
+            }
         });
         if (!snapshots.length) {
             const empty = document.createElement('div');
@@ -1031,13 +1047,15 @@ const MediaManager = (function() {
     }
 
     async function removeItem(item) {
-        if (item.reference.count > 0 || (await DraftManager.protectedMediaIds()).has(item.id)) {
-            showToast('该资源仍被文档、草稿或快照引用，不能删除', 'warning', 2200);
-            return;
+        try {
+            if (item.reference.count > 0 || (await DraftManager.protectedMediaIds()).has(item.id)) {
+                showToast('该资源仍被文档、草稿或快照引用，不能删除', 'warning', 2200);
+                return;
+            }
+            const confirmed = await customConfirm(`删除未被引用的资源 ${item.id}？预计释放 ${displaySize(item.info.size)}。`);
+            if (!confirmed) return;
+            await MediaStorage.deleteMedia(item.id);
         }
-        const confirmed = await customConfirm(`删除未被引用的资源 ${item.id}？预计释放 ${displaySize(item.info.size)}。`);
-        if (!confirmed) return;
-        try { await MediaStorage.deleteMedia(item.id); }
         catch (error) { showToast(error.message, 'warning'); return; }
         showToast('孤立资源已删除', 'success', 1600);
         open();
@@ -1242,7 +1260,6 @@ const MediaManager = (function() {
         details.appendChild(meta);
         const dirs = document.createElement('div');
         dirs.className = 'media-dirs';
-        dirs.textContent = item.directoryNames.length ? `目录：${item.directoryNames.join('、')}` : item.protected ? '其他文档、草稿或快照保留中' : '可清理资源';
         details.appendChild(dirs);
         const actions = document.createElement('div');
         actions.className = 'media-actions';
@@ -1276,13 +1293,25 @@ const MediaManager = (function() {
         }
         const deleteBtn = document.createElement('button');
         deleteBtn.type = 'button';
+        deleteBtn.dataset.deleteMedia = '';
         deleteBtn.textContent = '删除';
-        deleteBtn.disabled = item.reference.count > 0 || item.protected;
         deleteBtn.addEventListener('click', () => removeItem(item));
         actions.appendChild(deleteBtn);
         details.appendChild(actions);
         card.appendChild(details);
+        updateCardProtection(card, item);
         return card;
+    }
+
+    function updateCardProtection(card, item) {
+        const orphan = item.reference.count === 0 && !item.protected;
+        card.classList.toggle('is-orphan', orphan);
+        card.dataset.orphan = String(orphan);
+        card.querySelector('[data-delete-media]').disabled = !orphan;
+        card.querySelector('.media-dirs').textContent = item.directoryNames.length
+            ? `目录：${item.directoryNames.join('、')}`
+            : item.protectionPending ? '草稿引用尚未确认，暂不可清理'
+            : item.protected ? '其他文档、草稿或快照保留中' : '可清理资源';
     }
 
     async function open() {
@@ -1292,7 +1321,6 @@ const MediaManager = (function() {
         FeatureDialog.open('媒体资源管理器', wrapper);
         try {
             const refs = collectReferences();
-            const protectedIds = await DraftManager.protectedMediaIds();
             const allIds = await MediaStorage.getAllMediaIds();
             const ids = allIds.filter(id => !String(id).includes('_chunk_'));
             const items = (await Promise.all(ids.map(async id => {
@@ -1303,9 +1331,10 @@ const MediaManager = (function() {
                     const row = getMulufileByDirId(dirId);
                     return row ? row[1] : dirId;
                 });
-                return { id, info, reference, directoryNames, protected: protectedIds.has(id) };
+                return { id, info, reference, directoryNames, protected: true, protectionPending: true };
             }))).filter(Boolean);
 
+            if (!wrapper.isConnected) return;
             wrapper.innerHTML = '';
             const toolbar = document.createElement('div');
             toolbar.className = 'feature-toolbar';
@@ -1328,13 +1357,17 @@ const MediaManager = (function() {
             sizeFilter.innerHTML = '<option value="">全部大小</option><option value="1048576">小于 1 MB</option><option value="10485760">小于 10 MB</option><option value="52428800">小于 50 MB</option>';
             const summary = document.createElement('span');
             summary.className = 'media-summary';
-            const removable = items.filter(item => item.reference.count === 0 && !item.protected);
-            summary.textContent = `${items.length} 个资源，${removable.length} 个可清理，预计释放 ${displaySize(removable.reduce((sum, item) => sum + (Number(item.info.size) || 0), 0))}`;
+            summary.setAttribute('role', 'status');
+            summary.textContent = `${items.length} 个资源，正在检查草稿引用…`;
             toolbar.append(search, typeFilter, sizeFilter, currentLabel, orphanLabel, summary);
             wrapper.appendChild(toolbar);
+            const protectionStatus = document.createElement('div');
+            protectionStatus.className = 'media-summary';
+            wrapper.appendChild(protectionStatus);
             const grid = document.createElement('div');
             grid.className = 'media-grid';
-            items.forEach(item => grid.appendChild(createCard(item)));
+            const cards = items.map(item => createCard(item));
+            cards.forEach(card => grid.appendChild(card));
             wrapper.appendChild(grid);
             const previewImages = Array.from(grid.querySelectorAll('img[data-media-preview-id]'));
             const previewUrls = new Set();
@@ -1394,8 +1427,32 @@ const MediaManager = (function() {
             currentOnly.addEventListener('change', applyFilter);
             typeFilter.addEventListener('change', applyFilter);
             sizeFilter.addEventListener('change', applyFilter);
+            const checkProtection = async () => {
+                if (!wrapper.isConnected) return;
+                protectionStatus.replaceChildren();
+                summary.textContent = `${items.length} 个资源，正在检查草稿引用…`;
+                orphanOnly.disabled = true;
+                try {
+                    const protectedIds = await DraftManager.protectedMediaIds();
+                    if (!wrapper.isConnected) return;
+                    items.forEach((item, index) => {
+                        item.protected = protectedIds.has(item.id);
+                        item.protectionPending = false;
+                        updateCardProtection(cards[index], item);
+                    });
+                    const removable = items.filter(item => item.reference.count === 0 && !item.protected);
+                    summary.textContent = `${items.length} 个资源，${removable.length} 个可清理，预计释放 ${displaySize(removable.reduce((sum, item) => sum + (Number(item.info.size) || 0), 0))}`;
+                    orphanOnly.disabled = false;
+                    applyFilter();
+                } catch (error) {
+                    if (!wrapper.isConnected) return;
+                    summary.textContent = `${items.length} 个资源，引用检查未完成，暂不可清理`;
+                    FeatureDialog.showRetry(protectionStatus, `媒体可继续查看和插入。${error.message || error}`, checkProtection);
+                }
+            };
+            setTimeout(checkProtection, 0);
         } catch (err) {
-            wrapper.textContent = `读取媒体资源失败：${err.message || err}`;
+            FeatureDialog.showRetry(wrapper, `读取媒体资源失败：${err.message || err}`, open);
         }
     }
 

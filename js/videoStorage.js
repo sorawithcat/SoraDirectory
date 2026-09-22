@@ -4,7 +4,19 @@ const MediaStorage = (function() {
     const STORE_NAME = 'media';
     const CONTENT_HASH_INDEX = 'contentHash';
     const OPFS_DIRECTORY_NAME = 'sora-media';
-    let db = null;
+    const databaseConnection = SoraStorageDatabase.create({
+        name: DB_NAME,
+        version: DB_VERSION,
+        label: '媒体',
+        upgrade(database, transaction) {
+            const store = !database.objectStoreNames.contains(STORE_NAME)
+                ? database.createObjectStore(STORE_NAME, { keyPath: 'id' })
+                : transaction.objectStore(STORE_NAME);
+            if (!store.indexNames.contains(CONTENT_HASH_INDEX)) {
+                store.createIndex(CONTENT_HASH_INDEX, CONTENT_HASH_INDEX, { unique: false });
+            }
+        }
+    });
     let opfsDirectoryPromise = null;
     const processedContentCache = new Map();
     const mediaUrlCache = new Map();
@@ -91,34 +103,7 @@ function hashString(str) {
      * @returns {Promise<IDBDatabase>}
      */
 function initDB() {
-        return new Promise((resolve, reject) => {
-            if (db) {
-                resolve(db);
-                return;
-            }
-            const request = indexedDB.open(DB_NAME, DB_VERSION);
-            request.onerror = () => {
-                console.error('MediaStorage: 无法打开 IndexedDB', request.error);
-                reject(request.error);
-            };
-            request.onsuccess = () => {
-                db = request.result;
-                db.onversionchange = () => {
-                    db.close();
-                    db = null;
-                };
-                resolve(db);
-            };
-            request.onupgradeneeded = (event) => {
-                const database = event.target.result;
-                const store = !database.objectStoreNames.contains(STORE_NAME)
-                    ? database.createObjectStore(STORE_NAME, { keyPath: 'id' })
-                    : event.target.transaction.objectStore(STORE_NAME);
-                if (!store.indexNames.contains(CONTENT_HASH_INDEX)) {
-                    store.createIndex(CONTENT_HASH_INDEX, CONTENT_HASH_INDEX, { unique: false });
-                }
-            };
-        });
+        return databaseConnection.open();
     }
 
     function requestToPromise(request) {

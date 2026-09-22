@@ -3297,6 +3297,11 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             debugEnabled: false
         };
     publicationSettings.splitMedia = publicationSettings.splitMedia === true;
+    const serverPackage = exportScope?.serverPackage || null;
+    if (serverPackage) {
+        publicationSettings.deploymentMode = 'static-folder';
+        publicationSettings.splitMedia = true;
+    }
     if (publicationSettings.splitMedia && publicationSettings.deploymentMode === 'single-html') {
         publicationSettings.deploymentMode = 'static-folder';
     }
@@ -3307,12 +3312,12 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
     const partialSuffix = exportScope && exportScope.mode === 'partial' ? '_partial' : '';
     let filename = encrypt ? `${baseName}${partialSuffix}.encrypted.html` : `${baseName}${partialSuffix}.html`;
     let selectedFileHandle = null;
-    let deploymentDirectoryHandle = null;
-    if (publicationSettings.deploymentMode !== 'single-html' && typeof window.showDirectoryPicker !== 'function' && publicationSettings.splitMedia) {
+    let deploymentDirectoryHandle = serverPackage?.directory || null;
+    if (!deploymentDirectoryHandle && publicationSettings.deploymentMode !== 'single-html' && typeof window.showDirectoryPicker !== 'function' && publicationSettings.splitMedia) {
         await customAlert('当前浏览器不支持选择导出目录，无法拆分媒体文件。请使用最新版 Edge 或 Chrome，或关闭“拆分媒体文件”。', '无法拆分媒体');
         return false;
     }
-    if (publicationSettings.deploymentMode !== 'single-html' && typeof window.showDirectoryPicker === 'function') {
+    if (!deploymentDirectoryHandle && publicationSettings.deploymentMode !== 'single-html' && typeof window.showDirectoryPicker === 'function') {
         try {
             deploymentDirectoryHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
             filename = 'index.html';
@@ -3666,7 +3671,9 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                 return inlineAssetCache.get(dataUrl);
             }
 
-            const assetId = 'asset_' + (++mediaAssetCounter).toString(36);
+            const assetId = serverPackage
+                ? 'asset_' + await serverPackage.assetKey(mediaId || dataUrl)
+                : 'asset_' + (++mediaAssetCounter).toString(36);
             let asset = null;
             if (externalContext) {
                 try {
@@ -3708,12 +3715,14 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             const item = muluData[i];
             if (!item || item.length !== 4) continue;
             const dirId = item[2];
+            if (serverPackage) placeholderCounter = 0;
+            const placeholderKey = serverPackage ? await serverPackage.assetKey('directory:' + dirId) : generatePlaceholderKeyPart(dirId);
             let content = item[3] || '';
 
             try {
                 const temp = document.createElement('div');
                 temp.innerHTML = String(content);
-                if (window.SoraReusableBlocks) window.SoraReusableBlocks.expandTemplate(temp, sourceData);
+                if (window.SoraReusableBlocks) window.SoraReusableBlocks.expandTemplate(temp, serverPackage?.sourceData || sourceData);
                 sanitizeExportContent(temp);
                 window.SoraContentFormats?.forStorage(temp);
                 temp.querySelectorAll('pre code').forEach(code => {
@@ -3730,7 +3739,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                     const asset = await exportMediaAsset(img, 'image');
                     if (!asset) continue;
                     placeholderCounter++;
-                    const placeholderId = 'media_' + generatePlaceholderKeyPart(dirId) + '_' + placeholderCounter.toString(36);
+                    const placeholderId = 'media_' + placeholderKey + '_' + placeholderCounter.toString(36);
                     mediaDataMap[placeholderId] = {
                         type: 'image',
                         assetId: asset.assetId
@@ -3745,7 +3754,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                 for (let j = 0; j < videos.length; j++) {
                     const videoEl = videos[j];
                     placeholderCounter++;
-                    const placeholderId = 'media_' + generatePlaceholderKeyPart(dirId) + '_' + placeholderCounter.toString(36);
+                    const placeholderId = 'media_' + placeholderKey + '_' + placeholderCounter.toString(36);
                     const asset = await exportMediaAsset(videoEl, 'video');
                     mediaDataMap[placeholderId] = asset ? {
                         type: 'video',
@@ -3776,7 +3785,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                     const asset = await exportMediaAsset(archive, 'archive');
                     if (!asset) continue;
                     placeholderCounter++;
-                    const placeholderId = 'media_' + generatePlaceholderKeyPart(dirId) + '_' + placeholderCounter.toString(36);
+                    const placeholderId = 'media_' + placeholderKey + '_' + placeholderCounter.toString(36);
                     mediaDataMap[placeholderId] = {
                         type: 'archive',
                         assetId: asset.assetId
@@ -3860,7 +3869,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                 '目录右键动作': 'directory_action'
             }
     ).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
-    const hasMethodRuntime = sourceData.some(row => Array.isArray(row) && /data-sora-(?:link=["']method|methods=)/i.test(String(row[3] || '')));
+    const hasMethodRuntime = !!serverPackage || sourceData.some(row => Array.isArray(row) && /data-sora-(?:link=["']method|methods=)/i.test(String(row[3] || '')));
     const methodRuntimeCoreSource = hasMethodRuntime && window.SoraMethodRuntimeCore && typeof window.SoraMethodRuntimeCore.toInlineScript === 'function'
         ? window.SoraMethodRuntimeCore.toInlineScript('SoraMethodRuntimeCore')
         : 'const SoraMethodRuntimeCore={redactTimelineEntry:function(value){return value||{}}};';
@@ -4723,9 +4732,11 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
     ${contentScripts}
     ${mediaDataScripts}
     ${mediaChunkMarker}
+    ${serverPackage ? '<script type="application/json" id="soraReaderConfig">' + JSON.stringify({ publication: publicationSettings, colors: JSON.parse(directoryLevelColorsJson), handlers: JSON.parse(methodRuntimeHandlersJson), baseName, defaultDirId: firstDirId }).replace(/</g, '\\u003c') + '</script>' : ''}
     <script>
         ${methodRuntimeCoreSource}
-        const SORA_PUBLICATION = ${publicationSettingsJson};
+        ${serverPackage ? 'const SORA_READER_CONFIG = JSON.parse(document.getElementById("soraReaderConfig").textContent);' : ''}
+        const SORA_PUBLICATION = ${serverPackage ? 'SORA_READER_CONFIG.publication' : publicationSettingsJson};
         const SORA_SPLIT_MEDIA_KEY = window.__soraSplitMediaKey || null;
         try { delete window.__soraSplitMediaKey; } catch (e) { window.__soraSplitMediaKey = null; }
         const contentCache = {};
@@ -4734,8 +4745,8 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         const authorizedSplitMediaFiles = new Map();
         let localSplitMediaAuthorizationForced = false;
         let localSplitMediaAuthorizationReady = false;
-        const directoryLevelColors = ${directoryLevelColorsJson};
-        const soraMethodRuntimeHandlers = ${methodRuntimeHandlersJson};
+        const directoryLevelColors = ${serverPackage ? 'SORA_READER_CONFIG.colors' : directoryLevelColorsJson};
+        const soraMethodRuntimeHandlers = ${serverPackage ? 'SORA_READER_CONFIG.handlers' : methodRuntimeHandlersJson};
         let currentSelected = null;
         let currentDirId = null;
         let soraMethodContextDirId = null;
@@ -4917,7 +4928,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             const title = nameMap[dirId] || '未命名';
             document.getElementById('contentTitle').textContent = title;
             document.getElementById('contentBody').innerHTML = content || '<div class="empty-state">此目录暂无内容</div>';
-            document.title = title + ' · ' + ${JSON.stringify(baseName)};
+            document.title = title + ' · ' + ${serverPackage ? 'SORA_READER_CONFIG.baseName' : JSON.stringify(baseName)};
             assignHeadingAutoIds(document.getElementById('contentBody'));
             buildContentOutline();
             updateReadingProgress();
@@ -8446,7 +8457,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             scheduleExportSearchIndexBuild();
         }
         
-        const defaultDirId = ${JSON.stringify(firstDirId || '').replace(/<\/script>/gi, '<\\/script')};
+        const defaultDirId = ${serverPackage ? 'SORA_READER_CONFIG.defaultDirId' : JSON.stringify(firstDirId || '').replace(/<\/script>/gi, '<\\/script')};
         const initialRoute = readExportRoute();
         const initialRouteTarget = initialRoute && initialRoute.dirId
             ? document.querySelector('[data-dir-id="' + escapeCssSelectorValue(initialRoute.dirId) + '"]')
@@ -8569,7 +8580,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
     if (deploymentDirectoryHandle) {
         const htmlHandle = await deploymentDirectoryHandle.getFileHandle('index.html', { create: true });
         await writeFinalHtml(htmlHandle);
-        if (splitMediaContext && splitMediaContext.assetCount > 0) {
+        if (!serverPackage && splitMediaContext && splitMediaContext.assetCount > 0) {
             await writePartsToDirectoryHandle(deploymentDirectoryHandle, 'sora-local-server.py', [buildLocalServerPythonSource()]);
             await writePartsToDirectoryHandle(deploymentDirectoryHandle, '本地打开.cmd', [buildLocalServerCmdSource()]);
         }
@@ -8622,6 +8633,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             console.warn('Unable to remove webpage media spool:', err);
         }
     }
+    if (serverPackage) return true;
     showToast(deploymentDirectoryHandle
         ? `已导出${publicationSettings.deploymentMode === 'pwa-folder' ? ' PWA' : ''}网站目录${splitMediaContext ? `（媒体已拆分${splitMediaContext.encrypted ? '并加密' : ''}${splitMediaContext.assetCount > 0 ? '，可双击“本地打开.cmd”' : ''}）` : ''}：${filename}`
         : `已导出${encrypt ? '加密' : ''}网页：${filename}`, 'success', 2500);

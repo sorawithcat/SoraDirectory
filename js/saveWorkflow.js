@@ -120,7 +120,7 @@ const SoraSaveWorkflow = (function() {
         if (!saved || typeof saved !== 'object') saved = {};
         wrapper.innerHTML = `
             <div class="sora-export-grid">
-                <label>导出格式<select name="format"><option value="sora">可编辑文件（.sora，包含媒体）</option><option value="webpage">阅读网页（.html）</option><option value="modified">修改目录（增量 JSON）</option><option value="diff">内容差异（补丁 JSON）</option></select></label>
+                <label>导出格式<select name="format"><option value="sora">可编辑文件（.sora，包含媒体）</option><option value="single-html">单 HTML（.html，包含媒体）</option><option value="webpage">网站目录（静态 / PWA）</option><option value="server">服务器部署压缩包（.zip）</option><option value="modified">修改目录（增量 JSON）</option><option value="diff">内容差异（补丁 JSON）</option></select></label>
                 <label>导出范围<select name="scope"><option value="all">全部目录</option><option value="current">当前目录及子目录</option><option value="pick">手动选择目录</option></select></label>
                 <label>文件保护<select name="encrypt"><option value="no">不加密</option><option value="yes">密码加密</option></select></label>
             </div>
@@ -129,18 +129,23 @@ const SoraSaveWorkflow = (function() {
                 <label>确认密码<input name="confirmation" type="password" autocomplete="new-password"></label>
             </div>
             <div class="sora-export-grid" data-web-fields hidden>
-                <label>网页形式<select name="deployment"><option value="single-html">单 HTML</option><option value="static-folder">静态网站目录</option><option value="pwa-folder">离线应用目录（PWA）</option></select></label>
+                <label>网页形式<select name="deployment"><option value="static-folder">静态网站目录</option><option value="pwa-folder">离线应用目录（PWA）</option></select></label>
                 <label>媒体存放<select name="split"><option value="no">嵌入网页</option><option value="yes">拆分为独立文件</option></select></label>
+            </div>
+            <div class="sora-export-grid" data-server-fields hidden>
+                <label>服务器类型<select name="serverMode"><option value="static">通用静态包（完整站点，无需 PHP）</option><option value="php-append">PHP 追加包（仅部署选中目录）</option></select></label>
             </div>
             <p class="media-summary" data-export-summary aria-live="polite"></p>
             <p class="sora-form-error" data-export-error role="alert"></p>
             <div class="method-workbench-actions"><button type="button" data-pick-directories>选择目录</button><button type="button" data-publication>更多发布设置</button><button type="submit">生成文件</button></div>`;
         const fields = wrapper.elements;
-        if (['sora', 'webpage', 'modified', 'diff'].includes(saved.format)) fields.format.value = saved.format;
+        if (['sora', 'single-html', 'webpage', 'server', 'modified', 'diff'].includes(saved.format)) fields.format.value = saved.format;
+        fields.serverMode.value = saved.serverMode === 'php-append' ? 'php-append' : 'static';
         if (['all', 'current', 'pick'].includes(saved.scope)) fields.scope.value = saved.scope;
         fields.encrypt.value = soraDocumentEncrypted ? 'yes' : saved.encrypt === 'yes' ? 'yes' : 'no';
         const publication = window.PublicationSettings?.get() || {};
-        fields.deployment.value = publication.deploymentMode || 'single-html';
+        if (saved.formatVersion !== 2 && saved.format === 'webpage' && (!publication.deploymentMode || publication.deploymentMode === 'single-html')) fields.format.value = 'single-html';
+        fields.deployment.value = publication.deploymentMode === 'pwa-folder' ? 'pwa-folder' : 'static-folder';
         fields.split.value = publication.splitMedia ? 'yes' : 'no';
         let selectedIds = [];
         const getRows = () => {
@@ -151,11 +156,16 @@ const SoraSaveWorkflow = (function() {
         const refresh = () => {
             const patch = ['modified', 'diff'].includes(fields.format.value);
             const web = fields.format.value === 'webpage';
-            fields.scope.disabled = patch;
+            const singleHtml = fields.format.value === 'single-html';
+            const server = fields.format.value === 'server';
+            const staticServer = server && fields.serverMode.value === 'static';
+            if (staticServer) fields.scope.value = 'all';
+            fields.scope.disabled = patch || staticServer;
             wrapper.querySelector('[data-password-fields]').hidden = fields.encrypt.value !== 'yes';
             fields.password.required = fields.confirmation.required = fields.encrypt.value === 'yes';
             wrapper.querySelector('[data-web-fields]').hidden = !web;
-            wrapper.querySelector('[data-publication]').hidden = !web;
+            wrapper.querySelector('[data-server-fields]').hidden = !server;
+            wrapper.querySelector('[data-publication]').hidden = !web && !singleHtml && !server;
             wrapper.querySelector('[data-pick-directories]').hidden = patch || fields.scope.value !== 'pick';
             const modifiedIds = patch ? new Set(getModifiedDirectories()) : null;
             const rows = patch ? mulufile.filter(row => modifiedIds.has(row[2])) : getRows();
@@ -163,8 +173,13 @@ const SoraSaveWorkflow = (function() {
             const mediaCount = collectSoraPackageMediaIds(rows).size;
             let detail = `${rows.length} 个目录 · 正文约 ${formatSoraProgressBytes(textBytes)} · ${mediaCount} 个媒体；最终大小随媒体与加密变化。`;
             if (patch) detail += ' 补丁需合并到原文档，不包含目录删除操作。';
-            if (web) detail += fields.split.value === 'yes' ? ' 将生成网页和媒体目录，请整体分享；本地打开可使用随包启动器。' : ' 媒体嵌入网页，适合单文件分享。';
+            if (singleHtml) detail += ' 生成一个 HTML 文件，已存储媒体嵌入其中，可直接打开或分享，支持密码加密，无需 PHP。';
+            if (web) detail += fields.split.value === 'yes' ? ' 将生成网页和媒体目录，请整体分享；本地打开可使用随包启动器。' : ' 将生成网站目录，媒体嵌入其中的 HTML 页面。';
             if (web && fields.encrypt.value === 'yes' && fields.deployment.value === 'pwa-folder') detail += ' 加密网页将使用静态目录。';
+            if (server) detail += staticServer
+                ? ' 完整站点 ZIP，解压到网站目录即可部署；普通静态服务器可用，更新时包含旧内容与新增内容。'
+                : ' 需要 PHP 7.4+。只打包所选目录及其媒体，解压覆盖到原站点后自动新增或更新，未选目录保留；空站点也可使用。旧版 HTML 站点首次切换需导出全部目录。';
+            if (server && !staticServer && fields.encrypt.value === 'yes') detail += ' PHP 追加包暂不支持密码加密。';
             wrapper.querySelector('[data-export-summary]').textContent = detail;
         };
         wrapper.addEventListener('change', refresh);
@@ -174,7 +189,7 @@ const SoraSaveWorkflow = (function() {
             refresh();
         };
         wrapper.querySelector('[data-publication]').onclick = () => {
-            try { localStorage.setItem('sora_export_options_v1', JSON.stringify({ format: fields.format.value, scope: fields.scope.value, encrypt: fields.encrypt.value })); } catch (_) {}
+            try { localStorage.setItem('sora_export_options_v1', JSON.stringify({ formatVersion: 2, format: fields.format.value, scope: fields.scope.value, encrypt: fields.encrypt.value, serverMode: fields.serverMode.value })); } catch (_) {}
             FeatureDialog.close();
             PublicationSettings.open();
         };
@@ -185,17 +200,39 @@ const SoraSaveWorkflow = (function() {
             const password = encrypt ? fields.password.value : null;
             if (encrypt && (!password || password !== fields.confirmation.value)) { error.textContent = '请填写密码，并确保两次输入一致。'; return; }
             const format = fields.format.value;
+            const serverMode = fields.serverMode.value;
+            if (format === 'server' && serverMode === 'php-append' && encrypt) {
+                error.textContent = 'PHP 追加包暂不支持密码加密，请选择不加密，或改用通用静态包。'; return;
+            }
             const patch = ['modified', 'diff'].includes(format);
             const rows = patch ? mulufile : getRows();
             if (!rows.length) { error.textContent = '请选择至少一个目录。'; return; }
             if (format === 'webpage' && (fields.deployment.value !== 'single-html' || fields.split.value === 'yes') && typeof showDirectoryPicker !== 'function') {
-                error.textContent = '当前浏览器无法写入目录，请选择单 HTML 并嵌入媒体，或改用支持目录写入的浏览器。'; return;
+                error.textContent = '当前浏览器无法写入目录，请选择单 HTML 格式，或改用支持目录写入的浏览器。'; return;
             }
             const scope = { mode: fields.scope.value === 'all' ? 'all' : 'partial', count: rows.length, label: fields.scope.selectedOptions[0].textContent };
-            scope.publicationSettings = { ...PublicationSettings.get(), deploymentMode: fields.deployment.value, splitMedia: fields.split.value === 'yes' };
+            scope.publicationSettings = { ...PublicationSettings.get(),
+                deploymentMode: format === 'single-html' ? 'single-html' : fields.deployment.value,
+                splitMedia: format === 'single-html' ? false : fields.split.value === 'yes' };
             const state = capture(rows);
             scope.documentState = state;
-            try { localStorage.setItem('sora_export_options_v1', JSON.stringify({ format, scope: fields.scope.value, encrypt: fields.encrypt.value })); } catch (_) {}
+            if (format === 'server') {
+                scope.serverSourceData = mulufile.map(row => Array.isArray(row) ? row.slice() : row);
+                const byId = new Map(mulufile.map(row => [String(row[2]), row]));
+                scope.serverDirectoryMetadata = Object.create(null);
+                mulufile.forEach((row, order) => {
+                    let parentId = String(row[0]);
+                    let level = 0;
+                    const visited = new Set([String(row[2])]);
+                    while (byId.has(parentId) && !visited.has(parentId)) {
+                        visited.add(parentId);
+                        level++;
+                        parentId = String(byId.get(parentId)[0]);
+                    }
+                    scope.serverDirectoryMetadata[String(row[2])] = { parentId: String(row[0]), order, palette: getDirectoryLevelPalette(level) };
+                });
+            }
+            try { localStorage.setItem('sora_export_options_v1', JSON.stringify({ formatVersion: 2, format, scope: fields.scope.value, encrypt: fields.encrypt.value, serverMode })); } catch (_) {}
             fields.password.value = fields.confirmation.value = '';
             FeatureDialog.close();
             run(async () => {
@@ -204,6 +241,7 @@ const SoraSaveWorkflow = (function() {
                 if (patch) return exportPatch(format, encrypt, password, state);
                 if (!await confirmExportPreflight(state.data)) return false;
                 if (format === 'sora') return handleSaveAsSoraPackage(null, state.data, scope, { encrypt, password, saveState: state });
+                if (format === 'server') return SoraServerPackage.exportSite(encrypt, password, state.data, scope, serverMode);
                 return handleSaveAsWebpage(encrypt, password, state.data, scope);
             });
         };
