@@ -317,6 +317,7 @@ const DraftManager = (function() {
             markdownPreview.querySelectorAll('[data-media-storage-id]').forEach(element => ids.add(element.getAttribute('data-media-storage-id')));
         }
         if (window.DirectoryHistory?.collectMediaIds) DirectoryHistory.collectMediaIds(ids);
+        window.SoraEditor?.collectMediaIds(ids);
         await Promise.all([STORE_NAME, 'documents'].map(name => new Promise((resolve, reject) => {
             const request = db.transaction(name, 'readonly').objectStore(name).openCursor();
             request.onsuccess = () => {
@@ -1406,7 +1407,7 @@ window.MediaManager = MediaManager;
 const SoraCommands = (function() {
     function list() {
         const shortcuts = { saveBtn: 'Ctrl+S', searchBtn: 'Ctrl+F', replaceBtn: 'Ctrl+H', globalCommandBtn: 'Ctrl+K' };
-        const actions = Array.from(document.querySelectorAll('#topToolbar .top-toolbar-btn')).filter(button => !button.closest('.mobile-toolbar-group')).map(button => ({
+        const actions = Array.from(document.querySelectorAll('#topToolbar .top-toolbar-btn')).filter(button => !button.closest('.mobile-toolbar-group') && !(window.SoraFormatting && button.classList.contains('format-toolbar-btn'))).map(button => ({
             key: button.id || `format:${button.dataset.command}`,
             label: button.title || button.textContent.trim(),
             text: button.textContent.trim(),
@@ -1417,6 +1418,13 @@ const SoraCommands = (function() {
             disabledReason: button.disabled ? button.title || '当前状态不可用' : '',
             run: () => button.click()
         }));
+        (window.SoraFormatting?.definitions || []).forEach(definition => {
+            const state = SoraFormatting.state(definition.command);
+            const button = document.querySelector(`.format-toolbar-scroll [data-command="${definition.command}"]`);
+            actions.push({ key: `format:${definition.command}`, label: definition.label, text: definition.text, group: definition.group,
+                button, disabled: state.disabled, disabledReason: state.disabled ? '请先选择适用的正文、列表或表格' : '',
+                run: () => SoraFormatting.apply(definition.command) });
+        });
         (window.SoraFeatureCommands || []).forEach(command => {
             if (!command?.key || typeof command.run !== 'function') return;
             const disabledReason = typeof command.disabledReason === 'function' ? command.disabledReason() : command.disabledReason || '';
@@ -1481,6 +1489,8 @@ const ToolbarOrganizer = (function() {
             proxy.disabled = action.disabled;
             proxy.setAttribute('aria-label', action.label);
             if (action.button?.hasAttribute('aria-busy')) proxy.setAttribute('aria-busy', action.button.getAttribute('aria-busy'));
+            if (action.key.startsWith('format:') && window.SoraFormatting) proxy.setAttribute('aria-pressed', SoraFormatting.state(action.key.slice(7)).pressed);
+            proxy.addEventListener('pointerdown', () => window.SoraEditor?.remember());
             proxy.addEventListener('click', () => SoraCommands.run(key));
             container.appendChild(proxy);
         });
@@ -1589,6 +1599,11 @@ const ToolbarOrganizer = (function() {
         if (action.button) observer.observe(action.button, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['title', 'disabled', 'aria-busy', 'aria-pressed'] });
     });
     renderMobile();
+    document.addEventListener('sora:format-state', () => {
+        if (renderPending) return;
+        renderPending = true;
+        queueMicrotask(() => { renderPending = false; renderMobile(); });
+    });
     return { renderMobile, open };
 })();
 window.ToolbarOrganizer = ToolbarOrganizer;

@@ -14,6 +14,8 @@ function removeSearchHighlights(html) {
  */
 function syncPreviewToTextarea() {
     if (markdownPreview && jiedianwords) {
+        if (window.SoraEditor?.isComposing()) return;
+        window.SoraContentFormats?.normalizeFootnotes(markdownPreview);
         const checkboxes = markdownPreview.querySelectorAll('input[type="checkbox"]');
         checkboxes.forEach(checkbox => {
             if (checkbox.checked) {
@@ -24,6 +26,7 @@ function syncPreviewToTextarea() {
         });
         ensureAnchorElements(markdownPreview);
         const storageRoot = markdownPreview.cloneNode(true);
+        window.SoraContentFormats?.forStorage(storageRoot);
         storageRoot.querySelectorAll('.sora-issue-target').forEach(element => {
             element.classList.remove('sora-issue-target');
             if (!element.className) element.removeAttribute('class');
@@ -81,6 +84,7 @@ function syncPreviewToTextarea() {
                 updateMulufileData(changedmulu, html, { normalized: true });
             }
         }
+        window.SoraEditor?.didSync();
     }
 }
 /**
@@ -300,6 +304,7 @@ function normalizeEditorHtmlForStorage(html) {
     const template = document.createElement('template');
     const source = String(html);
     template.innerHTML = source;
+    window.SoraContentFormats?.forStorage(template.content);
     if (typeof sanitizeEditorFragment === 'function' &&
         (typeof needsEditorHtmlSanitizing !== 'function' || needsEditorHtmlSanitizing(source))) {
         sanitizeEditorFragment(template.content);
@@ -620,6 +625,7 @@ async function updateMarkdownPreview(options = {}) {
                 isUpdating = false;
                 // DOM更新后立即执行的后续操作
                 processAfterDOMUpdate();
+                window.SoraEditor?.onRender();
                 resolve();
             };
 
@@ -829,131 +835,13 @@ function initializeVideos() {
 if (markdownPreview) {
     markdownPreview.setAttribute('contenteditable', 'true');
     markdownPreview.setAttribute('spellcheck', 'true');
-    markdownPreview.addEventListener("keydown", function(e) {
-        if (e.key === 'Enter') {
-            const selection = window.getSelection();
-            if (selection.rangeCount > 0) {
-                const range = selection.getRangeAt(0);
-                let container = range.commonAncestorContainer;
-                if (container.nodeType === Node.TEXT_NODE) {
-                    container = container.parentNode;
-                }
-                const codeBlock = container.closest('pre, code');
-                if (codeBlock) {
-                    e.preventDefault();
-                    const textNode = document.createTextNode('\n');
-                    range.deleteContents();
-                    range.insertNode(textNode);
-                    range.setStartAfter(textNode);
-                    range.setEndAfter(textNode);
-                    selection.removeAllRanges();
-                    selection.addRange(range);
-                    syncPreviewToTextarea();
-                    return;
-                }
-                if (e.shiftKey) return;
-                let currentBlock = container;
-                while (currentBlock && currentBlock !== markdownPreview) {
-                    const tagName = currentBlock.tagName;
-                    if (tagName === 'DIV') {
-                        const specialParent = currentBlock.closest('ul, ol, table, blockquote, h1, h2, h3, h4, h5, h6, pre, code');
-                        if (!specialParent) {
-                            e.preventDefault();
-                            const p = document.createElement('p');
-                            while (currentBlock.firstChild) p.appendChild(currentBlock.firstChild);
-                            if (!p.firstChild) p.appendChild(document.createElement('br'));
-                            currentBlock.replaceWith(p);
-                            range.selectNodeContents(p);
-                            range.collapse(false);
-                            selection.removeAllRanges();
-                            selection.addRange(range);
-                            return;
-                        }
-                    }
-                    if (['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'TD', 'TH', 'BLOCKQUOTE'].includes(tagName)) {
-                        break;
-                    }
-                    currentBlock = currentBlock.parentNode;
-                }
-            }
-        }
-    });
     const debouncedSync = debounce(syncPreviewToTextarea, 150);
-    const debouncedDivToP = debounce(function() {
-        const divs = markdownPreview.querySelectorAll('div:not([class])');
-        divs.forEach(div => {
-            if (div.closest('ul, ol, table, blockquote, h1, h2, h3, h4, h5, h6, pre, code')) {
-                return;
-            }
-            const hasBlockChildren = Array.from(div.children).some(child => 
-                ['DIV', 'P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'UL', 'OL', 'BLOCKQUOTE', 'TABLE', 'PRE', 'CODE'].includes(child.tagName)
-            );
-            if (!hasBlockChildren) {
-                const p = document.createElement('p');
-                Array.from(div.attributes).forEach(attr => {
-                    p.setAttribute(attr.name, attr.value);
-                });
-                p.innerHTML = div.innerHTML;
-                div.parentNode.replaceChild(p, div);
-            }
-        });
-    }, 200);
     markdownPreview.addEventListener("input", function (e) {
         if (isUpdating) return;
-        const selection = window.getSelection();
-        if (selection.rangeCount > 0) {
-            const range = selection.getRangeAt(0);
-            const formatTags = ['EM', 'I', 'STRONG', 'B', 'U', 'S', 'STRIKE', 'DEL', 'CODE', 'MARK', 'SUP', 'SUB'];
-            let container = range.startContainer;
-            let node = container.nodeType === Node.TEXT_NODE ? container.parentNode : container;
-            while (node && node !== markdownPreview) {
-                if (node.nodeType === Node.ELEMENT_NODE && formatTags.includes(node.tagName)) {
-                    const blockTags = ['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'TD', 'TH', 'BLOCKQUOTE', 'UL', 'OL', 'PRE'];
-                    let blockParent = node.parentNode;
-                    while (blockParent && blockParent !== markdownPreview) {
-                        if (blockParent.nodeType === Node.ELEMENT_NODE && blockTags.includes(blockParent.tagName)) {
-                            break;
-                        }
-                        blockParent = blockParent.parentNode;
-                    }
-                    if (!blockParent) blockParent = markdownPreview;
-                    const textNode = document.createTextNode('');
-                    if (node.nextSibling) {
-                        node.parentNode.insertBefore(textNode, node.nextSibling);
-                    } else {
-                        node.parentNode.appendChild(textNode);
-                    }
-                    let checkNode = textNode.parentNode;
-                    let stillInFormat = false;
-                    while (checkNode && checkNode !== markdownPreview) {
-                        if (checkNode.nodeType === Node.ELEMENT_NODE && formatTags.includes(checkNode.tagName)) {
-                            stillInFormat = true;
-                            break;
-                        }
-                        checkNode = checkNode.parentNode;
-                    }
-                    if (stillInFormat) {
-                        textNode.remove();
-                        const newTextNode = document.createTextNode('');
-                        blockParent.appendChild(newTextNode);
-                        const newRange = document.createRange();
-                        newRange.setStart(newTextNode, 0);
-                        newRange.setEnd(newTextNode, 0);
-                        selection.removeAllRanges();
-                        selection.addRange(newRange);
-                    } else {
-                        const newRange = document.createRange();
-                        newRange.setStart(textNode, textNode.textContent.length);
-                        newRange.setEnd(textNode, textNode.textContent.length);
-                        selection.removeAllRanges();
-                        selection.addRange(newRange);
-                    }
-                    break;
-                }
-                node = node.parentNode;
-            }
-        }
-        debouncedDivToP();
+        if (e.isComposing || window.SoraEditor?.isComposing()) return;
+        debouncedSync();
+    });
+    markdownPreview.addEventListener('compositionend', () => {
         debouncedSync();
     });
     markdownPreview.addEventListener("change", function(e) {

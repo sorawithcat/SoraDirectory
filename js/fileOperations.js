@@ -3715,6 +3715,11 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                 temp.innerHTML = String(content);
                 if (window.SoraReusableBlocks) window.SoraReusableBlocks.expandTemplate(temp, sourceData);
                 sanitizeExportContent(temp);
+                window.SoraContentFormats?.forStorage(temp);
+                temp.querySelectorAll('pre code').forEach(code => {
+                    const language = Array.from(code.classList).find(name => name.startsWith('language-'))?.slice(9) || code.closest('pre').dataset.lang || '';
+                    code.innerHTML = highlightCode(code.textContent, language);
+                });
 
                 const images = Array.from(temp.querySelectorAll('img'));
                 for (let j = 0; j < images.length; j++) {
@@ -4671,6 +4676,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             .sidebar { transition: none; }
             .reading-progress span { transition:none; }
         }
+        ${window.SoraContentFormats?.styles || ''}
     </style>
 </head>
 <body class="${publicationSettings.navigationMode === 'content-first' ? 'content-first' : ''}">

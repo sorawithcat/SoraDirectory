@@ -42,15 +42,7 @@ function getPreviewSelection() {
         return { text: '', range: null };
     }
     const range = selection.getRangeAt(0);
-    if (!markdownPreview.contains(range.commonAncestorContainer) && 
-        !range.commonAncestorContainer.contains(markdownPreview)) {
-        const previewRange = document.createRange();
-        previewRange.selectNodeContents(markdownPreview);
-        if (range.compareBoundaryPoints(Range.START_TO_START, previewRange) < 0 ||
-            range.compareBoundaryPoints(Range.END_TO_END, previewRange) > 0) {
-            return { text: '', range: null };
-        }
-    }
+    if (!markdownPreview.contains(range.startContainer) || !markdownPreview.contains(range.endContainer)) return { text: '', range: null };
     const text = range.toString().trim();
     return {
         text: text,
@@ -255,11 +247,11 @@ function applyLinkAttributesToElement(a, inputValue) {
 }
 
 async function editLinkElement(a) {
+    const token = window.SoraEditor?.captureElement(a);
     const initial = buildLinkValueForEdit(a);
     const val = await showLinkConfigDialog(initial, '编辑链接');
     if (!val) return;
-    applyLinkAttributesToElement(a, val);
-    syncPreviewToTextarea();
+    if (token) SoraEditor.transaction('编辑链接', token, () => applyLinkAttributesToElement(a, val));
 }
 
 function showLinkConfigDialog(initialValue, title = '插入链接') {
@@ -342,18 +334,21 @@ function showLinkConfigDialog(initialValue, title = '插入链接') {
 }
 
 async function editAnchorElement(anchorEl) {
+    const token = window.SoraEditor?.captureElement(anchorEl);
     const current = anchorEl.getAttribute('data-anchor-name') || '';
     const val = await customPrompt('编辑锚点名:', current);
     if (!val) return;
     const name = normalizeAnchorName(val);
 
     if (!name) return;
+    if (!token) return;
+    SoraEditor.transaction('编辑锚点', token, () => {
     anchorEl.setAttribute('data-anchor-name', name);
     anchorEl.setAttribute('data-sora-anchor', 'true');
     if (!anchorEl.id || !String(anchorEl.id).startsWith('sora-anchor-')) {
         anchorEl.id = generateUniqueAnchorDomId(name);
     }
-    syncPreviewToTextarea();
+    });
 }
 
 function escapeCssSelectorValue(value) {
@@ -672,57 +667,37 @@ async function promptMethodConfig(existing) {
 }
 
 async function editMethodElement(a) {
+    const token = window.SoraEditor?.captureElement(a);
+    if (!token) return;
     const methods = readMethodsFromElement(a);
-    const options = [];
-    for (let i = 0; i < methods.length; i++) {
-        options.push({ value: 'edit_' + i, label: '编辑：' + buildMethodLabel(methods[i]) });
-    }
+    const options = methods.map((method, index) => ({ value: 'edit_' + index, label: '编辑：' + buildMethodLabel(method) }));
     options.push({ value: 'add', label: '添加方法' });
-    if (methods.length > 0) {
-        options.push({ value: 'delete', label: '删除方法' });
-        options.push({ value: 'clear', label: '清空所有方法' });
-    }
-    const action = await customSelect('选择操作：', options, methods.length > 0 ? 'edit_0' : 'add', '方法');
+    if (methods.length) options.push({ value: 'delete', label: '删除方法' }, { value: 'clear', label: '清空所有方法' });
+    const action = await customSelect('选择操作：', options, methods.length ? 'edit_0' : 'add', '方法');
     if (action === null) return;
     if (action === 'add') {
-        const cfg = await promptMethodConfig(null);
-        if (!cfg) return;
-        methods.push(cfg);
+        const method = await promptMethodConfig(null);
+        if (!method) return;
+        methods.push(method);
+    } else if (action === 'clear') {
+        if (!await customConfirm('清空此链接的所有方法？', '清空方法', '取消')) return;
+        methods.length = 0;
+    } else if (action === 'delete') {
+        const selected = await customSelect('选择要删除的方法：', methods.map((method, index) => ({ value: String(index), label: buildMethodLabel(method) })), '0', '删除方法');
+        if (selected === null || !methods[Number(selected)]) return;
+        if (!await customConfirm('删除所选方法？', '删除方法', '取消')) return;
+        methods.splice(Number(selected), 1);
+    } else if (action.startsWith('edit_')) {
+        const index = Number(action.slice(5));
+        if (!methods[index]) return;
+        const method = await promptMethodConfig(methods[index]);
+        if (!method) return;
+        methods[index] = method;
+    } else return;
+    SoraEditor.transaction('编辑方法', token, () => {
         writeMethodsToElement(a, methods);
-        syncPreviewToTextarea();
-        return;
-    }
-    if (action === 'clear') {
-        const ok = await customConfirm('确定清空所有方法？', '确定', '取消', '方法');
-        if (!ok) return;
-        writeMethodsToElement(a, []);
         a.removeAttribute('data-sora-methods-executed');
-        syncPreviewToTextarea();
-        return;
-    }
-    if (action === 'delete') {
-        const delOptions = methods.map((m, idx) => ({ value: String(idx), label: buildMethodLabel(m) }));
-        const idxStr = await customSelect('选择要删除的方法：', delOptions, '0', '方法');
-        if (idxStr === null) return;
-        const idx = parseInt(idxStr, 10);
-        if (isNaN(idx) || idx < 0 || idx >= methods.length) return;
-        const ok = await customConfirm('确定删除此方法？', '确定', '取消', '方法');
-        if (!ok) return;
-        methods.splice(idx, 1);
-        writeMethodsToElement(a, methods);
-        syncPreviewToTextarea();
-        return;
-    }
-    if (String(action).startsWith('edit_')) {
-        const idx = parseInt(String(action).substring('edit_'.length), 10);
-        if (isNaN(idx) || idx < 0 || idx >= methods.length) return;
-        const updated = await promptMethodConfig(methods[idx]);
-        if (!updated) return;
-        methods[idx] = updated;
-        writeMethodsToElement(a, methods);
-        syncPreviewToTextarea();
-        return;
-    }
+    });
 }
 
 if (markdownPreview) {
@@ -832,936 +807,7 @@ if (markdownPreview) {
  * @param {string} command - 格式化命令
  */
 async function applyFormat(command) {
-    const selection = window.getSelection();
-    let range;
-    let selectedText = '';
-    if (selectionRange) {
-        range = selectionRange.cloneRange();
-        selectedText = range.toString();
-        selectionRange = null;
-    } else if (selection.rangeCount > 0) {
-        range = selection.getRangeAt(0).cloneRange();
-        selectedText = range.toString();
-    } else {
-        // 没有选中文字，尝试获取光标位置
-        if (selection.rangeCount > 0) {
-            range = selection.getRangeAt(0).cloneRange();
-        } else {
-            // 创建光标位置的范围
-            range = document.createRange();
-            const textNode = markdownPreview.childNodes[0] || markdownPreview;
-            if (textNode.nodeType === Node.TEXT_NODE) {
-                range.setStart(textNode, textNode.length);
-                range.setEnd(textNode, textNode.length);
-            } else {
-                range.setStart(markdownPreview, markdownPreview.childNodes.length);
-                range.setEnd(markdownPreview, markdownPreview.childNodes.length);
-            }
-        }
-    }
-    if (!range) return;
-
-    if (textFormatToolbar) {
-        textFormatToolbar.style.display = 'none';
-        textFormatToolbar.style.visibility = 'hidden';
-    }
-
-    // 辅助函数：提取选中范围的完整HTML内容（保留嵌套格式）
-    function getRangeHtml(range) {
-        const contents = range.cloneContents();
-        const tempDiv = document.createElement('div');
-        tempDiv.appendChild(contents);
-        return tempDiv.innerHTML;
-    }
-    // 辅助函数：在选中范围内查找指定标签（处理选中内容包含完整标签的情况）
-    function findTagInSelection(range, tagName) {
-        // 获取选中范围的公共祖先
-        const ancestor = range.commonAncestorContainer;
-        const container = ancestor.nodeType === Node.TEXT_NODE ? ancestor.parentNode : ancestor;
-        // 在公共祖先中查找指定标签
-        const tags = container.getElementsByTagName ? container.getElementsByTagName(tagName) : [];
-        for (let tag of tags) {
-            // 使用 intersectsNode 检查选中范围是否与标签有交集
-            if (range.intersectsNode(tag)) {
-                return tag;
-            }
-        }
-        // 也检查祖先链中是否有该标签
-        let parent = container;
-        while (parent && parent !== markdownPreview) {
-            if (parent.tagName === tagName) {
-                return parent;
-            }
-            parent = parent.parentNode;
-        }
-        return null;
-    }
-    // 辅助函数：检查选中范围是否完全在指定的格式标签内
-    function isWrappedInTag(range, tagNames) {
-        if (!range || !selectedText) return false;
-        const startContainer = range.startContainer;
-        const endContainer = range.endContainer;
-        // 方法1：检查选中内容是否恰好是一个格式标签（双击选中整个标签的情况）
-        const contents = range.cloneContents();
-        if (contents.childNodes.length === 1) {
-            const singleChild = contents.childNodes[0];
-            if (singleChild.nodeType === Node.ELEMENT_NODE && tagNames.includes(singleChild.tagName)) {
-                // 选中的内容恰好是一个格式标签，找到原始DOM中的标签
-                // 需要从父元素中找到这个标签
-                const parentElement = startContainer.nodeType === Node.TEXT_NODE ? startContainer.parentNode : startContainer;
-                if (parentElement && parentElement.nodeType === Node.ELEMENT_NODE) {
-                    // 遍历父元素的子节点，找到包含选中内容的标签
-                    for (let child of parentElement.childNodes) {
-                        if (child.nodeType === Node.ELEMENT_NODE && tagNames.includes(child.tagName)) {
-                            // 检查这个标签是否在选中范围内
-                            const childRange = document.createRange();
-                            childRange.selectNode(child);
-                            if (range.compareBoundaryPoints(Range.START_TO_START, childRange) <= 0 &&
-                                range.compareBoundaryPoints(Range.END_TO_END, childRange) >= 0) {
-                                return child;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        // 方法2：检查起始和结束容器是否都在同一个格式标签内（原有逻辑）
-        let startParent = startContainer.nodeType === Node.TEXT_NODE ? startContainer.parentNode : startContainer;
-        let endParent = endContainer.nodeType === Node.TEXT_NODE ? endContainer.parentNode : endContainer;
-        // 向上查找格式标签
-        while (startParent && startParent !== markdownPreview) {
-            if (startParent.nodeType === Node.ELEMENT_NODE && tagNames.includes(startParent.tagName)) {
-                // 检查结束位置是否也在同一个标签内
-                let checkParent = endParent;
-                while (checkParent && checkParent !== markdownPreview) {
-                    if (checkParent === startParent) {
-                        // 检查选中范围是否完全包含在标签内
-                        const tagRange = document.createRange();
-                        tagRange.selectNodeContents(startParent);
-                        // 检查选中范围的开始和结束是否都在标签范围内
-                        const startCompare = range.compareBoundaryPoints(Range.START_TO_START, tagRange);
-                        const endCompare = range.compareBoundaryPoints(Range.END_TO_END, tagRange);
-                        // 如果选中范围完全在标签内（开始>=标签开始，结束<=标签结束）
-                        if (startCompare >= 0 && endCompare <= 0) {
-                            return startParent;
-                        }
-                    }
-                    checkParent = checkParent.parentNode;
-                }
-            }
-            startParent = startParent.parentNode;
-        }
-        return false;
-    }
-    // 辅助函数：移除格式标签但保留内容
-    function unwrapFormatTag(tagElement, range) {
-        const parent = tagElement.parentNode;
-        if (!parent) return;
-        // 获取标签内的所有内容
-        const contents = Array.from(tagElement.childNodes);
-        // 在标签之前插入所有内容
-        contents.forEach(node => {
-            parent.insertBefore(node.cloneNode(true), tagElement);
-        });
-        // 删除原标签
-        tagElement.remove();
-        // 重新设置选中范围
-        const newRange = document.createRange();
-        if (contents.length > 0) {
-            const firstNode = contents[0];
-            const lastNode = contents[contents.length - 1];
-            if (firstNode.nodeType === Node.TEXT_NODE) {
-                newRange.setStart(firstNode, 0);
-            } else {
-                newRange.setStartBefore(firstNode);
-            }
-            if (lastNode.nodeType === Node.TEXT_NODE) {
-                newRange.setEnd(lastNode, lastNode.textContent.length);
-            } else {
-                newRange.setEndAfter(lastNode);
-            }
-        } else {
-            newRange.setStartAfter(tagElement);
-            newRange.setEndAfter(tagElement);
-        }
-        const selection = window.getSelection();
-        selection.removeAllRanges();
-        selection.addRange(newRange);
-    }
-    // 辅助函数：查找包含指定样式的元素
-    function findElementWithStyle(range, styleProperty) {
-        const ancestor = range.commonAncestorContainer;
-        const container = ancestor.nodeType === Node.TEXT_NODE ? ancestor.parentNode : ancestor;
-        // 向上查找包含该样式的元素
-        let parent = container;
-        while (parent && parent !== markdownPreview) {
-            if (parent.nodeType === Node.ELEMENT_NODE && parent.tagName === 'SPAN') {
-                const style = parent.getAttribute('style') || '';
-                if (style.includes(styleProperty)) {
-                    return parent;
-                }
-            }
-            parent = parent.parentNode;
-        }
-        // 也在选中范围内查找
-        const contents = range.cloneContents();
-        const tempDiv = document.createElement('div');
-        tempDiv.appendChild(contents);
-        const spans = tempDiv.querySelectorAll('span[style]');
-        for (let span of spans) {
-            const style = span.getAttribute('style') || '';
-            if (style.includes(styleProperty)) {
-                // 在原始DOM中查找对应的元素
-                const containerSpans = container.getElementsByTagName ? container.getElementsByTagName('SPAN') : [];
-                for (let s of containerSpans) {
-                    if (s.getAttribute('style') === span.getAttribute('style') && range.intersectsNode(s)) {
-                        return s;
-                    }
-                }
-            }
-        }
-        return null;
-    }
-    // 辅助函数：获取元素中指定样式属性的值
-    function getStyleValue(element, styleProperty) {
-        if (!element || !element.getAttribute) return null;
-        const style = element.getAttribute('style') || '';
-        const regex = new RegExp(styleProperty + ':\\s*([^;]+)', 'i');
-        const match = style.match(regex);
-        return match ? match[1].trim() : null;
-    }
-    let formattedHtml = '';
-    let shouldUnwrap = false;
-    let unwrapTag = null;
-    // 获取选中范围的完整HTML内容（保留嵌套格式）
-    const selectedHtml = selectedText ? getRangeHtml(range) : '';
-    switch(command) {
-        // 标题 H1-H6
-        case 'h1':
-            if (!selectedText) return;
-            unwrapTag = isWrappedInTag(range, ['H1']);
-            if (!unwrapTag) unwrapTag = findTagInSelection(range, 'H1');
-            if (unwrapTag) {
-                shouldUnwrap = true;
-            } else {
-                formattedHtml = '<h1>' + selectedHtml + '</h1>';
-            }
-            break;
-        case 'h2':
-            if (!selectedText) return;
-            unwrapTag = isWrappedInTag(range, ['H2']);
-            if (!unwrapTag) unwrapTag = findTagInSelection(range, 'H2');
-            if (unwrapTag) {
-                shouldUnwrap = true;
-            } else {
-                formattedHtml = '<h2>' + selectedHtml + '</h2>';
-            }
-            break;
-        case 'h3':
-            if (!selectedText) return;
-            unwrapTag = isWrappedInTag(range, ['H3']);
-            if (!unwrapTag) unwrapTag = findTagInSelection(range, 'H3');
-            if (unwrapTag) {
-                shouldUnwrap = true;
-            } else {
-                formattedHtml = '<h3>' + selectedHtml + '</h3>';
-            }
-            break;
-        case 'h4':
-            if (!selectedText) return;
-            unwrapTag = isWrappedInTag(range, ['H4']);
-            if (!unwrapTag) unwrapTag = findTagInSelection(range, 'H4');
-            if (unwrapTag) {
-                shouldUnwrap = true;
-            } else {
-                formattedHtml = '<h4>' + selectedHtml + '</h4>';
-            }
-            break;
-        case 'h5':
-            if (!selectedText) return;
-            unwrapTag = isWrappedInTag(range, ['H5']);
-            if (!unwrapTag) unwrapTag = findTagInSelection(range, 'H5');
-            if (unwrapTag) {
-                shouldUnwrap = true;
-            } else {
-                formattedHtml = '<h5>' + selectedHtml + '</h5>';
-            }
-            break;
-        case 'h6':
-            if (!selectedText) return;
-            unwrapTag = isWrappedInTag(range, ['H6']);
-            if (!unwrapTag) unwrapTag = findTagInSelection(range, 'H6');
-            if (unwrapTag) {
-                shouldUnwrap = true;
-            } else {
-                formattedHtml = '<h6>' + selectedHtml + '</h6>';
-            }
-            break;
-        // 文本格式
-        case 'bold':
-            if (!selectedText) return;
-            unwrapTag = isWrappedInTag(range, ['STRONG', 'B']);
-            if (!unwrapTag) {
-                unwrapTag = findTagInSelection(range, 'STRONG') || findTagInSelection(range, 'B');
-            }
-            if (unwrapTag) {
-                shouldUnwrap = true;
-            } else {
-                formattedHtml = '<strong>' + selectedHtml + '</strong>';
-            }
-            break;
-        case 'italic':
-            if (!selectedText) return;
-            unwrapTag = isWrappedInTag(range, ['EM', 'I']);
-            if (!unwrapTag) {
-                unwrapTag = findTagInSelection(range, 'EM') || findTagInSelection(range, 'I');
-            }
-            if (unwrapTag) {
-                shouldUnwrap = true;
-            } else {
-                formattedHtml = '<em>' + selectedHtml + '</em>';
-            }
-            break;
-        case 'underline':
-            if (!selectedText) return;
-            unwrapTag = isWrappedInTag(range, ['U']);
-            if (!unwrapTag) {
-                unwrapTag = findTagInSelection(range, 'U');
-            }
-            if (unwrapTag) {
-                shouldUnwrap = true;
-            } else {
-                formattedHtml = '<u>' + selectedHtml + '</u>';
-            }
-            break;
-        case 'strikethrough':
-            if (!selectedText) return;
-            unwrapTag = isWrappedInTag(range, ['S', 'STRIKE', 'DEL']);
-            if (!unwrapTag) {
-                unwrapTag = findTagInSelection(range, 'S') || findTagInSelection(range, 'STRIKE') || findTagInSelection(range, 'DEL');
-            }
-            if (unwrapTag) {
-                shouldUnwrap = true;
-            } else {
-                formattedHtml = '<s>' + selectedHtml + '</s>';
-            }
-            break;
-        case 'code':
-            if (!selectedText) return;
-            unwrapTag = isWrappedInTag(range, ['CODE']);
-            // 如果没有检测到，再检查选中内容是否包含完整的 CODE 标签
-            if (!unwrapTag) {
-                unwrapTag = findTagInSelection(range, 'CODE');
-            }
-            if (unwrapTag && !unwrapTag.closest('pre')) {
-                shouldUnwrap = true;
-            } else if (!unwrapTag) {
-                // code标签内不应该有HTML，使用纯文本
-                formattedHtml = '<code>' + escapeHtml(selectedText) + '</code>';
-            }
-            break;
-        case 'code-block':
-            {
-                // 弹出代码编辑对话框
-                const result = await codeEditDialog(selectedText || '', 'javascript', CODE_LANG_OPTIONS, '插入代码块');
-                if (result === null) return; // 用户取消
-                const langValue = result.language ? escapeHtml(result.language.toLowerCase()) : 'code';
-                const langClass = result.language ? ' class="language-' + langValue + '"' : '';
-                const codeContent = escapeHtml(result.code);
-                const highlightedCode = highlightCode(result.code, result.language);
-                // 代码块不可编辑，点击时弹出编辑对话框
-                formattedHtml = '<pre data-lang="' + langValue + '" contenteditable="false" class="code-block-editable"><code' + langClass + '>' + highlightedCode + '</code></pre>';
-            }
-            break;
-        case 'highlight':
-            if (!selectedText) return;
-            unwrapTag = isWrappedInTag(range, ['MARK']);
-            // 如果没有检测到，再检查选中内容是否包含完整的 MARK 标签
-            if (!unwrapTag) {
-                unwrapTag = findTagInSelection(range, 'MARK');
-            }
-            if (unwrapTag) {
-                shouldUnwrap = true;
-            } else {
-                formattedHtml = '<mark>' + selectedHtml + '</mark>';
-            }
-            break;
-        case 'spoiler':
-            if (!selectedText) return;
-            unwrapTag = isWrappedInTag(range, ['SPOILER']);
-            if (!unwrapTag) {
-                unwrapTag = findTagInSelection(range, 'SPOILER');
-            }
-            if (unwrapTag) {
-                shouldUnwrap = true;
-            } else {
-                formattedHtml = '<spoiler>' + selectedHtml + '</spoiler>';
-            }
-            break;
-        case 'superscript':
-            if (!selectedText) return;
-            unwrapTag = isWrappedInTag(range, ['SUP']);
-            if (!unwrapTag) {
-                unwrapTag = findTagInSelection(range, 'SUP');
-            }
-            if (unwrapTag) {
-                shouldUnwrap = true;
-            } else {
-                formattedHtml = '<sup>' + selectedHtml + '</sup>';
-            }
-            break;
-        case 'subscript':
-            if (!selectedText) return;
-            unwrapTag = isWrappedInTag(range, ['SUB']);
-            if (!unwrapTag) {
-                unwrapTag = findTagInSelection(range, 'SUB');
-            }
-            if (unwrapTag) {
-                shouldUnwrap = true;
-            } else {
-                formattedHtml = '<sub>' + selectedHtml + '</sub>';
-            }
-            break;
-        case 'anchor':
-            {
-                const nameInput = await customPrompt('输入锚点名:', '');
-                if (!nameInput) return;
-                const anchorName = normalizeAnchorName(nameInput);
-                if (!anchorName) return;
-
-                const domId = generateUniqueAnchorDomId(anchorName);
-                const anchorHtml = '<span id="' + escapeHtml(domId) + '" class="sora-anchor" data-sora-anchor="true" data-anchor-name="' + escapeHtml(anchorName) + '">\u200B</span>';
-                formattedHtml = selectedText ? (anchorHtml + selectedHtml) : anchorHtml;
-            }
-            break;
-        case 'link':
-            {
-                const url = await showLinkConfigDialog('https://', '插入链接');
-                if (!url) return;
-
-                const trimmed = String(url).trim();
-                const displayHtml = selectedText ? selectedHtml : escapeHtml(trimmed);
-
-                if (trimmed.startsWith('#')) {
-                    const anchorName = normalizeAnchorName(trimmed);
-                    formattedHtml = '<a href="#' + escapeHtml(anchorName) + '" data-sora-link="anchor" data-anchor-id="' + escapeHtml(anchorName) + '">' + displayHtml + '</a>';
-                    break;
-                }
-
-                const lower = trimmed.toLowerCase();
-                const isDir = lower.startsWith('dir:') || lower.startsWith('目录:');
-                const isName = lower.startsWith('name:') || lower.startsWith('目录名:');
-                if (isDir || isName) {
-                    const prefixLen = trimmed.indexOf(':') + 1;
-                    const rest = trimmed.substring(prefixLen);
-                    const hashIndex = rest.indexOf('#');
-                    const mainPart = (hashIndex >= 0 ? rest.substring(0, hashIndex) : rest).trim();
-                    const anchorPartRaw = (hashIndex >= 0 ? rest.substring(hashIndex + 1) : '').trim();
-                    const anchorPart = anchorPartRaw ? normalizeAnchorName(anchorPartRaw) : '';
-
-                    const attrs = [];
-                    attrs.push('href="sora-dir:' + escapeHtml(mainPart) + (anchorPart ? ('#' + escapeHtml(anchorPart)) : '') + '"');
-                    attrs.push('data-sora-link="dir"');
-
-                    if (isDir) {
-                        attrs.push('data-dir-id="' + escapeHtml(mainPart) + '"');
-                    } else {
-                        attrs.push('data-dir-name="' + escapeHtml(mainPart) + '"');
-                    }
-                    if (anchorPart) {
-                        attrs.push('data-anchor-id="' + escapeHtml(anchorPart) + '"');
-                    }
-                    formattedHtml = '<a ' + attrs.join(' ') + '>' + displayHtml + '</a>';
-                    break;
-                }
-
-                if (selectedText) {
-                    formattedHtml = '<a href="' + escapeHtml(trimmed) + '" target="_blank">' + selectedHtml + '</a>';
-                } else {
-                    formattedHtml = '<a href="' + escapeHtml(trimmed) + '" target="_blank">' + escapeHtml(trimmed) + '</a>';
-                }
-            }
-            break;
-        case 'method':
-            {
-                const startNode = range.startContainer && range.startContainer.nodeType === Node.ELEMENT_NODE
-                    ? range.startContainer
-                    : (range.startContainer ? range.startContainer.parentNode : null);
-                const existingMethodLink = startNode && startNode.closest ? startNode.closest('a[data-sora-link="method"]') : null;
-
-                if (existingMethodLink) {
-                    const cfg = await promptMethodConfig(null);
-                    if (!cfg) return;
-                    const methods = readMethodsFromElement(existingMethodLink);
-                    methods.push(cfg);
-                    writeMethodsToElement(existingMethodLink, methods);
-                    syncPreviewToTextarea();
-                    return;
-                }
-
-                const cfg = await promptMethodConfig(null);
-                if (!cfg) return;
-                const methods = [cfg];
-
-                const displayHtml = selectedText ? selectedHtml : escapeHtml('方法');
-                formattedHtml = '<a href="#" data-sora-link="method" data-sora-methods="' + escapeHtmlAttribute(JSON.stringify(methods)) + '">' + displayHtml + '</a>';
-            }
-            break;
-        // 文本颜色
-        case 'color':
-            if (!selectedText) return;
-            // 查找是否已经有颜色样式
-            const colorElement = findElementWithStyle(range, 'color');
-            let currentColor = '#000000';
-            if (colorElement) {
-                const colorValue = getStyleValue(colorElement, 'color');
-                if (colorValue) {
-                    // 转换颜色值为十六进制
-                    if (colorValue.startsWith('#')) {
-                        currentColor = colorValue.toUpperCase();
-                    } else if (colorValue.startsWith('rgb')) {
-                        // 简单处理，提取rgb值并转换为十六进制（简化版）
-                        const rgbMatch = colorValue.match(/\d+/g);
-                        if (rgbMatch && rgbMatch.length >= 3) {
-                            const r = parseInt(rgbMatch[0]).toString(16).padStart(2, '0');
-                            const g = parseInt(rgbMatch[1]).toString(16).padStart(2, '0');
-                            const b = parseInt(rgbMatch[2]).toString(16).padStart(2, '0');
-                            currentColor = '#' + r + g + b;
-                        }
-                    }
-                }
-            }
-            const selectedColor = await colorPickerDialog(currentColor, '选择文字颜色', 'text');
-            if (!selectedColor) return;
-            // 如果已经有颜色样式，需要移除后重新应用
-            if (colorElement) {
-                // 检查是否完全选中，如果是则移除样式
-                const tagRange = document.createRange();
-                tagRange.selectNodeContents(colorElement);
-                const tagText = colorElement.textContent;
-                const selectedTextClean = selectedText.replace(/\u200B/g, '');
-                if (tagText.trim() === selectedTextClean.trim() || tagText === selectedTextClean) {
-                    // 完全选中，直接替换颜色
-                    colorElement.style.color = selectedColor;
-                    syncPreviewToTextarea();
-                    textFormatToolbar.style.display = 'none';
-                    textFormatToolbar.style.visibility = 'hidden';
-                    selectionRange = null;
-                    return;
-                }
-            }
-            const coloredSelection = document.createElement('div');
-            coloredSelection.innerHTML = selectedHtml;
-            // 链接有自己的默认颜色；选区完整包含链接时，需要把颜色直接写到链接节点。
-            coloredSelection.querySelectorAll('a').forEach(link => {
-                link.style.color = selectedColor;
-            });
-            if (coloredSelection.childNodes.length === 1 && coloredSelection.firstElementChild?.tagName === 'A') {
-                formattedHtml = coloredSelection.innerHTML;
-            } else {
-                formattedHtml = '<span style="color: ' + escapeHtml(selectedColor) + '">' + coloredSelection.innerHTML + '</span>';
-            }
-            break;
-        // 背景颜色
-        case 'background-color':
-            if (!selectedText) return;
-            // 查找是否已经有背景颜色样式
-            const bgColorElement = findElementWithStyle(range, 'background-color');
-            let currentBgColor = '#FFFF00';
-            if (bgColorElement) {
-                const bgColorValue = getStyleValue(bgColorElement, 'background-color');
-                if (bgColorValue) {
-                    // 转换颜色值为十六进制
-                    if (bgColorValue.startsWith('#')) {
-                        currentBgColor = bgColorValue.toUpperCase();
-                    } else if (bgColorValue.startsWith('rgb')) {
-                        const rgbMatch = bgColorValue.match(/\d+/g);
-                        if (rgbMatch && rgbMatch.length >= 3) {
-                            const r = parseInt(rgbMatch[0]).toString(16).padStart(2, '0');
-                            const g = parseInt(rgbMatch[1]).toString(16).padStart(2, '0');
-                            const b = parseInt(rgbMatch[2]).toString(16).padStart(2, '0');
-                            currentBgColor = '#' + r + g + b;
-                        }
-                    }
-                }
-            }
-            const selectedBgColor = await colorPickerDialog(currentBgColor, '选择背景颜色', 'background');
-            if (!selectedBgColor) return;
-            // 如果已经有背景颜色样式，需要移除后重新应用
-            if (bgColorElement) {
-                const tagRange = document.createRange();
-                tagRange.selectNodeContents(bgColorElement);
-                const tagText = bgColorElement.textContent;
-                const selectedTextClean = selectedText.replace(/\u200B/g, '');
-                if (tagText.trim() === selectedTextClean.trim() || tagText === selectedTextClean) {
-                    // 完全选中，直接替换背景颜色
-                    bgColorElement.style.backgroundColor = selectedBgColor;
-                    syncPreviewToTextarea();
-                    textFormatToolbar.style.display = 'none';
-                    textFormatToolbar.style.visibility = 'hidden';
-                    selectionRange = null;
-                    return;
-                }
-            }
-            formattedHtml = '<span style="background-color: ' + escapeHtml(selectedBgColor) + '">' + selectedHtml + '</span>';
-            break;
-        // 列表
-        case 'unordered-list':
-            if (selectedText) {
-                const lines = selectedText.split('\n').filter(line => line.trim());
-                formattedHtml = '<ul>' + lines.map(line => '<li>' + line.trim() + '</li>').join('') + '</ul>';
-            } else {
-                formattedHtml = '<ul><li><br></li></ul>';
-            }
-            break;
-        case 'ordered-list':
-            if (selectedText) {
-                const lines = selectedText.split('\n').filter(line => line.trim());
-                formattedHtml = '<ol>' + lines.map(line => '<li>' + line.trim() + '</li>').join('') + '</ol>';
-            } else {
-                formattedHtml = '<ol><li><br></li></ol>';
-            }
-            break;
-        case 'task-list':
-            if (selectedText) {
-                const lines = selectedText.split('\n').filter(line => line.trim());
-                formattedHtml = '<ul class="contains-task-list">' + lines.map(line => {
-                    const trimmed = line.trim();
-                    // 检查是否已经是任务项格式
-                    if (trimmed.startsWith('- [ ]') || trimmed.startsWith('- [x]') || trimmed.startsWith('- [X]')) {
-                        const content = trimmed.replace(/^-\s*\[[ xX]\]\s*/, '');
-                        return '<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"' + 
-                               (trimmed.startsWith('- [x]') || trimmed.startsWith('- [X]') ? ' checked' : '') + 
-                               '> ' + content + '</li>';
-                    }
-                    return '<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"> ' + trimmed + '</li>';
-                }).join('') + '</ul>';
-            } else {
-                formattedHtml = '<ul class="contains-task-list"><li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"> <br></li></ul>';
-            }
-            break;
-        // 其他块级元素
-        case 'quote':
-            if (selectedText) {
-                formattedHtml = '<blockquote>' + selectedHtml + '</blockquote>';
-            } else {
-                formattedHtml = '<blockquote><br></blockquote>';
-            }
-            break;
-        case 'paragraph':
-            if (selectedText) {
-                formattedHtml = '<p>' + selectedHtml + '</p>';
-            } else {
-                formattedHtml = '<p><br></p>';
-            }
-            break;
-        case 'hr':
-            formattedHtml = '<hr>';
-            break;
-        case 'table':
-            const rows = await customPrompt('输入表格行数（默认3）:', '3');
-            const cols = await customPrompt('输入表格列数（默认3）:', '3');
-            const rowCount = parseInt(rows) || 3;
-            const colCount = parseInt(cols) || 3;
-            let tableHtml = '<table>\n<thead>\n<tr>';
-            for (let i = 0; i < colCount; i++) {
-                tableHtml += '<th>列' + (i + 1) + '</th>';
-            }
-            tableHtml += '</tr>\n</thead>\n<tbody>\n';
-            for (let i = 0; i < rowCount - 1; i++) {
-                tableHtml += '<tr>';
-                for (let j = 0; j < colCount; j++) {
-                    tableHtml += '<td>内容</td>';
-                }
-                tableHtml += '</tr>\n';
-            }
-            tableHtml += '</tbody>\n</table>';
-            formattedHtml = tableHtml;
-            break;
-    }
-    // 如果需要取消格式，先处理取消格式
-    if (shouldUnwrap && unwrapTag) {
-        // 获取标签的父节点
-        const parent = unwrapTag.parentNode;
-        if (!parent) {
-            textFormatToolbar.style.display = 'none';
-            textFormatToolbar.style.visibility = 'hidden';
-            selectionRange = null;
-            return;
-        }
-        // 保存选中文本，用于后续重新选中
-        const textToKeep = selectedText;
-        const tagName = unwrapTag.tagName;
-        // 检查选中范围是否完全覆盖格式标签的内容
-        const tagRange = document.createRange();
-        tagRange.selectNodeContents(unwrapTag);
-        const tagText = unwrapTag.textContent;
-        const selectedTextClean = selectedText.replace(/\u200B/g, ''); // 移除零宽字符
-        // 判断是否完全选中（允许一些误差，如零宽字符）
-        const isFullySelected = selectedTextClean === tagText || 
-                               tagText.startsWith(selectedTextClean) && tagText.length - selectedTextClean.length <= 1 ||
-                               selectedTextClean.startsWith(tagText);
-        if (isFullySelected || unwrapTag.textContent.trim() === selectedTextClean.trim()) {
-            // 完全选中，移除整个标签
-            const contents = Array.from(unwrapTag.childNodes);
-            const insertedNodes = [];
-            contents.forEach(node => {
-                const cloned = node.cloneNode(true);
-                parent.insertBefore(cloned, unwrapTag);
-                insertedNodes.push(cloned);
-            });
-            unwrapTag.remove();
-            // 重新设置选中范围
-            const newRange = document.createRange();
-            const selection = window.getSelection();
-            if (insertedNodes.length > 0) {
-                const firstNode = insertedNodes[0];
-                const lastNode = insertedNodes[insertedNodes.length - 1];
-                if (firstNode.nodeType === Node.TEXT_NODE) {
-                    newRange.setStart(firstNode, 0);
-                } else {
-                    newRange.setStartBefore(firstNode);
-                }
-                if (lastNode.nodeType === Node.TEXT_NODE) {
-                    newRange.setEnd(lastNode, lastNode.textContent.length);
-                } else {
-                    newRange.setEndAfter(lastNode);
-                }
-                selection.removeAllRanges();
-                selection.addRange(newRange);
-            }
-        } else {
-            // 部分选中，需要拆分标签
-            // 获取格式标签内选中部分的相对位置
-            const fullText = unwrapTag.textContent;
-            const selStart = fullText.indexOf(selectedTextClean);
-            if (selStart !== -1) {
-                const selEnd = selStart + selectedTextClean.length;
-                const beforeText = fullText.substring(0, selStart);
-                const afterText = fullText.substring(selEnd);
-                // 构建新的 HTML 结构
-                const fragment = document.createDocumentFragment();
-                // 前面部分（保持格式）
-                if (beforeText) {
-                    const beforeTag = document.createElement(tagName);
-                    beforeTag.textContent = beforeText;
-                    fragment.appendChild(beforeTag);
-                }
-                // 选中部分（无格式）
-                const middleText = document.createTextNode(selectedTextClean);
-                fragment.appendChild(middleText);
-                // 后面部分（保持格式）
-                if (afterText) {
-                    const afterTag = document.createElement(tagName);
-                    afterTag.textContent = afterText;
-                    fragment.appendChild(afterTag);
-                }
-                // 替换原标签
-                parent.insertBefore(fragment, unwrapTag);
-                unwrapTag.remove();
-                // 选中中间的无格式文本
-                const newRange = document.createRange();
-                const selection = window.getSelection();
-                newRange.selectNode(middleText);
-                selection.removeAllRanges();
-                selection.addRange(newRange);
-            } else {
-                // 找不到选中文本的位置，回退到移除整个标签
-                const contents = Array.from(unwrapTag.childNodes);
-                contents.forEach(node => {
-                    parent.insertBefore(node.cloneNode(true), unwrapTag);
-                });
-                unwrapTag.remove();
-            }
-        }
-        // 同步到 textarea
-        syncPreviewToTextarea();
-        textFormatToolbar.style.display = 'none';
-        textFormatToolbar.style.visibility = 'hidden';
-        selectionRange = null;
-        return;
-    }
-    if (formattedHtml) {
-        range.deleteContents();
-        const tempDiv = document.createElement('div');
-        tempDiv.innerHTML = formattedHtml;
-        const fragment = document.createDocumentFragment();
-        let insertedElement = null;
-        while (tempDiv.firstChild) {
-            const node = tempDiv.firstChild;
-            fragment.appendChild(node);
-            insertedElement = node; // 保存最后插入的元素
-        }
-        range.insertNode(fragment);
-        // 将光标移动到格式化元素之后，避免后续输入也被格式化
-        const newRange = document.createRange();
-        const selection = window.getSelection();
-        // 辅助函数：检查节点是否在格式标签内
-        function isInFormatTag(node) {
-            const formatTags = ['EM', 'I', 'STRONG', 'B', 'U', 'S', 'STRIKE', 'DEL', 'CODE', 'MARK', 'SUP', 'SUB', 'SPOILER'];
-            let parent = node.nodeType === Node.TEXT_NODE ? node.parentNode : node;
-            while (parent && parent !== markdownPreview) {
-                if (parent.nodeType === Node.ELEMENT_NODE && formatTags.includes(parent.tagName)) {
-                    return true;
-                }
-                parent = parent.parentNode;
-            }
-            return false;
-        }
-        // 辅助函数：找到最近的块级元素
-        function findBlockParent(node) {
-            const blockTags = ['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'TD', 'TH', 'BLOCKQUOTE', 'UL', 'OL', 'PRE'];
-            let parent = node.nodeType === Node.TEXT_NODE ? node.parentNode : node;
-            while (parent && parent !== markdownPreview) {
-                if (parent.nodeType === Node.ELEMENT_NODE && blockTags.includes(parent.tagName)) {
-                    return parent;
-                }
-                parent = parent.parentNode;
-            }
-            return markdownPreview;
-        }
-        if (insertedElement) {
-            const parent = insertedElement.parentNode;
-            if (parent) {
-                // 检查插入的元素是否是行内格式标签
-                const inlineFormatTags = ['EM', 'I', 'STRONG', 'B', 'U', 'S', 'STRIKE', 'DEL', 'CODE', 'MARK', 'SUP', 'SUB', 'A', 'SPOILER'];
-                const isInlineFormat = inlineFormatTags.includes(insertedElement.tagName);
-                if (isInlineFormat) {
-                    // 对于行内格式，需要将光标放在格式标签外部
-                    // 在格式标签之后创建一个文本节点用于放置光标
-                    const textNode = document.createTextNode('\u200B'); // 零宽空格
-                    if (insertedElement.nextSibling) {
-                        parent.insertBefore(textNode, insertedElement.nextSibling);
-                    } else {
-                        parent.appendChild(textNode);
-                    }
-                    // 检查文本节点是否在格式标签内（理论上不应该，但检查一下）
-                    if (isInFormatTag(textNode)) {
-                        // 如果还在格式标签内，向上移动到块级元素
-                        const blockParent = findBlockParent(textNode);
-                        // 移除刚才创建的文本节点
-                        textNode.remove();
-                        // 在块级元素中创建新的文本节点
-                        const newTextNode = document.createTextNode('\u200B');
-                        blockParent.appendChild(newTextNode);
-                        newRange.setStart(newTextNode, 0);
-                        newRange.setEnd(newTextNode, 0);
-                    } else {
-                        newRange.setStart(textNode, 0);
-                        newRange.setEnd(textNode, 0);
-                    }
-                } else {
-                    // 对于块级元素，检查是否是列表
-                    if (insertedElement.tagName === 'UL' || insertedElement.tagName === 'OL') {
-                        // 对于列表，光标应该放在第一个列表项内部
-                        const firstLi = insertedElement.querySelector('li');
-                        if (firstLi) {
-                            // 将光标放在第一个li内部，让浏览器自然处理
-                            newRange.setStart(firstLi, 0);
-                            newRange.setEnd(firstLi, 0);
-                        } else {
-                            // 如果没有li，在列表之后放置光标
-                            newRange.setStartAfter(insertedElement);
-                            newRange.setEndAfter(insertedElement);
-                        }
-                    } else if (insertedElement.tagName === 'PRE') {
-                        // 对于代码块（contenteditable=false），需要在前后添加可编辑的段落
-                        // 检查代码块前面是否有可编辑的元素
-                        const prevSibling = insertedElement.previousSibling;
-                        if (!prevSibling || (prevSibling.nodeType === Node.TEXT_NODE && !prevSibling.textContent.trim())) {
-                            // 在代码块前面添加一个空段落
-                            const beforePara = document.createElement('p');
-                            beforePara.innerHTML = '<br>';
-                            insertedElement.parentNode.insertBefore(beforePara, insertedElement);
-                        }
-                        // 检查代码块后面是否有可编辑的元素
-                        const nextSibling = insertedElement.nextSibling;
-                        if (!nextSibling || (nextSibling.nodeType === Node.TEXT_NODE && !nextSibling.textContent.trim())) {
-                            // 在代码块后面添加一个空段落
-                            const afterPara = document.createElement('p');
-                            afterPara.innerHTML = '<br>';
-                            if (insertedElement.nextSibling) {
-                                insertedElement.parentNode.insertBefore(afterPara, insertedElement.nextSibling);
-                            } else {
-                                insertedElement.parentNode.appendChild(afterPara);
-                            }
-                            // 将光标放在新段落中
-                            newRange.setStart(afterPara, 0);
-                            newRange.setEnd(afterPara, 0);
-                        } else {
-                            // 后面有内容，直接放在元素之后
-                            newRange.setStartAfter(insertedElement);
-                            newRange.setEndAfter(insertedElement);
-                        }
-                    } else {
-                        // 对于其他块级元素，在元素之后放置光标
-                        newRange.setStartAfter(insertedElement);
-                        newRange.setEndAfter(insertedElement);
-                    }
-                }
-            } else {
-                // 如果找不到父节点，直接放在元素之后
-                newRange.setStartAfter(insertedElement);
-                newRange.setEndAfter(insertedElement);
-            }
-        } else {
-            // 备用方案：光标放在插入位置之后
-            if (range.startContainer && range.startContainer.parentNode) {
-                const parent = range.startContainer.parentNode;
-                // 创建一个文本节点用于放置光标
-                const textNode = document.createTextNode('\u200B');
-                if (range.startContainer.nextSibling) {
-                    parent.insertBefore(textNode, range.startContainer.nextSibling);
-                } else {
-                    parent.appendChild(textNode);
-                }
-                newRange.setStart(textNode, 0);
-                newRange.setEnd(textNode, 0);
-            } else {
-                // 最后备用：光标放在预览区域末尾
-                const textNode = document.createTextNode('\u200B');
-                markdownPreview.appendChild(textNode);
-                newRange.setStart(textNode, 0);
-                newRange.setEnd(textNode, 0);
-            }
-        }
-        // 清除当前选择并设置新光标位置
-        selection.removeAllRanges();
-        selection.addRange(newRange);
-        // 确保预览区域获得焦点
-        markdownPreview.focus();
-        // 光标已经移动到格式节点之外，不再依赖浏览器的隐式格式状态。
-        setTimeout(() => {
-            const currentSelection = window.getSelection();
-            if (currentSelection.rangeCount > 0) {
-                const currentRange = currentSelection.getRangeAt(0);
-                // 检查光标是否在格式标签内
-                let container = currentRange.startContainer;
-                let node = container.nodeType === Node.TEXT_NODE ? container.parentNode : container;
-                const formatTags = ['EM', 'I', 'STRONG', 'B', 'U', 'S', 'STRIKE', 'DEL', 'CODE', 'MARK', 'SUP', 'SUB', 'SPOILER'];
-                while (node && node !== markdownPreview) {
-                    if (node.nodeType === Node.ELEMENT_NODE && formatTags.includes(node.tagName)) {
-                        // 光标仍在格式标签内，移出
-                        const blockParent = findBlockParent(node);
-                        const textNode = document.createTextNode('\u200B');
-                        blockParent.appendChild(textNode);
-                        const finalRange = document.createRange();
-                        finalRange.setStart(textNode, 0);
-                        finalRange.setEnd(textNode, 0);
-                        currentSelection.removeAllRanges();
-                        currentSelection.addRange(finalRange);
-                        break;
-                    }
-                    node = node.parentNode;
-                }
-            }
-        }, 0);
-        // 同步到 textarea
-        syncPreviewToTextarea();
-    }
-    textFormatToolbar.style.display = 'none';
-    textFormatToolbar.style.visibility = 'hidden';
-    selectionRange = null;
+    return window.SoraFormatting?.apply(command);
 }
 // ============================================
 // 代码块辅助功能
@@ -1802,85 +848,38 @@ function copyCodeBlock(btn) {
  * @returns {string} - 高亮后的 HTML
  */
 function highlightCode(code, language) {
-    if (!code) return code;
-    let escaped = escapeHtml(code);
-    const lang = (language || '').toLowerCase();
-    const rules = {
-        string: /("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)/g,
-        comment: /(\/\/.*$|\/\*[\s\S]*?\*\/|#.*$|&lt;!--[\s\S]*?--&gt;)/gm,
-        number: /\b(\d+\.?\d*)\b/g,
+    const source = String(code || '');
+    const lang = String(language || '').toLowerCase();
+    if (!lang || ['code', 'text', 'plaintext'].includes(lang)) return escapeHtml(source);
+    const keywordSets = {
+        javascript: 'const let var function return if else for while do switch case break continue new this class extends import export from default async await try catch finally throw typeof instanceof in of null undefined true false',
+        typescript: 'const let var function return if else for while class interface type enum public private readonly extends implements import export from default async await try catch throw null undefined true false',
+        python: 'def class if elif else for while return import from as try except finally raise with lambda yield pass break continue and or not in is None True False self',
+        java: 'int float double char void bool boolean string class struct enum public private protected static const final new return if else for while do switch case break continue try catch throw finally null true false this super import package using namespace include',
+        go: 'package import func return var const type struct interface map chan go defer if else for range switch case default break continue select nil true false make new len cap append copy delete',
+        rust: 'fn let mut const if else match loop while for in return struct enum impl trait pub use mod crate self super true false Some None Ok Err',
+        sql: 'select from where and or insert into values update set delete create table drop alter join left right inner outer on as order by group having limit offset null not in like between is true false count sum avg min max distinct'
     };
-    if (['javascript', 'js', 'typescript', 'ts', 'jsx', 'tsx'].includes(lang)) {
-        rules.keyword = /\b(const|let|var|function|return|if|else|for|while|do|switch|case|break|continue|new|this|class|extends|import|export|from|default|async|await|try|catch|finally|throw|typeof|instanceof|in|of|null|undefined|true|false)\b/g;
-        rules.function = /\b([a-zA-Z_$][a-zA-Z0-9_$]*)\s*(?=\()/g;
-        rules.class = /\b([A-Z][a-zA-Z0-9_$]*)\b/g;
+    const alias = { js: 'javascript', ts: 'typescript', py: 'python', c: 'java', cpp: 'java', csharp: 'java', 'c++': 'java', 'c#': 'java' };
+    const family = alias[lang] || lang;
+    if (!keywordSets[family] && !['html', 'xml', 'css', 'scss', 'json', 'bash', 'ruby', 'php'].includes(family)) return escapeHtml(source);
+    const keywords = new Set((keywordSets[family] || '').split(' '));
+    const pattern = /("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\/\*[\s\S]*?\*\/|\/\/[^\n]*|#[^\n]*|<\/?[A-Za-z][^>]*>|\b\d+(?:\.\d+)?\b|\b[A-Za-z_$][\w$]*\b)/g;
+    let output = '', cursor = 0;
+    for (const match of source.matchAll(pattern)) {
+        output += escapeHtml(source.slice(cursor, match.index));
+        const token = match[0];
+        let kind = '';
+        if (/^["'`]/.test(token)) kind = 'string';
+        else if (/^\/\/|^\/\*/.test(token) || (token.startsWith('#') && ['python', 'bash', 'ruby'].includes(family))) kind = 'comment';
+        else if (token.startsWith('<') && ['html', 'xml'].includes(family)) kind = 'tag';
+        else if (/^\d/.test(token)) kind = 'number';
+        else if (keywords.has(family === 'sql' ? token.toLowerCase() : token)) kind = 'keyword';
+        else if (/^\s*\(/.test(source.slice(match.index + token.length))) kind = 'function';
+        output += kind ? '<span class="' + kind + '">' + escapeHtml(token) + '</span>' : escapeHtml(token);
+        cursor = match.index + token.length;
     }
-    else if (['python', 'py'].includes(lang)) {
-        rules.keyword = /\b(def|class|if|elif|else|for|while|return|import|from|as|try|except|finally|raise|with|lambda|yield|pass|break|continue|and|or|not|in|is|None|True|False|self)\b/g;
-        rules.function = /\b([a-zA-Z_][a-zA-Z0-9_]*)\s*(?=\()/g;
-    }
-    else if (['html', 'xml', 'svg'].includes(lang)) {
-        rules.tag = /(&lt;\/?[a-zA-Z][a-zA-Z0-9]*)/g;
-        rules.attr = /\s([a-zA-Z\-]+)=/g;
-    }
-    else if (['css', 'scss', 'less'].includes(lang)) {
-        rules.property = /([a-zA-Z\-]+)\s*:/g;
-        rules.keyword = /(@[a-zA-Z]+|!important)/g;
-    }
-    else if (['sql'].includes(lang)) {
-        rules.keyword = /\b(SELECT|FROM|WHERE|AND|OR|INSERT|INTO|VALUES|UPDATE|SET|DELETE|CREATE|TABLE|DROP|ALTER|JOIN|LEFT|RIGHT|INNER|OUTER|ON|AS|ORDER|BY|GROUP|HAVING|LIMIT|OFFSET|NULL|NOT|IN|LIKE|BETWEEN|IS|TRUE|FALSE|COUNT|SUM|AVG|MIN|MAX|DISTINCT)\b/gi;
-    }
-    else if (['c', 'cpp', 'c++', 'csharp', 'c#', 'java'].includes(lang)) {
-        rules.keyword = /\b(int|float|double|char|void|bool|boolean|string|class|struct|enum|public|private|protected|static|const|final|new|return|if|else|for|while|do|switch|case|break|continue|try|catch|throw|finally|null|true|false|this|super|import|package|using|namespace|include)\b/g;
-        rules.function = /\b([a-zA-Z_][a-zA-Z0-9_]*)\s*(?=\()/g;
-    }
-    else if (['go', 'golang'].includes(lang)) {
-        rules.keyword = /\b(package|import|func|return|var|const|type|struct|interface|map|chan|go|defer|if|else|for|range|switch|case|default|break|continue|select|nil|true|false|make|new|len|cap|append|copy|delete)\b/g;
-    }
-    else if (['rust', 'rs'].includes(lang)) {
-        rules.keyword = /\b(fn|let|mut|const|if|else|match|loop|while|for|in|return|struct|enum|impl|trait|pub|use|mod|crate|self|super|true|false|Some|None|Ok|Err)\b/g;
-    }
-    const tokens = [];
-    let result = escaped;
-    if (rules.comment) {
-        result = result.replace(rules.comment, (match) => {
-            const index = tokens.length;
-            tokens.push('<span class="comment">' + match + '</span>');
-            return '___TOKEN_' + index + '___';
-        });
-    }
-    if (rules.string) {
-        result = result.replace(rules.string, (match) => {
-            const index = tokens.length;
-            tokens.push('<span class="string">' + match + '</span>');
-            return '___TOKEN_' + index + '___';
-        });
-    }
-    if (rules.keyword) {
-        result = result.replace(rules.keyword, '<span class="keyword">$1</span>');
-    }
-    if (rules.function) {
-        result = result.replace(rules.function, '<span class="function">$1</span>');
-    }
-    if (rules.class) {
-        result = result.replace(rules.class, '<span class="class-name">$1</span>');
-    }
-    if (rules.number) {
-        result = result.replace(rules.number, '<span class="number">$1</span>');
-    }
-    if (rules.tag) {
-        result = result.replace(rules.tag, '<span class="tag">$1</span>');
-    }
-    if (rules.attr) {
-        result = result.replace(rules.attr, ' <span class="attr-name">$1</span>=');
-    }
-    if (rules.property) {
-        result = result.replace(rules.property, '<span class="property">$1</span>:');
-    }
-    tokens.forEach((token, index) => {
-        result = result.replace('___TOKEN_' + index + '___', token);
-    });
-    return result;
+    return output + escapeHtml(source.slice(cursor));
 }
 /**
  * 保存光标位置（文本偏移量）
@@ -2034,6 +1033,7 @@ async function editCodeBlock(pre) {
     if (!pre) return;
     const codeElement = pre.querySelector('code');
     if (!codeElement) return;
+    const token = window.SoraEditor?.captureElement(pre);
     // 获取当前语言和代码
     const langAttr = pre.getAttribute('data-lang') || '';
     const langClass = Array.from(codeElement.classList).find(c => c.startsWith('language-'));
@@ -2042,10 +1042,11 @@ async function editCodeBlock(pre) {
     // 弹出编辑对话框
     const result = await codeEditDialog(currentCode, currentLang, CODE_LANG_OPTIONS, '编辑代码块');
     if (result === null) return; // 用户取消
+    if (!token) return;
+    SoraEditor.transaction('编辑代码块', token, () => {
     if (result.delete) {
         // 删除代码块
         pre.remove();
-        syncPreviewToTextarea();
         return;
     }
     // 更新代码块
@@ -2061,7 +1062,7 @@ async function editCodeBlock(pre) {
         langLabel.textContent = langValue.toUpperCase();
         langLabel.dataset.lang = langValue.toUpperCase();
     }
-    syncPreviewToTextarea();
+    });
 }
 // -------------------- 预览区域事件监听 --------------------
 // 注意：图片相关功能已移至 imageHandler.js

@@ -11,6 +11,23 @@
     --state-loading-bg: color-mix(in srgb, var(--color-primary-soft, #e8f0fe) 55%, white);
 }
 
+.sora-format-form { display:grid; gap:16px; }
+.sora-format-form label { display:grid; gap:6px; min-width:0; }
+.sora-format-form :is(input:not([type="checkbox"]),textarea,select), .sora-format-menu > input { width:100%; min-height:44px; box-sizing:border-box; padding:8px; border:1px solid var(--color-border,#94a3b8); border-radius:5px; background:var(--color-panel,#fff); color:var(--color-text,#172033); font:inherit; }
+.sora-format-form textarea { min-height:100px; resize:vertical; }
+.sora-format-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.sora-format-actions button { min-height:44px; padding:8px 12px; border:1px solid var(--color-border,#94a3b8); border-radius:5px; background:var(--color-panel,#fff); color:var(--color-text,#172033); cursor:pointer; }
+.sora-format-menu section { margin-block:16px; }
+.sora-format-menu h3 { margin:0 0 8px; font-size:14px; }
+.sora-format-menu [hidden] { display:none; }
+.format-toolbar-scroll #blockFormatSelect { min-height:36px; max-width:120px; font:inherit; border:1px solid var(--color-border,#94a3b8); border-radius:5px; background:var(--color-panel,#fff); color:var(--color-text,#172033); }
+[data-sora-format-ui] [aria-pressed="true"] { background:var(--color-primary-soft,#e8f0fe); color:var(--color-text,#172033); }
+.text-format-toolbar[data-sora-format-ui] button[aria-pressed="true"] { background:var(--color-primary-soft,#e8f0fe); color:var(--color-text,#172033); }
+[data-sora-format-ui] [aria-pressed="mixed"] { text-decoration:underline dotted; text-underline-offset:4px; }
+.text-format-toolbar[data-sora-format-ui] { max-width:calc(100vw - 20px); box-sizing:border-box; gap:4px; }
+.text-format-toolbar[data-sora-format-ui] button { min-height:44px; margin:0; }
+@media (max-width:640px) { .sora-format-form :is(input,textarea,select), .sora-format-menu > input { font-size:16px; } }
+
 .sora-export-form { display: grid; gap: var(--space-4); }
 .sora-export-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: var(--space-3); }
 .sora-export-grid[hidden] { display: none; }

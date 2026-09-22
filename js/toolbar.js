@@ -567,38 +567,28 @@ function buildHelpPageContents() {
         '<li>建议：一级目录用 H1/H2，小节用 H3/H4。</li>',
         '</ul>',
         '<h2 id="格式命令一览">格式命令一览</h2>',
-        '<p>以下清单与格式工具栏的 <code>data-command</code> 以及内部 <code>applyFormat(command)</code> 一一对应。</p>',
-        '<table>',
-        '<thead><tr><th>命令</th><th>说明</th><th>要点</th></tr></thead>',
-        '<tbody>',
-        '<tr><td><code>bold</code></td><td>粗体</td><td>支持 Ctrl+B；再次应用会取消</td></tr>',
-        '<tr><td><code>italic</code></td><td>斜体</td><td>支持 Ctrl+I；再次应用会取消</td></tr>',
-        '<tr><td><code>underline</code></td><td>下划线</td><td>支持 Ctrl+U；再次应用会取消</td></tr>',
-        '<tr><td><code>strikethrough</code></td><td>删除线</td><td>再次应用会取消</td></tr>',
-        '<tr><td><code>code</code></td><td>行内代码</td><td>行内代码内容会转义为纯文本（不保留嵌套 HTML）</td></tr>',
-        '<tr><td><code>code-block</code></td><td>代码块</td><td>会弹出代码编辑对话框；可选语言并高亮</td></tr>',
-        '<tr><td><code>highlight</code></td><td>高亮</td><td>使用 <code>&lt;mark&gt;</code>；再次应用会取消</td></tr>',
-        '<tr><td><code>spoiler</code></td><td>防剧透</td><td>使用 <code>&lt;spoiler&gt;</code>；悬停显示内容</td></tr>',
-        '<tr><td><code>superscript</code></td><td>上标</td><td>使用 <code>&lt;sup&gt;</code></td></tr>',
-        '<tr><td><code>subscript</code></td><td>下标</td><td>使用 <code>&lt;sub&gt;</code></td></tr>',
-        '<tr><td><code>color</code></td><td>文字颜色</td><td>提供常用/最近颜色，并提示其在白色正文背景上的对比度；已选中文本才能应用</td></tr>',
-        '<tr><td><code>background-color</code></td><td>背景颜色</td><td>提供常用/最近颜色，并推荐可读的黑色或白色文字；已选中文本才能应用</td></tr>',
-        '<tr><td><code>unordered-list</code></td><td>无序列表</td><td>按行拆分生成 <code>&lt;ul&gt;&lt;li&gt;</code></td></tr>',
-        '<tr><td><code>ordered-list</code></td><td>有序列表</td><td>按行拆分生成 <code>&lt;ol&gt;&lt;li&gt;</code></td></tr>',
-        '<tr><td><code>task-list</code></td><td>任务列表</td><td>按行生成可勾选任务项</td></tr>',
-        '<tr><td><code>quote</code></td><td>引用</td><td>生成 <code>&lt;blockquote&gt;</code></td></tr>',
-        '<tr><td><code>table</code></td><td>表格</td><td>生成表格结构（适合粘贴后再调整）</td></tr>',
-        '<tr><td><code>paragraph</code></td><td>段落</td><td>用 <code>&lt;p&gt;</code> 包裹选中内容</td></tr>',
-        '<tr><td><code>hr</code></td><td>水平线</td><td>插入分隔线</td></tr>',
-        '<tr><td><code>link</code></td><td>链接</td><td>会弹窗输入；支持外链、<code>#锚点</code>、<code>dir:</code>、<code>name:</code></td></tr>',
-        '<tr><td><code>anchor</code></td><td>锚点</td><td>会弹窗输入锚点名；用于页内/跨目录跳转目标</td></tr>',
-        '</tbody>',
-        '</table>',
-        '<h2 id="格式小技巧">格式小技巧</h2>',
+        '<p>顶部格式栏提供常用文字格式、正文/标题类型和段落设置；完整格式、表格操作和正文撤销在“更多格式”中，也可通过 Ctrl+K 搜索。</p>',
+        '<table><thead><tr><th>分组</th><th>功能</th></tr></thead><tbody>',
+        ...(window.SoraFormatting?.definitions || []).map(item => '<tr><td>' + escapeHtml(item.group) + '</td><td>' + escapeHtml(item.label) + '</td></tr>'),
+        '</tbody></table>',
+        '<h2 id="格式小技巧">格式与编辑</h2>',
         '<ul>',
-        '<li>大多数“包裹类格式”（粗体/斜体/下划线/高亮等）再次点击会取消。</li>',
-        '<li>对同一段文字叠加多个格式是允许的（例如：高亮 + 粗体）。</li>',
-        '<li>代码块是不可直接编辑的块，通常通过点击触发编辑对话框来修改。</li>',
+        '<li>光标放在正文中可先开启粗体等格式再输入；选中文字时只修改选区，其他链接和样式会保留。按钮的选中状态表示已应用，点状下划线表示混合状态。</li>',
+        '<li>“清除文字样式”保留链接、锚点、方法、代码、媒体与列表结构；“正文”用于把当前段落或标题转换为普通段落。</li>',
+        '<li>正文内用 Ctrl+Z 撤销、Ctrl+Y 或 Ctrl+Shift+Z 重做；目录结构仍使用目录撤销。正文历史仅保留当前会话内有限记录，不替代草稿与快照。</li>',
+        '<li>列表可以互换类型，再次选择同一种列表可取消；Tab / Shift+Tab 调整列表层级，空列表项按回车退出。</li>',
+        '<li>插入表格时一起设置行、列和表头；光标放在单元格后，通过“更多格式”的表格分组增删行列、切换表头、设置对齐或删除整表。</li>',
+        '<li>段落设置提供对齐、行距和段前段后间距；只修改选择的内容，不改变整个导出页的默认布局。</li>',
+        '<li>“复制样式 / 应用样式”只复制文字与段落样式，不复制链接地址、锚点 ID、方法配置或组件状态。</li>',
+        '<li>代码块通过点击打开编辑弹窗；纯文本模式不高亮，其他语言提供基础高亮或原文显示；保存以原始代码文字为准。</li>',
+        '</ul>',
+        '<h2 id="新增内容格式">内容块与注释</h2>',
+        '<ul>',
+        '<li><strong>提示块</strong>提供提示、注意、警告、成功类型；把光标放回块内，再选择提示块可修改标题与类型。</li>',
+        '<li><strong>折叠块</strong>可以直接插入并编辑。编辑器中展开以便修改正文；设置中的“默认展开”控制导出后的初始状态。原有方法触发的折叠组件继续保留。</li>',
+        '<li><strong>脚注 / 尾注</strong>在当前位置插入编号并在当前目录末尾生成注释；点击编号编辑或删除，Ctrl+单击前往注释，点击“返回正文”回到引用。编号会随引用顺序更新。</li>',
+        '<li><strong>键盘按键</strong>适合表示 Ctrl+S 等操作；<strong>术语解释</strong>用于成对编写名词和解释。</li>',
+        '<li>Markdown 导出可选择保留丰富格式（使用 HTML）或通用 Markdown（简化样式）；确认写入前会列出受影响内容。任务状态、代码语言与表格单独转换。</li>',
         '</ul>',
         '<h2 id="插入媒体">插入图片与视频</h2>',
         '<ul>',
@@ -1404,21 +1394,6 @@ document.addEventListener('keydown', function(e) {
             case 's':  
                 e.preventDefault();
                 if (topSaveBtn) topSaveBtn.click();
-                break;
-            case 'b':  
-                e.preventDefault();
-                const boldBtn = document.querySelector('.format-toolbar-btn[data-command="bold"]');
-                if (boldBtn) boldBtn.click();
-                break;
-            case 'i':  
-                e.preventDefault();
-                const italicBtn = document.querySelector('.format-toolbar-btn[data-command="italic"]');
-                if (italicBtn) italicBtn.click();
-                break;
-            case 'u':  
-                e.preventDefault();
-                const underlineBtn = document.querySelector('.format-toolbar-btn[data-command="underline"]');
-                if (underlineBtn) underlineBtn.click();
                 break;
         }
     }
