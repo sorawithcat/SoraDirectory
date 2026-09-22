@@ -11,6 +11,29 @@
     --state-loading-bg: color-mix(in srgb, var(--color-primary-soft, #e8f0fe) 55%, white);
 }
 
+.sora-export-form { display: grid; gap: var(--space-4); }
+.sora-export-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: var(--space-3); }
+.sora-export-grid[hidden] { display: none; }
+.sora-export-grid label { display: grid; gap: var(--space-2); min-width: 0; }
+.sora-export-grid :is(select, input) { min-width: 0; width: 100%; min-height: 44px; padding: 8px; border: 1px solid var(--color-border, #cbd5e1); border-radius: var(--radius-sm); background: var(--color-panel, #fff); color: var(--color-text, #172033); font: inherit; }
+.sora-form-error { color: var(--color-danger, #b91c1c); margin: 0; }
+.sora-form-error:empty { display: none; }
+.toolbar-action-row[hidden] { display: none; }
+.toolbar-action-list .toolbar-action-row { grid-template-columns: minmax(0, 1fr) repeat(3, 44px); }
+.toolbar-action-row button { min-height: 44px; min-width: 0; overflow-wrap: anywhere; }
+.sora-issue-target { outline: 2px solid var(--color-primary, #2563eb); outline-offset: 3px; }
+.sora-help { display: grid; grid-template-columns: minmax(160px, 220px) minmax(0, 1fr); gap: var(--space-4); height: min(68vh, 760px); }
+.sora-help nav { min-width: 0; overflow: auto; }
+.sora-help nav div { display: grid; gap: var(--space-1); margin-block: var(--space-3); }
+.sora-help nav :is(button, input) { width: 100%; min-height: 44px; text-align: left; padding: 8px; border: 1px solid var(--color-border, #cbd5e1); border-radius: var(--radius-sm); background: var(--color-panel, #fff); color: var(--color-text, #172033); font: inherit; }
+.sora-help nav [aria-current="page"] { background: var(--color-primary-soft, #e8f0fe); font-weight: 700; }
+.sora-help .sora-help-content { min-width: 0; min-height: 0; overflow: auto; padding: var(--space-3); cursor: auto; }
+@media (max-width: 640px) {
+    .sora-help { grid-template-columns: minmax(0, 1fr); height: auto; }
+    .sora-help nav { max-height: 210px; }
+    .sora-help .sora-help-content { max-height: 50vh; }
+}
+
 :where(button, input, select, textarea, [tabindex]):focus-visible {
     outline: 2px solid var(--color-primary, #2563eb);
     outline-offset: 2px;

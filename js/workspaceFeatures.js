@@ -185,12 +185,11 @@ window.FeatureDialog = FeatureDialog;
 const DraftManager = (function() {
     const DB_NAME = 'SoraDirectoryDraftDB';
     const STORE_NAME = 'drafts';
-    const MAX_AGE = 30 * 24 * 60 * 60 * 1000;
     let dbPromise = null;
     let saveTimer = null;
     let restoring = false;
-    let lastSnapshotAt = 0;
-    let lastSnapshotHash = '';
+    const snapshotStates = new Map();
+    let writeQueue = Promise.resolve();
     const SNAPSHOT_INTERVAL = 5 * 60 * 1000;
     const SNAPSHOT_LIMIT = 20;
 
@@ -216,24 +215,31 @@ const DraftManager = (function() {
     function openDB() {
         if (dbPromise) return dbPromise;
         dbPromise = new Promise((resolve, reject) => {
-            const request = indexedDB.open(DB_NAME, 1);
+            const request = indexedDB.open(DB_NAME, 2);
             request.onupgradeneeded = () => {
                 const db = request.result;
                 if (!db.objectStoreNames.contains(STORE_NAME)) {
                     db.createObjectStore(STORE_NAME, { keyPath: 'id' });
                 }
+                const store = request.transaction.objectStore(STORE_NAME);
+                if (!store.indexNames.contains('documentId')) store.createIndex('documentId', 'documentId');
+                if (!db.objectStoreNames.contains('documents')) db.createObjectStore('documents', { keyPath: 'id' });
             };
-            request.onsuccess = () => resolve(request.result);
+            request.onsuccess = () => {
+                request.result.onversionchange = () => { request.result.close(); dbPromise = null; };
+                resolve(request.result);
+            };
             request.onerror = () => reject(request.error);
-        });
+            request.onblocked = () => setStatus('草稿升级等待中', '请关闭其他旧版编辑器标签页');
+        }).catch(error => { dbPromise = null; throw error; });
         return dbPromise;
     }
 
-    async function read() {
+    async function read(documentId = documentIdentity().id) {
         try {
             const db = await openDB();
             return await new Promise((resolve, reject) => {
-                const request = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).get(draftId());
+                const request = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).get(`latest:${documentId}`);
                 request.onsuccess = () => resolve(request.result || null);
                 request.onerror = () => reject(request.error);
             });
@@ -243,15 +249,15 @@ const DraftManager = (function() {
         }
     }
 
-    async function listSnapshots() {
+    async function listSnapshots(documentId = documentIdentity().id) {
         try {
             const db = await openDB();
             const records = await new Promise((resolve, reject) => {
-                const request = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).getAll();
+                const request = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).index('documentId').getAll(documentId);
                 request.onsuccess = () => resolve(request.result || []);
                 request.onerror = () => reject(request.error);
             });
-            const prefix = snapshotPrefix();
+            const prefix = `snapshot:${documentId}:`;
             return records.filter(record => String(record.id || '').startsWith(prefix))
                 .sort((a, b) => Number(b.updatedAt) - Number(a.updatedAt));
         } catch (error) {
@@ -267,8 +273,8 @@ const DraftManager = (function() {
         return `${text.length}:${hash}`;
     }
 
-    async function trimSnapshots() {
-        const snapshots = await listSnapshots();
+    async function trimSnapshots(documentId = documentIdentity().id) {
+        const snapshots = await listSnapshots(documentId);
         const db = await openDB();
         for (const record of snapshots.slice(SNAPSHOT_LIMIT)) {
             await new Promise((resolve, reject) => {
@@ -284,10 +290,51 @@ const DraftManager = (function() {
         return selected ? (selected.getAttribute('data-dir-id') || '') : '';
     }
 
-    async function saveNow() {
+    function collectMediaIds(data, target = new Set()) {
+        (data || []).forEach(row => {
+            for (const match of String(row?.[3] || '').matchAll(/data-media-storage-id=["']([^"']+)["']/g)) target.add(match[1]);
+        });
+        return target;
+    }
+
+    async function rememberDocument(data = mulufile, identity = documentIdentity()) {
+        if (!data.length) return;
+        const record = { id: identity.id, label: identity.label, updatedAt: Date.now(), mediaIds: [...collectMediaIds(data)] };
+        const db = await openDB();
+        await new Promise((resolve, reject) => {
+            const tx = db.transaction('documents', 'readwrite');
+            tx.objectStore('documents').put(record);
+            tx.oncomplete = resolve;
+            tx.onerror = tx.onabort = () => reject(tx.error || new Error('文档媒体保护写入失败'));
+        });
+    }
+
+    async function protectedMediaIds() {
+        await writeQueue;
+        const db = await openDB();
+        const ids = collectMediaIds(mulufile);
+        if (typeof markdownPreview !== 'undefined' && markdownPreview) {
+            markdownPreview.querySelectorAll('[data-media-storage-id]').forEach(element => ids.add(element.getAttribute('data-media-storage-id')));
+        }
+        if (window.DirectoryHistory?.collectMediaIds) DirectoryHistory.collectMediaIds(ids);
+        await Promise.all([STORE_NAME, 'documents'].map(name => new Promise((resolve, reject) => {
+            const request = db.transaction(name, 'readonly').objectStore(name).openCursor();
+            request.onsuccess = () => {
+                const cursor = request.result;
+                if (!cursor) { resolve(); return; }
+                if (name === STORE_NAME) collectMediaIds(cursor.value.data, ids);
+                else (cursor.value.mediaIds || []).forEach(id => ids.add(id));
+                cursor.continue();
+            };
+            request.onerror = () => reject(request.error);
+        })));
+        return ids;
+    }
+
+    async function saveNow(options = {}) {
         clearTimeout(saveTimer);
         saveTimer = null;
-        if (restoring || typeof hasUnsavedChanges === 'undefined' || !hasUnsavedChanges || !Array.isArray(mulufile)) return false;
+        if (restoring || typeof hasUnsavedChanges === 'undefined' || (!hasUnsavedChanges && !options.force) || !Array.isArray(mulufile)) return writeQueue;
         try {
             if (typeof syncPreviewToTextarea === 'function') syncPreviewToTextarea();
             const identity = documentIdentity();
@@ -301,25 +348,33 @@ const DraftManager = (function() {
                 selectedDirId: getSelectedDirId(),
                 directoryLevelColors: typeof serializeDirectoryLevelColors === 'function' ? serializeDirectoryLevelColors() : null,
                 directoryMetadata: window.DirectoryMetadata ? window.DirectoryMetadata.serialize() : null,
+                encrypted: typeof soraDocumentEncrypted !== 'undefined' && soraDocumentEncrypted,
                 data: mulufile.map(row => Array.isArray(row) ? row.slice() : row)
             };
-            const db = await openDB();
-            await new Promise((resolve, reject) => {
-                const transaction = db.transaction(STORE_NAME, 'readwrite');
-                const store = transaction.objectStore(STORE_NAME);
-                store.put(draft);
-                const nextHash = fingerprint([draft.data, draft.directoryMetadata]);
-                if (nextHash !== lastSnapshotHash && Date.now() - lastSnapshotAt >= SNAPSHOT_INTERVAL) {
-                    store.put({ ...draft, id: `${snapshotPrefix()}${draft.updatedAt}`, kind: 'snapshot' });
-                    lastSnapshotHash = nextHash;
-                    lastSnapshotAt = draft.updatedAt;
-                }
-                transaction.oncomplete = resolve;
-                transaction.onerror = () => reject(transaction.error);
-            });
-            await trimSnapshots();
+            const write = async () => {
+                const db = await openDB();
+                const state = snapshotStates.get(identity.id) || { at: 0, hash: '' };
+                const due = Date.now() - state.at >= SNAPSHOT_INTERVAL;
+                const nextHash = due ? fingerprint([draft.data, draft.directoryMetadata, draft.directoryLevelColors]) : '';
+                const createSnapshot = due && nextHash !== state.hash;
+                await new Promise((resolve, reject) => {
+                    const transaction = db.transaction(STORE_NAME, 'readwrite');
+                    const store = transaction.objectStore(STORE_NAME);
+                    store.put(draft);
+                    if (createSnapshot) {
+                        store.put({ ...draft, id: `snapshot:${identity.id}:${draft.updatedAt}`, kind: 'snapshot' });
+                    }
+                    transaction.oncomplete = resolve;
+                    transaction.onerror = transaction.onabort = () => reject(transaction.error || new Error('草稿写入中断'));
+                });
+                if (due) snapshotStates.set(identity.id, { at: draft.updatedAt, hash: nextHash });
+                if (createSnapshot) await trimSnapshots(identity.id);
+            };
+            const pending = writeQueue.then(write);
+            writeQueue = pending.catch(() => {});
+            await pending;
             const time = new Date(draft.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            setStatus(`草稿 ${time}`, `自动草稿已保存：${new Date(draft.updatedAt).toLocaleString()}`);
+            if (documentIdentity().id === identity.id) setStatus(`草稿 ${time}`, `自动草稿已保存：${new Date(draft.updatedAt).toLocaleString()}`);
             return true;
         } catch (err) {
             console.warn('保存自动草稿失败:', err);
@@ -335,23 +390,31 @@ const DraftManager = (function() {
         saveTimer = setTimeout(saveNow, 1200);
     }
 
-    async function clear() {
-        clearTimeout(saveTimer);
-        saveTimer = null;
+    async function clear(documentId = documentIdentity().id) {
+        if (documentIdentity().id === documentId) { clearTimeout(saveTimer); saveTimer = null; }
         try {
-            const db = await openDB();
-            await new Promise((resolve, reject) => {
-                const request = db.transaction(STORE_NAME, 'readwrite').objectStore(STORE_NAME).delete(draftId());
-                request.onsuccess = resolve;
-                request.onerror = () => reject(request.error);
+            const pending = writeQueue.then(async () => {
+                const db = await openDB();
+                await new Promise((resolve, reject) => {
+                    const tx = db.transaction(STORE_NAME, 'readwrite');
+                    tx.objectStore(STORE_NAME).delete(`latest:${documentId}`);
+                    tx.oncomplete = resolve;
+                    tx.onerror = tx.onabort = () => reject(tx.error);
+                });
             });
-            setStatus('');
+            writeQueue = pending.catch(() => {});
+            await pending;
+            if (documentIdentity().id === documentId && !hasUnsavedChanges) setStatus('');
         } catch (err) {
             console.warn('清除自动草稿失败:', err);
         }
     }
 
     async function applyDraft(draft) {
+        const sameDocument = documentIdentity().id === draft.documentId;
+        await beforeSwitch();
+        if (sameDocument && mulufile.length) DirectoryHistory.record('恢复草稿');
+        else DirectoryHistory.clear();
         restoring = true;
         try {
             mulufile = draft.data.map(row => Array.isArray(row) ? row.slice() : row);
@@ -363,6 +426,7 @@ const DraftManager = (function() {
             }
             if (window.DirectoryMetadata) window.DirectoryMetadata.load(draft.directoryMetadata);
             if (typeof currentFileHandle !== 'undefined') currentFileHandle = null;
+            if (typeof soraDocumentEncrypted !== 'undefined') soraDocumentEncrypted = !!draft.encrypted;
             if (typeof currentFileName !== 'undefined') currentFileName = draft.fileName || '恢复的草稿';
             if (fileNameInput) fileNameInput.value = draft.displayName || draft.fileName || '恢复的草稿';
             LoadMulu();
@@ -371,18 +435,20 @@ const DraftManager = (function() {
             if (target && typeof switchToDirectoryElement === 'function') {
                 await switchToDirectoryElement(target, { syncCurrent: false, scrollPreviewTop: true, forceRender: true });
             }
-            hasUnsavedChanges = true;
-            updateSaveButtonState();
+            markUnsavedChanges();
             setStatus('草稿已恢复', `恢复时间：${new Date(draft.updatedAt).toLocaleString()}`);
             return true;
         } finally {
             restoring = false;
+            schedule();
         }
     }
 
     async function applySelectedDirectories(draft, selectedIds) {
         const ids = new Set(selectedIds || []);
         if (!ids.size) return false;
+        await beforeSwitch();
+        DirectoryHistory.record('从快照恢复目录');
         const snapshotById = new Map(draft.data.map(row => [row[2], row]));
         const requestedCount = ids.size;
         Array.from(ids).forEach(id => {
@@ -423,13 +489,13 @@ const DraftManager = (function() {
             LoadMulu();
             const target = document.querySelector('.mulu');
             if (target) await switchToDirectoryElement(target, { syncCurrent: false, forceRender: true });
-            hasUnsavedChanges = true;
-            updateSaveButtonState();
+            markUnsavedChanges();
             const ancestorCount = ids.size - requestedCount;
             showToast(`已从快照恢复 ${requestedCount} 个目录${ancestorCount ? `，并补齐 ${ancestorCount} 个父目录` : ''}`, 'success');
             return true;
         } finally {
             restoring = false;
+            schedule();
         }
     }
 
@@ -479,6 +545,48 @@ const DraftManager = (function() {
         const snapshots = await listSnapshots();
         wrapper.innerHTML = '';
         const identity = documentIdentity();
+        const latestSection = document.createElement('section');
+        latestSection.className = 'issue-section';
+        latestSection.innerHTML = '<h3>各文档的最新草稿</h3>';
+        const db = await openDB();
+        const latest = await new Promise((resolve, reject) => {
+            const items = [];
+            const request = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME)
+                .openCursor(IDBKeyRange.bound('latest:', 'latest:\uffff'));
+            request.onsuccess = () => {
+                const cursor = request.result;
+                if (!cursor) { resolve(items.sort((a, b) => b.updatedAt - a.updatedAt)); return; }
+                const { documentId, documentLabel, displayName, updatedAt } = cursor.value;
+                items.push({ documentId, documentLabel, displayName, updatedAt });
+                cursor.continue();
+            };
+            request.onerror = () => reject(request.error);
+        });
+        if (!latest.length) latestSection.appendChild(Object.assign(document.createElement('p'), { textContent: '暂无最新草稿。' }));
+        latest.forEach(record => {
+            const row = document.createElement('div');
+            row.className = 'method-workbench-actions';
+            const restore = document.createElement('button');
+            restore.type = 'button';
+            restore.textContent = `${record.documentLabel || record.displayName || '未命名文档'} · ${new Date(record.updatedAt).toLocaleString()} · 恢复`;
+            restore.onclick = async () => {
+                const draft = await read(record.documentId);
+                if (!draft) return;
+                FeatureDialog.close();
+                await applyDraft(draft);
+            };
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.textContent = '删除草稿';
+            remove.onclick = async () => {
+                if (!await customConfirm('删除这份最新草稿？历史快照和原文件会保留。', '删除草稿', '保留', '删除草稿')) return;
+                await clear(record.documentId);
+                openManager();
+            };
+            row.append(restore, remove);
+            latestSection.appendChild(row);
+        });
+        wrapper.appendChild(latestSection);
         const controls = document.createElement('div');
         controls.className = 'method-workbench-actions';
         controls.innerHTML = `<input type="text" maxlength="60" aria-label="快照名称" placeholder="快照名称（可选）"><button type="button" data-create-snapshot>立即建立命名快照</button>`;
@@ -547,33 +655,48 @@ const DraftManager = (function() {
             selectedDirId: getSelectedDirId(),
             directoryLevelColors: typeof serializeDirectoryLevelColors === 'function' ? serializeDirectoryLevelColors() : null,
             directoryMetadata: window.DirectoryMetadata ? window.DirectoryMetadata.serialize() : null,
+            encrypted: typeof soraDocumentEncrypted !== 'undefined' && soraDocumentEncrypted,
             data: mulufile.map(row => Array.isArray(row) ? row.slice() : row)
         };
         const db = await openDB();
         await new Promise((resolve, reject) => {
-            const request = db.transaction(STORE_NAME, 'readwrite').objectStore(STORE_NAME).put(record);
-            request.onsuccess = resolve;
-            request.onerror = () => reject(request.error);
+            const tx = db.transaction(STORE_NAME, 'readwrite');
+            tx.objectStore(STORE_NAME).put(record);
+            tx.oncomplete = resolve;
+            tx.onerror = tx.onabort = () => reject(tx.error || new Error('快照写入中断'));
         });
-        await trimSnapshots();
+        await trimSnapshots(identity.id);
         showToast(`已建立命名快照“${record.snapshotName}”`, 'success', 2200);
         return record;
     }
 
-    async function offerRestore() {
+    async function offerRestore(options = {}) {
         const draft = await read();
         if (!draft || !Array.isArray(draft.data) || draft.data.length === 0) return false;
-        if (Date.now() - Number(draft.updatedAt || 0) > MAX_AGE) {
-            await clear();
-            return false;
-        }
+        if (options.loaded && fingerprint([draft.data, draft.directoryMetadata, draft.directoryLevelColors]) ===
+            fingerprint([mulufile, window.DirectoryMetadata?.serialize(), typeof serializeDirectoryLevelColors === 'function' ? serializeDirectoryLevelColors() : null])) return false;
+        if (options.loaded && options.fileTime && Number(draft.updatedAt) <= options.fileTime) return false;
         const time = new Date(draft.updatedAt).toLocaleString();
-        const restore = await customConfirm(`检测到 ${time} 的自动草稿，是否恢复？`, '恢复草稿', '忽略并删除', '自动草稿恢复');
-        if (!restore) {
-            await clear();
-            return false;
-        }
+        const restore = await customConfirm(`“${draft.documentLabel || draft.displayName || '当前文档'}”有 ${time} 的自动草稿。暂不恢复会保留草稿，可稍后从“草稿”打开。`, '恢复草稿', '暂不恢复', '自动草稿恢复');
+        if (!restore) return false;
         return applyDraft(draft);
+    }
+
+    async function beforeSwitch() {
+        if (window.SoraSaveWorkflow?.busy()) throw new Error('文件正在保存或导出，请完成后再切换文档');
+        if (typeof syncPreviewToTextarea === 'function') syncPreviewToTextarea();
+        if (hasUnsavedChanges && await saveNow() === false) throw new Error('当前草稿保存失败，请先保存文件再切换文档');
+        await writeQueue;
+        await rememberDocument();
+        if (window.__soraMediaImportPromise) await window.__soraMediaImportPromise;
+    }
+
+    async function resetAfterLoad(fileTime = 0) {
+        clearTimeout(saveTimer);
+        snapshotStates.delete(documentIdentity().id);
+        await rememberDocument();
+        setStatus('');
+        return offerRestore({ loaded: true, fileTime });
     }
 
     document.addEventListener('visibilitychange', () => {
@@ -581,7 +704,7 @@ const DraftManager = (function() {
     });
 
     document.getElementById('draftManagerBtn')?.addEventListener('click', openManager);
-    return { schedule, saveNow, clear, resetAfterLoad: clear, offerRestore, listSnapshots, openManager, createNamedSnapshot };
+    return { schedule, saveNow, clear, beforeSwitch, resetAfterLoad, offerRestore, listSnapshots, openManager, createNamedSnapshot, rememberDocument, protectedMediaIds, collectMediaIds };
 })();
 window.DraftManager = DraftManager;
 
@@ -692,7 +815,8 @@ const DirectoryHistory = (function() {
     });
     updateButtons();
 
-    return { record, undo, redo, clear, isRestoring: () => restoring };
+    return { record, undo, redo, clear, isRestoring: () => restoring,
+        collectMediaIds: target => { [...undoStack, ...redoStack].forEach(state => DraftManager.collectMediaIds(state.data, target)); return target; } };
 })();
 window.DirectoryHistory = DirectoryHistory;
 
@@ -906,13 +1030,14 @@ const MediaManager = (function() {
     }
 
     async function removeItem(item) {
-        if (item.reference.count > 0) {
-            showToast('该资源仍被正文引用，不能直接删除', 'warning', 2200);
+        if (item.reference.count > 0 || (await DraftManager.protectedMediaIds()).has(item.id)) {
+            showToast('该资源仍被文档、草稿或快照引用，不能删除', 'warning', 2200);
             return;
         }
-        const confirmed = await customConfirm(`确定删除孤立资源 ${item.id}？`);
+        const confirmed = await customConfirm(`删除未被引用的资源 ${item.id}？预计释放 ${displaySize(item.info.size)}。`);
         if (!confirmed) return;
-        await MediaStorage.deleteMedia(item.id);
+        try { await MediaStorage.deleteMedia(item.id); }
+        catch (error) { showToast(error.message, 'warning'); return; }
         showToast('孤立资源已删除', 'success', 1600);
         open();
     }
@@ -973,7 +1098,7 @@ const MediaManager = (function() {
                 if (typeof markUnsavedChanges === 'function') markUnsavedChanges();
                 syncCurrentMediaEditor();
                 try {
-                    await MediaStorage.deleteMedia(item.id);
+                    if (!(await DraftManager.protectedMediaIds()).has(item.id)) await MediaStorage.deleteMedia(item.id);
                 } catch (cleanupError) {
                     console.warn('旧媒体清理失败，已保留为孤立数据:', cleanupError);
                 }
@@ -1081,9 +1206,9 @@ const MediaManager = (function() {
 
     function createCard(item) {
         const card = document.createElement('article');
-        card.className = 'media-card' + (item.reference.count === 0 ? ' is-orphan' : '');
+        card.className = 'media-card' + (item.reference.count === 0 && !item.protected ? ' is-orphan' : '');
         card.dataset.search = `${item.id} ${item.reference.name} ${item.directoryNames.join(' ')}`.toLowerCase();
-        card.dataset.orphan = item.reference.count === 0 ? 'true' : 'false';
+        card.dataset.orphan = item.reference.count === 0 && !item.protected ? 'true' : 'false';
         card.dataset.type = item.info.type || 'media';
         card.dataset.size = String(Number(item.info.size) || 0);
         card.dataset.current = item.reference.dirIds.has(DirectoryNavigation.getCurrentDirId()) ? 'true' : 'false';
@@ -1116,7 +1241,7 @@ const MediaManager = (function() {
         details.appendChild(meta);
         const dirs = document.createElement('div');
         dirs.className = 'media-dirs';
-        dirs.textContent = item.directoryNames.length ? `目录：${item.directoryNames.join('、')}` : '孤立资源';
+        dirs.textContent = item.directoryNames.length ? `目录：${item.directoryNames.join('、')}` : item.protected ? '其他文档、草稿或快照保留中' : '可清理资源';
         details.appendChild(dirs);
         const actions = document.createElement('div');
         actions.className = 'media-actions';
@@ -1151,7 +1276,7 @@ const MediaManager = (function() {
         const deleteBtn = document.createElement('button');
         deleteBtn.type = 'button';
         deleteBtn.textContent = '删除';
-        deleteBtn.disabled = item.reference.count > 0;
+        deleteBtn.disabled = item.reference.count > 0 || item.protected;
         deleteBtn.addEventListener('click', () => removeItem(item));
         actions.appendChild(deleteBtn);
         details.appendChild(actions);
@@ -1166,6 +1291,7 @@ const MediaManager = (function() {
         FeatureDialog.open('媒体资源管理器', wrapper);
         try {
             const refs = collectReferences();
+            const protectedIds = await DraftManager.protectedMediaIds();
             const allIds = await MediaStorage.getAllMediaIds();
             const ids = allIds.filter(id => !String(id).includes('_chunk_'));
             const items = (await Promise.all(ids.map(async id => {
@@ -1176,7 +1302,7 @@ const MediaManager = (function() {
                     const row = getMulufileByDirId(dirId);
                     return row ? row[1] : dirId;
                 });
-                return { id, info, reference, directoryNames };
+                return { id, info, reference, directoryNames, protected: protectedIds.has(id) };
             }))).filter(Boolean);
 
             wrapper.innerHTML = '';
@@ -1201,7 +1327,8 @@ const MediaManager = (function() {
             sizeFilter.innerHTML = '<option value="">全部大小</option><option value="1048576">小于 1 MB</option><option value="10485760">小于 10 MB</option><option value="52428800">小于 50 MB</option>';
             const summary = document.createElement('span');
             summary.className = 'media-summary';
-            summary.textContent = `${items.length} 个资源，${items.filter(item => item.reference.count === 0).length} 个孤立`;
+            const removable = items.filter(item => item.reference.count === 0 && !item.protected);
+            summary.textContent = `${items.length} 个资源，${removable.length} 个可清理，预计释放 ${displaySize(removable.reduce((sum, item) => sum + (Number(item.info.size) || 0), 0))}`;
             toolbar.append(search, typeFilter, sizeFilter, currentLabel, orphanLabel, summary);
             wrapper.appendChild(toolbar);
             const grid = document.createElement('div');
@@ -1276,6 +1403,45 @@ const MediaManager = (function() {
 })();
 window.MediaManager = MediaManager;
 
+const SoraCommands = (function() {
+    function list() {
+        const shortcuts = { saveBtn: 'Ctrl+S', searchBtn: 'Ctrl+F', replaceBtn: 'Ctrl+H', globalCommandBtn: 'Ctrl+K' };
+        const actions = Array.from(document.querySelectorAll('#topToolbar .top-toolbar-btn')).filter(button => !button.closest('.mobile-toolbar-group')).map(button => ({
+            key: button.id || `format:${button.dataset.command}`,
+            label: button.title || button.textContent.trim(),
+            text: button.textContent.trim(),
+            button,
+            group: button.closest('.top-toolbar-group')?.querySelector('.top-toolbar-label')?.textContent || '其他',
+            shortcut: shortcuts[button.id] || '',
+            disabled: button.disabled,
+            disabledReason: button.disabled ? button.title || '当前状态不可用' : '',
+            run: () => button.click()
+        }));
+        (window.SoraFeatureCommands || []).forEach(command => {
+            if (!command?.key || typeof command.run !== 'function') return;
+            const disabledReason = typeof command.disabledReason === 'function' ? command.disabledReason() : command.disabledReason || '';
+            actions.push({ key: `feature:${command.key}`, label: command.title || command.key, text: command.title || command.key,
+                group: '扩展', shortcut: command.shortcut || '', disabled: !!disabledReason, disabledReason,
+                keywords: `${command.meta || ''} ${command.keywords || ''}`, run: command.run });
+        });
+        return actions;
+    }
+    function recent() {
+        try {
+            const value = JSON.parse(localStorage.getItem('sora_command_recents_v1') || '[]');
+            return Array.isArray(value) ? value : [];
+        } catch (_) { return []; }
+    }
+    function run(key) {
+        const action = list().find(item => item.key === key);
+        if (!action || action.disabled) return;
+        try { localStorage.setItem('sora_command_recents_v1', JSON.stringify([key, ...recent().filter(item => item !== key)].slice(0, 12))); } catch (_) {}
+        return action.run();
+    }
+    return { list, run, recent };
+})();
+window.SoraCommands = SoraCommands;
+
 const ToolbarOrganizer = (function() {
     const STORAGE_KEY = 'sora_mobile_quick_actions';
     const DEFAULT_ACTIONS = ['saveBtn', 'addDirectoryBtn', 'searchBtn', 'topImageUploadBtn'];
@@ -1291,29 +1457,18 @@ const ToolbarOrganizer = (function() {
     }
 
     function collectActions() {
-        const actions = [];
-        const seen = new Set();
-        document.querySelectorAll('#topToolbar .top-toolbar-btn:not(#mobileMoreBtn)').forEach(button => {
-            let key = button.id;
-            if (!key && button.dataset.command) key = `format:${button.dataset.command}`;
-            if (!key || seen.has(key)) return;
-            seen.add(key);
-            actions.push({ key, label: button.title || button.textContent.trim() || key, button });
-        });
-        return actions;
+        return SoraCommands.list();
     }
 
     function save() {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(quickActions));
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(quickActions)); } catch (_) {}
     }
 
     function renderMobile() {
         const container = document.getElementById('mobileQuickActions');
         if (!container) return;
+        if (!quickActions.length) quickActions = DEFAULT_ACTIONS.slice();
         const actionMap = new Map(collectActions().map(action => [action.key, action]));
-        quickActions = quickActions.filter(key => actionMap.has(key)).slice(0, 4);
-        if (!quickActions.length) quickActions = DEFAULT_ACTIONS.filter(key => actionMap.has(key)).slice(0, 4);
-        save();
         container.innerHTML = '';
         quickActions.forEach(key => {
             const action = actionMap.get(key);
@@ -1321,9 +1476,12 @@ const ToolbarOrganizer = (function() {
             const proxy = document.createElement('button');
             proxy.type = 'button';
             proxy.className = 'top-toolbar-btn';
-            proxy.textContent = action.button.textContent.trim() || action.label;
+            proxy.textContent = action.text || action.label;
             proxy.title = action.label;
-            proxy.addEventListener('click', () => action.button.click());
+            proxy.disabled = action.disabled;
+            proxy.setAttribute('aria-label', action.label);
+            if (action.button?.hasAttribute('aria-busy')) proxy.setAttribute('aria-busy', action.button.getAttribute('aria-busy'));
+            proxy.addEventListener('click', () => SoraCommands.run(key));
             container.appendChild(proxy);
         });
     }
@@ -1357,17 +1515,31 @@ const ToolbarOrganizer = (function() {
         const hint = document.createElement('p');
         hint.textContent = '点击功能名称立即执行；星标功能会显示在移动端快捷栏，可用箭头调整顺序。';
         wrapper.appendChild(hint);
+        const search = document.createElement('input');
+        search.type = 'search';
+        search.className = 'command-search';
+        search.placeholder = '搜索功能、快捷键';
+        search.setAttribute('aria-label', '搜索更多功能');
+        wrapper.appendChild(search);
         const list = document.createElement('div');
         list.className = 'toolbar-action-list';
-        collectActions().forEach(action => {
+        const recents = SoraCommands.recent();
+        const actions = collectActions().sort((a, b) => {
+            const rank = item => recents.includes(item.key) ? recents.indexOf(item.key) : 100;
+            return rank(a) - rank(b);
+        });
+        actions.forEach(action => {
             const row = document.createElement('div');
             row.className = 'toolbar-action-row';
+            row.dataset.search = `${action.label} ${action.group} ${action.shortcut} ${action.keywords || ''}`.toLocaleLowerCase();
             const run = document.createElement('button');
             run.type = 'button';
-            run.textContent = action.label;
+            run.textContent = `${recents.includes(action.key) ? '最近 · ' : action.group + ' · '}${action.label}${action.shortcut ? ' · ' + action.shortcut : ''}`;
+            run.disabled = action.disabled;
+            run.title = action.disabledReason || action.label;
             run.addEventListener('click', () => {
                 FeatureDialog.close();
-                action.button.click();
+                SoraCommands.run(action.key);
             });
             const star = document.createElement('button');
             star.type = 'button';
@@ -1390,10 +1562,32 @@ const ToolbarOrganizer = (function() {
             list.appendChild(row);
         });
         wrapper.appendChild(list);
+        const empty = document.createElement('p');
+        empty.textContent = '没有匹配功能。';
+        empty.hidden = true;
+        wrapper.appendChild(empty);
+        search.oninput = () => {
+            const term = search.value.trim().toLocaleLowerCase();
+            let visible = 0;
+            list.querySelectorAll('.toolbar-action-row').forEach(row => {
+                row.hidden = !row.dataset.search.includes(term);
+                if (!row.hidden) visible++;
+            });
+            empty.hidden = !!visible;
+        };
         FeatureDialog.open('更多功能与快捷按钮', wrapper);
     }
 
     document.getElementById('mobileMoreBtn')?.addEventListener('click', open);
+    let renderPending = false;
+    const observer = new MutationObserver(() => {
+        if (renderPending) return;
+        renderPending = true;
+        queueMicrotask(() => { renderPending = false; renderMobile(); });
+    });
+    collectActions().forEach(action => {
+        if (action.button) observer.observe(action.button, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['title', 'disabled', 'aria-busy', 'aria-pressed'] });
+    });
     renderMobile();
     return { renderMobile, open };
 })();
@@ -1401,6 +1595,7 @@ window.ToolbarOrganizer = ToolbarOrganizer;
 
 const IssueCenter = (function() {
     const labels = {
+        largeMediaRisks: '大媒体风险', mediaBudget: '文件大小估计',
         duplicateDirectoryIds: '重复目录 ID', missingParents: '父目录缺失', brokenLinks: '目录链接失效',
         missingAnchors: '锚点缺失', duplicateAnchors: '重复锚点', invalidMethods: '方法配置无效',
         missingMethodTargets: '方法目标缺失', duplicateMethodIds: '方法 ID 重复', missingMedia: '媒体缺失', emptyDirectories: '空目录',
@@ -1419,8 +1614,9 @@ const IssueCenter = (function() {
     }
 
     function matchDirectory(value) {
-        const text = String(value || '');
-        return (Array.isArray(mulufile) ? mulufile : []).find(row => text.includes(row[2]) || text.includes(row[1])) || null;
+        if (!value || typeof value !== 'object' || !value.directoryId) return null;
+        const matches = (Array.isArray(mulufile) ? mulufile : []).filter(row => String(row[2]) === value.directoryId);
+        return matches.length === 1 ? matches[0] : null;
     }
 
     function renderBadges() {
@@ -1462,8 +1658,15 @@ const IssueCenter = (function() {
         }
         running = true;
         try {
-            latestIssues = await collectExportPreflightIssues(mulufile);
-            renderBadges();
+            const identity = SoraDocumentIdentity.get().id;
+            const revision = soraEditRevision;
+            const result = await collectExportPreflightIssues(mulufile.map(row => row.slice()));
+            if (identity === SoraDocumentIdentity.get().id && revision === soraEditRevision) {
+                latestIssues = result;
+                renderBadges();
+            } else pending = true;
+        } catch (error) {
+            console.warn('问题检查未完成:', error);
         } finally {
             running = false;
             if (pending) {
@@ -1473,7 +1676,8 @@ const IssueCenter = (function() {
         }
     }
 
-    function schedule(delay = 900) {
+    function schedule(delay = 1200) {
+        if (typeof delay !== 'number') delay = 1200;
         clearTimeout(timer);
         if (idleHandle !== null && typeof cancelIdleCallback === 'function') cancelIdleCallback(idleHandle);
         idleHandle = null;
@@ -1530,32 +1734,47 @@ const IssueCenter = (function() {
     function open(directoryId = '') {
         const wrapper = document.createElement('div');
         const issues = latestIssues || {};
+        const itemMap = [];
         const sections = Object.entries(issues).filter(([, values]) => values.length).map(([key, values]) => {
             const filtered = directoryId ? values.filter(value => matchDirectory(value)?.[2] === directoryId) : values;
             if (!filtered.length) return '';
-            return `<section class="issue-section"><h3>${escapeHtml(labels[key] || key)}（${filtered.length}）</h3>${filtered.map(value => `<button type="button" class="issue-item" data-issue-value="${encodeURIComponent(String(value))}">${escapeHtml(value)}</button>`).join('')}</section>`;
+            return `<section class="issue-section"><h3>${escapeHtml(labels[key] || key)}（${filtered.length}）</h3>${filtered.map(value => {
+                const index = itemMap.push(value) - 1;
+                return `<button type="button" class="issue-item" data-issue-index="${index}"${matchDirectory(value) ? '' : ' disabled'}>${escapeHtml(value.message || String(value))}</button>`;
+            }).join('')}</section>`;
         }).join('');
         wrapper.innerHTML = `<div class="issue-center-summary"><span class="issue-center-pill">共 ${total(issues)} 项</span><button type="button" class="method-workbench-btn" data-fix-method-ids>修复方法 ID</button></div>${sections || '<div class="command-empty">当前没有发现问题。</div>'}`;
-        wrapper.addEventListener('click', event => {
+        wrapper.addEventListener('click', async event => {
             if (event.target.closest('[data-fix-method-ids]')) {
                 FeatureDialog.close();
                 normalizeMethodIds();
                 return;
             }
-            const item = event.target.closest('[data-issue-value]');
+            const item = event.target.closest('[data-issue-index]');
             if (!item) return;
-            const row = matchDirectory(decodeURIComponent(item.dataset.issueValue || ''));
+            const issue = itemMap[Number(item.dataset.issueIndex)];
+            const row = matchDirectory(issue);
             if (row) {
                 FeatureDialog.close();
-                DirectoryNavigation.open(row[2]);
+                await DirectoryNavigation.open(row[2]);
+                let target = null;
+                if (issue.targetId) target = markdownPreview.querySelector(`[id="${CSS.escape(issue.targetId)}"], [data-anchor-name="${CSS.escape(issue.targetId)}"]`);
+                else if (issue.mediaId) target = markdownPreview.querySelector(`[data-media-storage-id="${CSS.escape(issue.mediaId)}"]`);
+                else if (issue.selector) target = markdownPreview.querySelectorAll(issue.selector)[issue.elementIndex || 0];
+                if (target) {
+                    target.scrollIntoView({ block: 'center' });
+                    target.classList.add('sora-issue-target');
+                    setTimeout(() => { target.classList.remove('sora-issue-target'); if (!target.className) target.removeAttribute('class'); }, 2000);
+                }
             }
         });
         FeatureDialog.open(directoryId ? '当前目录问题' : '问题中心', wrapper);
     }
 
     document.getElementById('issueCenterBtn')?.addEventListener('click', () => open());
-    document.addEventListener('input', schedule, true);
-    document.addEventListener('change', schedule, true);
+    document.addEventListener('sora:document-changed', () => schedule());
+    document.addEventListener('sora:document-loaded', () => { latestIssues = null; schedule(100); });
+    document.addEventListener('sora:media-changed', () => schedule());
     setTimeout(refresh, 800);
     return { open, refresh, schedule };
 })();
@@ -1683,32 +1902,11 @@ const GlobalCommandPalette = (function() {
     function createItems(savedRange) {
         const items = [];
         const seen = new Set();
-        const shortcutById = { saveBtn: 'Ctrl+S', searchBtn: 'Ctrl+F', replaceBtn: 'Ctrl+H', globalCommandBtn: 'Ctrl+K' };
-        document.querySelectorAll('#topToolbar .top-toolbar-btn:not(#mobileMoreBtn)').forEach(button => {
-            const buttonText = button.textContent.trim();
-            const label = buttonText || button.title;
-            if (!label || seen.has(label)) return;
-            seen.add(label);
-            const shortcut = shortcutById[button.id] || '';
-            const disabledReason = button.disabled ? (button.title || '当前状态不可用') : '';
-            items.push({ key: `toolbar:${button.id || label}`, type: 'command', icon: '⌘', title: label, shortcut, disabled: button.disabled, disabledReason, meta: disabledReason || button.title || '功能命令', search: `${label} ${button.title || ''} ${shortcut}`, run: () => button.click() });
-        });
-        (Array.isArray(window.SoraFeatureCommands) ? window.SoraFeatureCommands : []).forEach(command => {
-            if (!command || !command.key || typeof command.run !== 'function' || seen.has(command.key)) return;
-            seen.add(command.key);
-            const disabledReason = typeof command.disabledReason === 'function' ? command.disabledReason() : (command.disabledReason || '');
-            items.push({
-                key: `feature:${command.key}`,
-                type: 'command',
-                icon: command.icon || '◇',
-                title: command.title || command.key,
-                shortcut: command.shortcut || '',
-                disabled: !!disabledReason,
-                disabledReason,
-                meta: disabledReason || command.meta || '扩展功能',
-                search: `${command.title || command.key} ${command.meta || ''} ${command.keywords || ''} ${command.shortcut || ''}`,
-                run: command.run
-            });
+        SoraCommands.list().forEach(action => {
+            items.push({ key: action.key, type: 'command', icon: '⌘', title: action.text || action.label,
+                shortcut: action.shortcut, disabled: action.disabled, disabledReason: action.disabledReason,
+                meta: action.disabledReason || action.label, search: `${action.label} ${action.group} ${action.shortcut} ${action.keywords || ''}`,
+                run: () => SoraCommands.run(action.key) });
         });
         if (window.SoraReferencePicker) {
             const index = window.SoraReferencePicker.buildIndex();

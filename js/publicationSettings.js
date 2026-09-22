@@ -107,8 +107,8 @@ const PublicationSettings = (function() {
         return sanitize(state.active);
     }
 
-    function resolve(muluData, currentDirId, fallbackTitle) {
-        const settings = get();
+    function resolve(muluData, currentDirId, fallbackTitle, overrides = null) {
+        const settings = overrides ? sanitize(overrides) : get();
         if (settings.capabilityLevel === 'compact') {
             settings.searchEnabled = false;
             settings.debugEnabled = false;

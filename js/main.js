@@ -15,14 +15,6 @@ window.addEventListener('beforeunload', function(e) {
         return e.returnValue;
     }
 });
-document.addEventListener('keydown', function(e) {
-    if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-        e.preventDefault();
-        if (typeof handleSave === 'function') {
-            handleSave();
-        }
-    }
-});
 function initOnDOMReady() {
     if (typeof LicenseUI !== 'undefined') {
         if (!LicenseSystem.isAuthorized()) {
@@ -47,6 +39,7 @@ if (document.readyState === 'loading') {
     initOnDOMReady();
 }
 async function initializeApp() {
+    window.ToolbarOrganizer?.renderMobile();
     let restoredDraft = false;
     if (navigator.storage && navigator.storage.persist) {
         const requestPersistentStorage = async () => {
@@ -75,26 +68,19 @@ async function initializeApp() {
             allThins[i].id = getOneId(10, 0);
         }
     }
-    if (typeof mulufile !== 'undefined' && Array.isArray(mulufile) && mulufile.length > 0) {
-        LoadMulu();
-    } else {
-        if (typeof window.loadHelpManual === 'function') {
-            await window.loadHelpManual({ silent: true, force: true });
-        }
-    }
     if (typeof DraftManager !== 'undefined') {
         restoredDraft = await DraftManager.offerRestore();
     }
-    if (typeof calculateAllHashes === 'function') {
-        const calculateHashes = () => {
-            calculateAllHashes();
-        };
-        if (typeof requestIdleCallback !== 'undefined') {
-            requestIdleCallback(calculateHashes, { timeout: 500 });
-        } else {
-            setTimeout(calculateHashes, 50);
-        }
+    if (!restoredDraft && typeof mulufile !== 'undefined' && Array.isArray(mulufile) && mulufile.length > 0) {
+        LoadMulu();
+    } else if (!restoredDraft) {
+        SoraDocumentIdentity.newDocument('未命名文档');
+        createNewDirectory('默认目录', false);
+        currentFileName = 'soralist';
+        fileNameInput.value = 'soralist';
+        showToast('可直接开始编辑；使用说明可从工具栏打开', 'info', 4500);
     }
+    if (!restoredDraft && typeof scheduleHashBaselineUpdate === 'function') scheduleHashBaselineUpdate(500);
     if (typeof isFileSystemAccessSupported === 'function') {
         setTimeout(() => {
             if (isFileSystemAccessSupported()) {

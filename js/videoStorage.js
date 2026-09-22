@@ -457,7 +457,19 @@ function generateMediaId(type = 'media') {
      * @param {string} [mediaId] - 可选的媒体 ID，不提供则自动生成
      * @returns {Promise<string>} - 返回媒体 ID
      */
+    let activeMediaWrites = 0;
     async function saveMedia(mediaData, type = 'media', mediaId = null, options = {}) {
+        activeMediaWrites++;
+        try {
+            const id = await storeMedia(mediaData, type, mediaId, options);
+            document.dispatchEvent(new Event('sora:media-changed'));
+            return id;
+        } finally {
+            activeMediaWrites--;
+        }
+    }
+
+    async function storeMedia(mediaData, type = 'media', mediaId = null, options = {}) {
         const database = await initDB();
         const contentHash = options.contentHash || (
             !mediaId && options.deduplicate !== false && type === 'image' && mediaData instanceof Blob
@@ -820,6 +832,14 @@ function reportProgress(current, total, action, options = {}) {
         return null;
     }
     async function deleteMedia(mediaId) {
+        if (activeMediaWrites || window.SoraSaveWorkflow?.busy()) throw new Error('媒体或文件正在写入，请完成后再清理');
+        if (!window.DraftManager) throw new Error('草稿保护尚未就绪，请稍后清理媒体');
+        if (window.__soraMediaImportPromise) throw new Error('媒体正在导入，请完成后再清理');
+        if ((await DraftManager.protectedMediaIds()).has(mediaId)) {
+            const error = new Error('该媒体仍被文档、草稿或历史快照引用');
+            error.code = 'MEDIA_PROTECTED';
+            throw error;
+        }
         const database = await initDB();
         const record = await getRecord(database, mediaId);
         revokeMediaUrl(mediaId);
@@ -828,6 +848,7 @@ function reportProgress(current, total, action, options = {}) {
             ? record.chunks.concat(mediaId)
             : [mediaId];
         await deleteRecordKeys(database, keys);
+        document.dispatchEvent(new Event('sora:media-changed'));
     }
     async function mediaExists(mediaId) {
         const database = await initDB();
@@ -960,9 +981,11 @@ function reportProgress(current, total, action, options = {}) {
     }
 
     async function cleanupOrphanedData() {
+        if (activeMediaWrites || window.SoraSaveWorkflow?.busy()) throw new Error('媒体或文件正在写入，请完成后再清理');
+        if (!window.DraftManager || window.__soraMediaImportPromise) throw new Error('请等待媒体导入和草稿保护就绪后再清理');
         const allIds = await getAllMediaIds();
         const mainIds = allIds.filter(id => !id.includes('_chunk_'));
-        const usedIds = new Set();
+        const usedIds = await DraftManager.protectedMediaIds();
         document.querySelectorAll('[data-media-storage-id]').forEach(el => {
             usedIds.add(el.getAttribute('data-media-storage-id'));
         });
@@ -982,9 +1005,11 @@ function reportProgress(current, total, action, options = {}) {
         }
         const orphanedIds = mainIds.filter(id => !usedIds.has(id));
         let deletedCount = 0;
+        const deletedIds = new Set();
         for (const id of orphanedIds) {
             try {
                 await deleteMedia(id);
+                deletedIds.add(id);
                 deletedCount++;
             } catch (err) {
                 console.warn(`清理孤立数据 ${id} 失败:`, err);
@@ -993,7 +1018,7 @@ function reportProgress(current, total, action, options = {}) {
         const orphanedChunks = allIds.filter(id => {
             if (!id.includes('_chunk_')) return false;
             const mainId = id.replace(/_chunk_\d+$/, '');
-            return !mainIds.includes(mainId) || orphanedIds.includes(mainId);
+            return !mainIds.includes(mainId) || deletedIds.has(mainId);
         });
         if (orphanedChunks.length > 0) {
             const database = await initDB();
@@ -1021,7 +1046,7 @@ function reportProgress(current, total, action, options = {}) {
             const database = await initDB();
             deletedCount += await cleanupOrphanedOpfsFiles(
                 database,
-                mainIds.filter(id => !orphanedIds.includes(id))
+                mainIds.filter(id => !deletedIds.has(id))
             );
         } catch (err) {
             console.warn('清理孤立 OPFS 媒体失败:', err);

@@ -63,10 +63,11 @@
             if (!ids.includes(id)) missing.push(id);
         }
         const totalMediaBytes = records.reduce((sum, item) => sum + (Number(item.size) || 0), 0);
-        const orphanIds = ids.filter(id => !referenced.has(id));
+        const protectedIds = await DraftManager.protectedMediaIds();
+        const orphanIds = ids.filter(id => !protectedIds.has(id) && !id.includes('_chunk_'));
         const snapshot = { time: Date.now(), usage: Number(usage.usage) || 0, quota: Number(usage.quota) || 0, mediaBytes: totalMediaBytes, mediaCount: ids.length };
         saveTrend(snapshot);
-        return { snapshot, records, missing, orphanIds };
+        return { snapshot, records, missing, orphanIds, protectedIds };
     }
 
     function saveTrend(snapshot) {
@@ -128,9 +129,9 @@
         return groups;
     }
 
-    function duplicateSavings(groups, records) {
+    function duplicateSavings(groups, records, protectedIds = new Set()) {
         const sizes = new Map(records.map(item => [item.id, Number(item.size) || 0]));
-        return groups.reduce((sum, group) => sum + group.slice(1).reduce((groupSum, id) => groupSum + (sizes.get(id) || 0), 0), 0);
+        return groups.reduce((sum, group) => sum + group.slice(1).reduce((groupSum, id) => groupSum + (protectedIds.has(id) ? 0 : sizes.get(id) || 0), 0), 0);
     }
 
     async function consolidateDuplicates(groups) {
@@ -148,12 +149,12 @@
                     const after = before.replace(new RegExp(`(data-media-storage-id=["'])${duplicate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(["'])`, 'g'), `$1${canonical}$2`);
                     if (after !== before) { row[3] = after; changed++; }
                 });
-                await MediaStorage.deleteMedia(duplicate);
+                if (!(await DraftManager.protectedMediaIds()).has(duplicate)) await MediaStorage.deleteMedia(duplicate);
             }
         }
         if (changed && typeof markUnsavedChanges === 'function') markUnsavedChanges();
         if (changed && typeof updateMarkdownPreview === 'function') updateMarkdownPreview({ force: true });
-        showToast(`媒体去重完成，已更新 ${changed} 个目录`, 'success', 2400);
+        showToast(`已更新 ${changed} 个目录；历史草稿引用的原媒体继续保留`, 'success', 3500);
     }
 
     async function repairMissingReferences(missing) {
@@ -211,7 +212,7 @@
         FeatureDialog.open('存储与诊断', wrapper);
         const storage = await collectStorage();
         const duplicates = await findDuplicates(storage.records);
-        const recoverableBytes = duplicateSavings(duplicates, storage.records);
+        const recoverableBytes = duplicateSavings(duplicates, storage.records, storage.protectedIds);
         const trend = readTrend();
         const previous = trend.length > 1 ? trend[trend.length - 2] : null;
         const delta = previous ? storage.snapshot.usage - previous.usage : 0;

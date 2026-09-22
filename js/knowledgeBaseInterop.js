@@ -321,6 +321,7 @@
     }
 
     async function applyImportPlan(plan, mode) {
+        await DraftManager.beforeSwitch();
         const mediaByPath = new Map();
         for (const [path, asset] of plan.assets) {
             const file = await asset.handle.getFile();
@@ -355,6 +356,7 @@
         if (typeof currentFileName !== 'undefined' && mode !== 'merge') currentFileName = 'Markdown 知识库';
         if (fileNameInput && mode !== 'merge') fileNameInput.value = 'Markdown 知识库';
         if (window.SoraDocumentIdentity && mode !== 'merge') SoraDocumentIdentity.newDocument('Markdown 知识库');
+        if (mode !== 'merge') soraDocumentEncrypted = false;
         LoadMulu();
         if (typeof markUnsavedChanges === 'function') markUnsavedChanges();
         if (importedRows.length && window.DirectoryNavigation) DirectoryNavigation.open(importedRows[0][2], { viewMode: 'top' });

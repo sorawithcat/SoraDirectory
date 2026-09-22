@@ -24,6 +24,10 @@ function syncPreviewToTextarea() {
         });
         ensureAnchorElements(markdownPreview);
         const storageRoot = markdownPreview.cloneNode(true);
+        storageRoot.querySelectorAll('.sora-issue-target').forEach(element => {
+            element.classList.remove('sora-issue-target');
+            if (!element.className) element.removeAttribute('class');
+        });
         if (window.SoraReusableBlocks) window.SoraReusableBlocks.cleanForStorage(storageRoot);
         let html = removeSearchHighlights(storageRoot.innerHTML);
         const archiveElements = markdownPreview.querySelectorAll('.archive-attachment');

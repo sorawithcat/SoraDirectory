@@ -38,6 +38,7 @@ function setLevelPadding(element, level) {
  * 性能优化：减少DOM查询，预计算层级和父子关系
  */
 function LoadMulu() {
+    document.dispatchEvent(new Event('sora:document-loaded'));
     if (!Array.isArray(mulufile)) {
         customAlert("无效的文件格式");
         return;

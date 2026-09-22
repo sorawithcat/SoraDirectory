@@ -172,7 +172,9 @@ if (topLoadBtn) {
                         fileInput.value = '';
                         return;
                     }
+                    if (typeof DraftManager !== 'undefined') await DraftManager.beforeSwitch();
                     mulufile = parsedData;
+                    soraDocumentEncrypted = isEncrypted;
                     if (window.SoraDocumentIdentity) window.SoraDocumentIdentity.adoptFile(file);
                     if (window.DirectoryMetadata) window.DirectoryMetadata.reset();
                     if (typeof loadDirectoryLevelColors === 'function') {
@@ -196,7 +198,6 @@ if (topLoadBtn) {
                     if (typeof updateSaveButtonState === 'function') {
                         updateSaveButtonState();
                     }
-                    if (typeof DraftManager !== 'undefined') DraftManager.resetAfterLoad();
                     if (typeof DirectoryHistory !== 'undefined') DirectoryHistory.clear();
                     const cacheMsg = fromCache ? '（从缓存快速加载）' : '';
                     showToast(`已加载：${fileName}${cacheMsg}`, 'success', 2500);
@@ -240,6 +241,7 @@ if (topLoadBtn) {
                         .replace(/_incremental$/i, '');
                     fileNameInput.value = nameWithoutExt;
                 }
+                if (loadMode === 'replace' && typeof DraftManager !== 'undefined') await DraftManager.resetAfterLoad(file.lastModified);
             } catch (error) {
                 console.error("文件加载错误:", error);
                 customAlert("文件加载失败：" + error.message);
@@ -313,21 +315,16 @@ if (fullscreenBtn) {
 }
 if (newBtn) {
     newBtn.addEventListener("click", async function() {
-        const result = await customConfirm("确定要新建吗？当前未保存的内容将丢失。\n\n注意：这将清空所有已存储的图片、视频和压缩文件！");
+        const result = await customConfirm('新建空白文档？当前内容会保留为草稿，已存储的媒体不会清除。', '新建文档', '取消');
         if (result) {
-            if (typeof MediaStorage !== 'undefined' && MediaStorage.clearAll) {
-                try {
-                    await MediaStorage.clearAll();
-                    window.SoraDiagnostics?.info('新建文档时已清空本地媒体存储');
-                } catch (err) {
-                    console.error('清空本地媒体存储失败:', err);
-                }
-            }
+            try { await DraftManager.beforeSwitch(); }
+            catch (error) { await customAlert(error.message, '无法新建'); return; }
             mulufile = [];
             if (typeof rebuildMulufileIndex === 'function') rebuildMulufileIndex();
             if (window.DirectoryMetadata) window.DirectoryMetadata.reset();
             if (window.SoraDocumentIdentity) window.SoraDocumentIdentity.newDocument('soralist');
-            if (typeof DraftManager !== 'undefined') await DraftManager.clear();
+            soraDocumentEncrypted = false;
+            window.__soraMediaImportError = null;
             if (typeof DirectoryHistory !== 'undefined') DirectoryHistory.clear();
             if (typeof loadDirectoryLevelColors === 'function') {
                 loadDirectoryLevelColors(null);
@@ -366,88 +363,12 @@ if (newBtn) {
             if (typeof updateStorageInfo === 'function') {
                 await updateStorageInfo();
             }
-            customAlert("已新建默认目录，存储空间已清理");
+            showToast('已新建文档，原文档草稿和媒体已保留', 'success');
         }
     });
 }
 if (saveAsBtn) {
-    saveAsBtn.addEventListener("click", async function() {
-        const saveAsOptions = [
-            { value: 'sora', label: 'Sora 单文件包 (.sora) - 可导入，包含媒体' },
-            { value: 'webpage', label: '网页 (.html) - 独立可浏览的网页' }
-        ];
-        const saveType = await customSelect('选择另存为格式：', saveAsOptions, 'sora', '另存为');
-        if (saveType === null) {
-            showToast('已取消保存', 'info', 2000);
-            return;
-        }
-        const exportScope = typeof chooseSaveAsExportScope === 'function'
-            ? await chooseSaveAsExportScope()
-            : { data: mulufile, mode: 'all', count: Array.isArray(mulufile) ? mulufile.length : 0, label: '全部目录' };
-        if (!exportScope) {
-            return;
-        }
-        if (typeof confirmExportPreflight === 'function') {
-            const continueExport = await confirmExportPreflight(exportScope.data);
-            if (!continueExport) return;
-        }
-        if (saveType === 'sora') {
-            const encryptOptions = [
-                { value: 'no', label: '不加密' },
-                { value: 'yes', label: '加密 .sora（需要密码才能加载）' }
-            ];
-            const encrypt = await customSelect('是否加密？', encryptOptions, 'no', '导出 .sora');
-            if (encrypt === null) {
-                showToast('已取消', 'info', 2000);
-                return;
-            }
-            await handleSaveAsSoraPackage(null, exportScope.data, exportScope, { encrypt: encrypt === 'yes' });
-        } else if (saveType === 'webpage') {
-            const encryptOptions = [
-                { value: 'no', label: '不加密' },
-                { value: 'yes', label: '加密网页（需要密码才能查看）' }
-            ];
-            const encrypt = await customSelect('是否加密？', encryptOptions, 'no', '导出网页');
-            if (encrypt === null) {
-                showToast('已取消', 'info', 2000);
-                return;
-            }
-            await handleSaveAsWebpage(encrypt === 'yes', null, exportScope.data, exportScope);
-        } else if (saveType === 'custom') {
-            const encryptOptions = [
-                { value: 'no', label: '不加密' },
-                { value: 'yes', label: '加密保存（设置密码）' }
-            ];
-            const encrypt = await customSelect('是否加密？', encryptOptions, 'no', '另存为');
-            if (encrypt === null) {
-                showToast('已取消', 'info', 2000);
-                return;
-            }
-            let password = null;
-            if (encrypt === 'yes') {
-                password = await customPasswordPrompt('设置加密密码：', '加密保存', 'new-password');
-                if (!password) {
-                    showToast('已取消', 'info', 2000);
-                    return;
-                }
-                const confirmPassword = await customPasswordPrompt('确认密码：', '加密保存', 'new-password');
-                if (confirmPassword !== password) {
-                    customAlert('两次输入的密码不一致');
-                    return;
-                }
-            }
-            let customName = await customPrompt("输入文件名（包含扩展名，如：mydata.sora）", "");
-            if (!customName) {
-                showToast('已取消保存', 'info', 2000);
-                return;
-            }
-            if (password) {
-                await handleSaveAsEncrypted(customName, password, exportScope.data);
-            } else {
-                await handleSaveAs(customName, exportScope.data);
-            }
-        }
-    });
+    saveAsBtn.addEventListener('click', () => SoraSaveWorkflow.openExport());
 }
 document.querySelectorAll('.format-toolbar-btn').forEach(btn => {
     if (btn.id === 'topLinkBtn' || btn.id === 'topAnchorBtn') {
@@ -517,6 +438,7 @@ function buildHelpPageContents() {
         '<h1>使用说明</h1>',
         nav,
         '<p>这是随项目版本更新的内置说明。</p>',
+        '<p>点击顶部“说明”可选择<strong>弹窗查看</strong>或<strong>插入当前作品</strong>。弹窗查看不修改作品；插入后，说明将作为目录参与保存和导出。</p>',
         '<h2 id="交互说明">交互说明</h2>',
         '<ul>',
         '<li><strong>目录区</strong>：左键选择；双击重命名；拖拽移动（含子目录）；右键打开菜单。</li>',
@@ -568,7 +490,7 @@ function buildHelpPageContents() {
         nav,
         '<h2 id="从零开始">从零开始（推荐流程）</h2>',
         '<ol>',
-        '<li>点击顶部工具栏 <strong>文件 / 新建</strong>；系统会清空当前内容和媒体数据，并创建、选中一个空白的“默认目录”。</li>',
+        '<li>点击顶部工具栏 <strong>文件 / 新建</strong>；系统会保留当前草稿和媒体，创建并选中一个空白的“默认目录”。</li>',
         '<li>可双击重命名默认目录；点击 <strong>目录 / 添加目录</strong> 创建同级目录，再用 <strong>目录 / 添加节点</strong> 创建子目录。</li>',
         '<li>左键单击目录，右侧开始编辑内容（可直接粘贴图片/文本）。</li>',
         '<li>选择文字后会出现悬浮工具栏，用于快速加粗/链接/列表等；点击任意按钮后会自动收起。</li>',
@@ -1034,7 +956,7 @@ function buildHelpPageContents() {
         '<ul>',
         '<li><strong>保存（Ctrl+S）</strong>：保存到当前已加载的文件句柄（如果浏览器支持）。</li>',
         '<li>按钮显示“保存 *”表示有未保存更改。</li>',
-        '<li>保存前会询问 <strong>保存范围</strong> 与 <strong>是否加密</strong>。</li>',
+        '<li>普通保存沿用当前文件保护方式；首次保存选择位置，加密文档需输入本次密码。增量、差异、范围与加密选项集中在“另存为”。</li>',
         '</ul>',
         '<h2 id="保存范围">保存范围</h2>',
         '<ul>',
@@ -1043,12 +965,12 @@ function buildHelpPageContents() {
         '<li><strong>仅保存差异（补丁）</strong>：尽量只保存变化部分，文件名会带 <code>.patch</code>，体积更小。</li>',
         '</ul>',
         '<h2 id="另存为">另存为</h2>',
-        '<p>点击顶部工具栏 <strong>另存为</strong> 后会先选择保存格式：</p>',
+        '<p>点击顶部工具栏 <strong>另存为</strong>，在同一个面板选择格式、范围和文件保护：</p>',
         '<ul>',
         '<li><strong>Sora 单文件包 (.sora)</strong>：保存目录、目录字段、层级颜色和媒体的可重新导入单文件包；可选择整包加密。</li>',
         '<li><strong>网页 (.html)</strong>：导出为独立可浏览的网页。</li>',
         '</ul>',
-        '<p>选择格式后会询问导出范围：可导出全部目录、当前目录及其子目录，或手动勾选部分目录。</p>',
+        '<p>面板内可导出全部目录、当前目录及其子目录，或手动勾选；也可导出修改目录或差异补丁。网页选项会显示媒体存放方式和兼容性提示。</p>',
         '<p>网页导出可选择是否加密；<code>.sora</code> 包支持替换或合并加载，加密包需要密码。加载较大的包时会显示进度，目录可先打开，媒体继续在后台导入。</p>',
         '<p>浏览器无法直接写入文件时，生成完成后会提供<strong>保存到设备</strong>；设备与浏览器支持系统分享时还会显示<strong>分享</strong>。</p>',
         '<h2 id="发布设置">发布设置</h2>',
@@ -1171,15 +1093,15 @@ function buildHelpPageContents() {
         '<h2 id="自动草稿">自动草稿</h2>',
         '<ul>',
         '<li>有未保存修改时，系统会把最新草稿保存在当前浏览器本地，并定期保留最多 20 个历史快照。</li>',
-        '<li>再次打开时可选择恢复最近 30 天内的草稿；选择忽略会删除该草稿。</li>',
-        '<li>点击顶部“草稿”可查看快照差异，恢复整个快照，或只勾选部分目录恢复。</li>',
+        '<li>再次打开或加载文件时会提示可恢复的草稿；关闭提示或选择“暂不恢复”会保留草稿，只有明确删除才会移除。</li>',
+        '<li>点击顶部“草稿”可查看各文档的最新草稿及当前文档的快照差异，恢复整个快照，或只勾选部分目录恢复。</li>',
         '<li>草稿按文档身份隔离，同名但来源不同的文件不会串用；可输入名称建立命名快照，目录字段会随快照恢复。</li>',
         '<li>自动草稿不能替代正式保存或备份，清理浏览器站点数据后可能丢失。</li>',
         '</ul>',
         '<h2 id="媒体资源管理">媒体资源管理</h2>',
         '<ul>',
         '<li><strong>媒体库</strong>用于查看资源大小、类型、引用次数和引用目录，可按当前目录/孤立状态筛选；属性面板可统一修改图注、宽度、对齐和加载策略，“替换”会重连全部引用后再清理旧资源。</li>',
-        '<li>仍被正文引用的资源不能在媒体库直接删除；孤立资源可逐项删除，也可右键顶部存储信息批量清理。</li>',
+        '<li>被正文、其他文档、草稿或快照引用的资源不能删除；可清理资源会展示预计释放空间，可逐项删除，也可右键顶部存储信息批量清理。</li>',
         '</ul>',
         '<h2 id="存储空间">存储空间</h2>',
         '<ul>',
@@ -1197,8 +1119,8 @@ function buildHelpPageContents() {
         '</ul>',
         '<h2 id="新建会清空什么">新建会清空什么</h2>',
         '<ul>',
-        '<li>“文件 / 新建”会清空当前目录与内容，再创建并选中一个空白的“默认目录”。</li>',
-        '<li>同时会清空已存储的媒体数据（图片/视频/压缩文件等），并断开原文件的直接保存关联。如果你还需要这些数据，请先导出网页或另存为文件备份。</li>',
+        '<li>“文件 / 新建”会先保护当前草稿，再切换到空白的“默认目录”；其他文档、草稿和快照仍引用的媒体不会清理。</li>',
+        '<li>新文档会断开原文件的直接保存关联。媒体清理是独立操作，只有未被保留文档、草稿、快照和撤销记录引用的资源才能删除。</li>',
         '</ul>',
         '<h2 id="导出相关">导出相关</h2>',
         '<ul>',
@@ -1301,15 +1223,86 @@ async function loadHelpManual(options = {}) {
         updateSaveButtonState();
     }
     if (!silent && typeof showToast === 'function') {
-        showToast('已打开使用说明', 'success', 2000);
+        showToast('已将说明插入作品', 'success', 2000);
     }
+}
+
+async function insertHelpManual() {
+    if (!await customConfirm('这会把使用说明作为目录加入当前作品，并进入之后的保存和导出内容。', '插入说明', '取消')) return;
+    FeatureDialog.close();
+    DirectoryHistory.record('插入使用说明');
+    await loadHelpManual({ force: true });
+    markUnsavedChanges();
+}
+
+function openHelpManual() {
+    const rows = buildHelpManualMulufile();
+    const wrapper = document.createElement('div');
+    wrapper.className = 'sora-help';
+    const nav = document.createElement('nav');
+    nav.setAttribute('aria-label', '使用说明章节');
+    const search = document.createElement('input');
+    search.type = 'search';
+    search.placeholder = '搜索使用说明';
+    search.setAttribute('aria-label', '搜索使用说明');
+    const links = document.createElement('div');
+    const article = document.createElement('article');
+    article.className = 'markdown-preview sora-help-content';
+    article.tabIndex = 0;
+    const open = (id, anchor = '') => {
+        const row = rows.find(item => item[2] === id) || rows[0];
+        article.innerHTML = sanitizeEditorHtml(row[3]);
+        links.querySelectorAll('button').forEach(button => button.setAttribute('aria-current', button.dataset.helpId === row[2] ? 'page' : 'false'));
+        if (anchor) article.querySelector(`[id="${CSS.escape(anchor)}"]`)?.scrollIntoView({ block: 'start' });
+        else article.scrollTop = 0;
+    };
+    rows.forEach(row => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.dataset.helpId = row[2];
+        button.textContent = row[1];
+        button.onclick = () => open(row[2]);
+        links.appendChild(button);
+    });
+    search.oninput = () => {
+        const term = search.value.trim().toLocaleLowerCase();
+        links.querySelectorAll('button').forEach((button, index) => {
+            button.hidden = !`${rows[index][1]} ${rows[index][3]}`.toLocaleLowerCase().includes(term);
+        });
+    };
+    article.addEventListener('click', event => {
+        const link = event.target.closest('a[href]');
+        if (!link) return;
+        const href = link.getAttribute('href');
+        if (!href.startsWith('sora-dir:') && !href.startsWith('#')) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (href.startsWith('#')) article.querySelector(`[id="${CSS.escape(href.slice(1))}"]`)?.scrollIntoView({ block: 'start' });
+        else {
+            const [id, anchor] = href.slice(9).split('#');
+            open(id, anchor);
+        }
+    });
+    const insert = document.createElement('button');
+    insert.type = 'button';
+    insert.textContent = '将完整说明插入当前作品…';
+    insert.onclick = insertHelpManual;
+    nav.append(search, links, insert);
+    wrapper.append(nav, article);
+    FeatureDialog.open('使用说明', wrapper);
+    open(rows[0][2]);
 }
 
 if (typeof helpBtn !== 'undefined' && helpBtn) {
     helpBtn.addEventListener('click', async function(e) {
         e.preventDefault();
         e.stopPropagation();
-        await loadHelpManual({ silent: false, force: false });
+        const mode = await customSelect('请选择使用说明的打开方式：', [
+            { value: 'dialog', label: '弹窗查看（不修改作品）' },
+            { value: 'insert', label: '插入当前作品（参与保存和导出）' }
+        ], 'dialog', '使用说明');
+        if (mode === 'dialog') openHelpManual();
+        else if (mode === 'insert') await insertHelpManual();
     });
 }
 
@@ -1540,9 +1533,13 @@ if (storageInfoElement) {
             showToast('清理功能不可用', 'error', 2000);
             return;
         }
-        const confirmed = await customConfirm('清理孤立的媒体数据？\n\n这将删除不再被任何目录引用的图片、视频和压缩文件数据。');
-        if (!confirmed) return;
         try {
+            const protectedIds = await DraftManager.protectedMediaIds();
+            const candidates = (await MediaStorage.getAllMediaIds()).filter(id => !String(id).includes('_chunk_') && !protectedIds.has(id));
+            let bytes = 0;
+            for (const id of candidates) bytes += Number((await MediaStorage.getMediaInfo(id))?.size) || 0;
+            const confirmed = await customConfirm(`清理 ${candidates.length} 个未被引用的媒体？预计释放 ${formatStorageSize(bytes)}。\n\n文档、草稿、快照和撤销记录中的媒体会保留。`, '清理媒体', '取消');
+            if (!confirmed) return;
             showToast('正在清理...', 'info', 2000);
             const deletedCount = await MediaStorage.cleanupOrphanedData();
             await updateStorageInfo({ force: true });
