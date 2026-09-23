@@ -161,26 +161,27 @@ for (const file of ['js/preview.js', 'js/formatToolbar.js', 'js/contextMenu.js',
     assert.equal(/document\.execCommand\s*\(/.test(read(file)), false, `${file} still uses document.execCommand`);
 }
 
-const helpStart = toolbar.indexOf('function buildHelpPageContents');
-const helpEnd = toolbar.indexOf('function buildHelpManualMulufile');
-const helpSource = toolbar.slice(helpStart, helpEnd > helpStart ? helpEnd : undefined);
+const helpManual = read('js/helpManual.js');
+const helpStart = helpManual.indexOf('function buildHelpPageContents');
+const helpEnd = helpManual.indexOf('function buildHelpManualMulufile');
+const helpSource = helpManual.slice(helpStart, helpEnd > helpStart ? helpEnd : undefined);
 assert.equal(/解谜.{0,12}模板|谜题.{0,12}模板/.test(helpSource), false, 'puzzle template remains in built-in help');
 assert.ok(helpSource.includes('方法管理'), 'method management is missing from built-in help');
 assert.ok(helpSource.includes('草稿'), 'draft snapshots are missing from built-in help');
 assert.ok(helpSource.includes('每个目录会记住正文滚动位置和最后选区'), 'directory context restore is missing from built-in help');
-assert.ok(helpSource.includes('按 <strong>Ctrl+K</strong> 或 <strong>/</strong> 可直接聚焦搜索'), 'export search guidance is missing from built-in help');
-assert.ok(helpSource.includes('浏览器前进/后退会保留阅读位置'), 'export route guidance is missing from built-in help');
-assert.ok(helpSource.includes('发布配置与正文分开保存'), 'publication settings guidance is missing from built-in help');
+assert.ok(helpSource.includes("${key('Ctrl+K')} 或 ${key('/')} 可聚焦搜索"), 'export search guidance is missing from built-in help');
+assert.ok(helpSource.includes('浏览器前进 / 后退保留阅读位置'), 'export route guidance is missing from built-in help');
+assert.ok(helpSource.includes('发布设置与正文分别保存'), 'publication settings guidance is missing from built-in help');
 assert.ok(helpSource.includes('导出时会强制移除脚本、内联事件和危险协议'), 'export sanitization guidance is missing from built-in help');
 assert.ok(helpSource.includes('标题层级跳跃、重复标题'), 'content quality guidance is missing from built-in help');
 assert.ok(helpSource.includes('可复用内容块'), 'reusable block guidance is missing from built-in help');
 assert.ok(helpSource.includes('声明式扩展包'), 'extension pack guidance is missing from built-in help');
 assert.ok(helpSource.includes('Markdown / Obsidian 互操作'), 'knowledge base interoperability guidance is missing from built-in help');
 assert.ok(helpSource.includes('加密网页不能可靠注册 PWA'), 'encrypted PWA limitation is missing from built-in help');
-assert.ok(helpSource.includes('没有方法的文档会从产物中移除方法运行适配代码'), 'export pruning guidance is missing from built-in help');
+assert.ok(helpSource.includes('没有方法的作品会省去相应运行代码'), 'export pruning guidance is missing from built-in help');
 assert.ok(helpSource.includes('拆分媒体文件（适合大文件）'), 'split media export guidance is missing from built-in help');
-assert.ok(helpSource.includes('加密拆分会把媒体写成 AES-GCM 密文分块'), 'encrypted split media guidance is missing from built-in help');
-assert.ok(helpSource.includes('草稿按文档身份隔离'), 'document-scoped draft guidance is missing from built-in help');
+assert.ok(helpSource.includes('加密拆分媒体写为密文块'), 'encrypted split media guidance is missing from built-in help');
+assert.ok(helpSource.includes('草稿按文档身份区分'), 'document-scoped draft guidance is missing from built-in help');
 assert.ok(helpSource.includes('诊断摘要会脱敏'), 'diagnostic privacy guidance is missing from built-in help');
 assert.ok(publication.includes("const STORAGE_KEY = 'sora_publication_settings_v1'"), 'publication settings persistence missing');
 assert.ok(publication.includes("next.theme = 'light'"), 'publication settings must migrate old themes to the fixed light appearance');

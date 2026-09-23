@@ -44,25 +44,46 @@
 .toolbar-action-list .toolbar-action-row { grid-template-columns: minmax(0, 1fr) repeat(3, 44px); }
 .toolbar-action-row button { min-height: 44px; min-width: 0; overflow-wrap: anywhere; }
 .sora-issue-target { outline: 2px solid var(--color-primary, #2563eb); outline-offset: 3px; }
-.sora-help { display: grid; grid-template-columns: minmax(160px, 220px) minmax(0, 1fr); gap: var(--space-4); height: min(68vh, 760px); }
-.sora-help nav { min-width: 0; overflow: auto; }
-.sora-help-links { display: grid; gap: var(--space-1); margin-block: var(--space-3); }
-.sora-help-links button[hidden] { display: none; }
-.sora-help-search-status, .sora-format-hint { margin: 8px 0; color: var(--color-text-muted, #475569); font-size: 13px; line-height: 1.6; }
-.sora-help nav :is(button, input) { width: 100%; min-height: 44px; text-align: left; padding: 8px; border: 1px solid var(--color-border, #cbd5e1); border-radius: var(--radius-sm); background: var(--color-panel, #fff); color: var(--color-text, #172033); font: inherit; }
-.sora-help nav [aria-current="page"] { background: var(--color-primary-soft, #e8f0fe); font-weight: 700; }
-.sora-help-reader { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-left: 1px solid var(--color-border, #cbd5e1); }
-.sora-help-outline { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 0 var(--space-3) var(--space-3); font-size: 13px; }
-.sora-help-outline select { flex: 1; min-width: 0; min-height: 40px; border: 1px solid var(--color-border, #cbd5e1); border-radius: var(--radius-sm); background: var(--color-panel, #fff); color: inherit; padding: 6px 8px; font: inherit; }
-.sora-help .sora-help-content { flex: 1; min-width: 0; min-height: 0; overflow: auto; padding: var(--space-3); cursor: auto; border: 0; overscroll-behavior: contain; }
-.sora-help-content > h1:first-child { margin-top: 0; }
-.sora-help-content :is(h2,h3) { scroll-margin-top: 12px; }
-.sora-help-content table { width: 100%; }
+.feature-dialog:has(.sora-help) { width: min(1120px, 96vw); max-height: 94dvh; }
+.feature-dialog-body:has(> .sora-help) { padding: 0; overflow: hidden; }
+.sora-help { display: grid; grid-template-columns: 228px minmax(0, 1fr); height: min(78dvh, 900px); color: var(--color-text, #172033); }
+.sora-help [hidden] { display: none !important; }
+.sora-help-sidebar { min-width: 0; min-height: 0; padding: 20px 14px; overflow: auto; border-right: 1px solid var(--color-border, #dbe2ea); background: var(--color-panel-subtle, #f8fafc); }
+.sora-help-sidebar > input { width: 100%; min-height: 42px; padding: 8px 10px; border: 1px solid var(--color-border, #cbd5e1); border-radius: var(--radius-sm); background: var(--color-panel, #fff); color: inherit; font: inherit; font-size: 14px; }
+.sora-help-sidebar > input::placeholder { color: #64748b; opacity: 1; }
+.sora-help-links { display: grid; gap: 20px; margin-top: 24px; }
+.sora-help-nav-group h3 { margin: 0 8px 8px; color: #64748b; font-size: 12px; line-height: 1.5; font-weight: 600; }
+.sora-help-chapter { display: block; width: 100%; min-height: 40px; padding: 9px 10px; border: 0; border-radius: var(--radius-sm); background: transparent; color: #334155; font: inherit; font-size: 14px; line-height: 1.5; text-align: left; cursor: pointer; }
+.sora-help-chapter:hover { background: #edf1f6; }
+.sora-help-chapter[aria-current="page"] { background: var(--color-primary-soft, #e8f0fe); color: #174ea6; font-weight: 600; }
+.sora-help-excerpt { display: block; margin-top: 5px; color: #536278; font-size: 12px; font-weight: 400; line-height: 1.6; }
+.sora-help-search-status, .sora-format-hint { margin: 8px 0; color: #475569; font-size: 13px; line-height: 1.6; }
+.sora-help-clear { min-height: 36px; padding: 4px 0; border: 0; background: transparent; color: #1d4ed8; font: inherit; font-size: 13px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.sora-help-reader { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--color-panel, #fff); }
+.sora-help-outline { display: flex; align-items: center; gap: 12px; padding: 12px 28px; border-bottom: 1px solid #e2e8f0; color: #536278; font-size: 13px; }
+.sora-help-outline select { flex: 1; min-width: 0; min-height: 38px; border: 1px solid var(--color-border, #dbe2ea); border-radius: var(--radius-sm); background: var(--color-panel, #fff); color: #334155; padding: 6px 8px; font: inherit; }
+.sora-help .sora-help-content { flex: 1; min-width: 0; min-height: 0; height: auto; overflow: auto; padding: 28px 36px 36px; cursor: auto; border: 0; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.sora-help-content :is(h2,h3) { scroll-margin-top: 16px; }
+.sora-help-pager { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 12px; padding: 12px 24px; border-top: 1px solid #e2e8f0; }
+.sora-help-pager button { min-width: 0; min-height: 40px; padding: 6px 4px; border: 0; background: transparent; color: #1d4ed8; font: inherit; font-size: 13px; line-height: 1.5; text-align: left; cursor: pointer; }
+.sora-help-pager button:last-child { text-align: right; }
+.sora-help-pager button:disabled { color: #64748b; opacity: 1; cursor: default; }
+.sora-help-pager button:not(:disabled):hover { text-decoration: underline; text-underline-offset: 3px; }
+.sora-help-position { color: #64748b; font-size: 12px; font-variant-numeric: tabular-nums; }
+.sora-help-chapter-select { display: none; }
+.sora-help-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @media (max-width: 640px) {
-    .sora-help { grid-template-columns: minmax(0, 1fr); height: auto; }
-    .sora-help nav { max-height: 210px; }
-    .sora-help-reader { border-left: 0; border-top: 1px solid var(--color-border, #cbd5e1); padding-top: var(--space-3); }
-    .sora-help .sora-help-content { max-height: 50vh; }
+    .sora-help { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); height: 80dvh; }
+    .sora-help-sidebar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; padding: 12px; border-right: 0; border-bottom: 1px solid #e2e8f0; }
+    .sora-help-chapter-select { display: block; min-width: 0; min-height: 42px; width: 100%; padding: 6px; border: 1px solid #cbd5e1; border-radius: var(--radius-sm); background: #fff; color: #334155; font: inherit; }
+    .sora-help-sidebar > :is(input,select) { font-size: 16px; }
+    .sora-help-search-status { grid-column: 1 / -1; margin: 0; }
+    .sora-help-clear { justify-self: start; min-height: 28px; }
+    .sora-help-links { display: none; }
+    .sora-help[data-searching="true"] .sora-help-links { display: grid; grid-column: 1 / -1; margin: 0; max-height: 22dvh; overflow: auto; }
+    .sora-help-outline { padding: 8px 12px; }
+    .sora-help .sora-help-content { padding: 22px 16px 28px; }
+    .sora-help-pager { padding: 8px 12px; gap: 8px; }
 }
 
 :where(button, input, select, textarea, [tabindex]):focus-visible {
