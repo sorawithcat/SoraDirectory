@@ -69,6 +69,11 @@
         container.querySelectorAll('[data-sora-footnotes]').forEach(section => { if (!section.querySelector('li[data-footnote-id]')) section.remove(); });
     }
     function forStorage(container) {
+        container.querySelectorAll('[data-sora-caret]').forEach(node => {
+            const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+            while (walker.nextNode()) walker.currentNode.textContent = walker.currentNode.textContent.replace(/\u200B/g, '');
+            node.replaceWith(...node.childNodes);
+        });
         container.querySelectorAll('details[data-sora-details]').forEach(node => node.toggleAttribute('open', node.dataset.defaultOpen === 'true'));
         container.querySelectorAll('pre').forEach(pre => {
             pre.querySelectorAll('.code-lang-label,.copy-code-btn').forEach(node => node.remove());

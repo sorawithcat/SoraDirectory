@@ -45,7 +45,7 @@ function deactivateCustomDialog() {
     const target = customDialogReturnFocus;
     customDialogReturnFocus = null;
     if (target && target.isConnected && typeof target.focus === 'function') {
-        target.focus();
+        target.focus({ preventScroll: true });
     }
 }
 

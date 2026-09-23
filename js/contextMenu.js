@@ -167,13 +167,13 @@ deleteMulu.addEventListener("click", function () {
             confirmMessage += `\n\n影响：将删除 ${impact.removedIds.size} 个目录，未发现来自删除范围外的引用。`;
         }
     }
-    customConfirm(confirmMessage, '删除', '取消', '删除目录').then(result => {
+    customConfirm(confirmMessage, '删除', '取消', '删除目录').then(async result => {
         if (!result) {
             hideRightMouseMenu();
             return;
         }
-        let nowchild = document.getElementById(currentMuluName);
-        if (!nowchild) {
+        const nowchild = selectedElement;
+        if (!nowchild?.isConnected) {
             hideRightMouseMenu();
             return;
         }
@@ -182,6 +182,15 @@ deleteMulu.addEventListener("click", function () {
         if (typeof DirectoryHistory !== 'undefined') {
             DirectoryHistory.record('删除目录');
         }
+        const directories = Array.from(document.querySelectorAll('.mulu'));
+        const visibleDirectories = directories.filter(node => node.getClientRects().length);
+        const previousIndex = visibleDirectories.indexOf(nowchild);
+        const nextCandidates = previousIndex < 0 ? directories : [
+            ...visibleDirectories.slice(0, previousIndex).reverse(),
+            ...visibleDirectories.slice(previousIndex + 1),
+            ...directories
+        ];
+        const activeElement = currentMuluName ? document.getElementById(currentMuluName) : null;
         /**
          * 递归删除所有子目录
          * @param {string} parentId - 父目录ID
@@ -223,14 +232,24 @@ function deleteAllChildren(parentId) {
         nowchild.remove();
         rebuildMulufileIndex();
         refreshParentChildState(oldParentId);
-        markDirectoryStructureChanged();
-        currentMuluName = null;
-        jiedianwords.value = "";
-        isUpdating = true;
-        updateMarkdownPreview({ force: true });
-        isUpdating = false;
-        DuplicateMuluHints();
         hideRightMouseMenu();
+        if (!activeElement?.isConnected) {
+            currentMuluName = null;
+            const next = nextCandidates.find(node => node.isConnected);
+            if (next) {
+                expandParentDirectories(next);
+                await switchToDirectoryElement(next, { syncCurrent: false, forceRender: true, viewMode: 'restore' });
+            } else {
+                RemoveOtherSelect();
+                jiedianwords.value = '';
+                isUpdating = true;
+                try { await updateMarkdownPreview({ force: true }); }
+                finally { isUpdating = false; }
+                window.DirectoryNavigation?.refresh();
+            }
+        }
+        markDirectoryStructureChanged();
+        DuplicateMuluHints();
     });
 });
 expandThisMulu.addEventListener("click", function () {

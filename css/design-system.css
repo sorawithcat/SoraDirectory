@@ -46,13 +46,22 @@
 .sora-issue-target { outline: 2px solid var(--color-primary, #2563eb); outline-offset: 3px; }
 .sora-help { display: grid; grid-template-columns: minmax(160px, 220px) minmax(0, 1fr); gap: var(--space-4); height: min(68vh, 760px); }
 .sora-help nav { min-width: 0; overflow: auto; }
-.sora-help nav div { display: grid; gap: var(--space-1); margin-block: var(--space-3); }
+.sora-help-links { display: grid; gap: var(--space-1); margin-block: var(--space-3); }
+.sora-help-links button[hidden] { display: none; }
+.sora-help-search-status, .sora-format-hint { margin: 8px 0; color: var(--color-text-muted, #475569); font-size: 13px; line-height: 1.6; }
 .sora-help nav :is(button, input) { width: 100%; min-height: 44px; text-align: left; padding: 8px; border: 1px solid var(--color-border, #cbd5e1); border-radius: var(--radius-sm); background: var(--color-panel, #fff); color: var(--color-text, #172033); font: inherit; }
 .sora-help nav [aria-current="page"] { background: var(--color-primary-soft, #e8f0fe); font-weight: 700; }
-.sora-help .sora-help-content { min-width: 0; min-height: 0; overflow: auto; padding: var(--space-3); cursor: auto; }
+.sora-help-reader { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-left: 1px solid var(--color-border, #cbd5e1); }
+.sora-help-outline { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 0 var(--space-3) var(--space-3); font-size: 13px; }
+.sora-help-outline select { flex: 1; min-width: 0; min-height: 40px; border: 1px solid var(--color-border, #cbd5e1); border-radius: var(--radius-sm); background: var(--color-panel, #fff); color: inherit; padding: 6px 8px; font: inherit; }
+.sora-help .sora-help-content { flex: 1; min-width: 0; min-height: 0; overflow: auto; padding: var(--space-3); cursor: auto; border: 0; overscroll-behavior: contain; }
+.sora-help-content > h1:first-child { margin-top: 0; }
+.sora-help-content :is(h2,h3) { scroll-margin-top: 12px; }
+.sora-help-content table { width: 100%; }
 @media (max-width: 640px) {
     .sora-help { grid-template-columns: minmax(0, 1fr); height: auto; }
     .sora-help nav { max-height: 210px; }
+    .sora-help-reader { border-left: 0; border-top: 1px solid var(--color-border, #cbd5e1); padding-top: var(--space-3); }
     .sora-help .sora-help-content { max-height: 50vh; }
 }
 

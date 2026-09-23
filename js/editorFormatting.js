@@ -21,6 +21,7 @@
         bold: ['strong', 'b'], italic: ['em', 'i'], underline: ['u'], strikethrough: ['s', 'strike', 'del'],
         code: ['code'], highlight: ['mark'], spoiler: ['spoiler'], superscript: ['sup'], subscript: ['sub'], kbd: ['kbd']
     };
+    const inlineSelector = 'strong,b,em,i,u,s,strike,del,code,kbd,mark,spoiler,sup,sub,a,span[style]';
     const paragraphProperties = ['text-align', 'line-height', 'margin-top', 'margin-bottom'];
     const textProperties = ['color', 'background-color'];
     let brush = null;
@@ -271,6 +272,43 @@
         return result;
     }
     function marked(node, tags) { return ancestors(node).some(parent => tags.includes(parent.tagName.toLowerCase()) && !parent.closest('pre')); }
+    function inlineAncestors(range) {
+        if (isUpdating || !key() || !range?.collapsed || protectedNode(range.startContainer)) return [];
+        const result = [];
+        for (let node = element(range.startContainer); node && node !== root && !node.matches(blockSelector); node = node.parentElement) {
+            if (node.matches(inlineSelector)) result.push(node);
+        }
+        return result;
+    }
+    function outsideInline(node, before = false) {
+        flushInput();
+        let text = before ? node.previousSibling : node.nextSibling;
+        if (text?.nodeType !== Node.TEXT_NODE || !text.length) {
+            // 可见内容不补空格；临时光标位在存储和导出时移除。
+            const caret = document.createElement('span'); caret.dataset.soraCaret = '';
+            text = document.createTextNode('\u200B'); caret.append(text); caretNodes.add(text);
+            if (before) node.before(caret); else node.after(caret);
+        }
+        const range = document.createRange(); range.setStart(text, before ? text.length : text.textContent === '\u200B' ? 1 : 0); range.collapse(true);
+        setRange(range); updateState();
+    }
+    function exitInline(event, range) {
+        if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey || !['Escape', 'ArrowLeft', 'ArrowRight'].includes(event.key)) return false;
+        let target = null, exitBefore = false;
+        for (const node of inlineAncestors(range)) {
+            const before = event.key === (getComputedStyle(node).direction === 'rtl' ? 'ArrowRight' : 'ArrowLeft');
+            const remaining = document.createRange(); remaining.selectNodeContents(node);
+            if (before) remaining.setEnd(range.startContainer, range.startOffset);
+            else remaining.setStart(range.startContainer, range.startOffset);
+            if (event.key !== 'Escape' && (remaining.toString().replace(/\u200B/g, '') || remaining.cloneContents().querySelector('img,video,audio,br,[contenteditable="false"]'))) break;
+            target = node;
+            exitBefore = before;
+        }
+        if (!target) return false;
+        event.preventDefault(); event.stopImmediatePropagation();
+        hideTextFormatToolbar(); outsideInline(target, event.key === 'Escape' ? false : exitBefore);
+        return true;
+    }
     function isolateText(part) {
         let node = part.node;
         if (part.end < node.length) node.splitText(part.end);
@@ -574,9 +612,24 @@
                 if (field.required) control.required = true;
                 if (!field.options && field.type !== 'number') control.maxLength = field.maxLength || 10000;
                 control.name = field.key;
+                if (field.shortcut) {
+                    control.placeholder = '输入文字，或直接按组合键';
+                    control.onkeydown = event => {
+                        if (event.isComposing || event.getModifierState('AltGraph') || !(event.ctrlKey || event.metaKey || event.altKey)) return;
+                        event.preventDefault(); event.stopPropagation();
+                        if (['Control', 'Meta', 'Alt', 'Shift'].includes(event.key)) return;
+                        const keyName = event.key === ' ' ? 'Space' : event.key.length === 1 ? event.key.toUpperCase() : event.key;
+                        control.value = [event.ctrlKey && 'Ctrl', event.metaKey && 'Meta', event.altKey && 'Alt', event.shiftKey && 'Shift', keyName].filter(Boolean).join('+');
+                    };
+                }
                 if (field.type === 'checkbox') { label.className = 'sora-checkbox-field'; label.prepend(control); }
                 else label.append(control);
                 wrapper.append(label); controls[field.key] = control;
+                if (field.shortcut) {
+                    const hint = document.createElement('p'); hint.className = 'sora-format-hint';
+                    hint.textContent = '此输入框会把组合键（如 Ctrl+D）记为文字。复制粘贴可用右键菜单；Tab 切换焦点，Esc 取消。';
+                    wrapper.append(hint);
+                }
             });
             const error = document.createElement('p'); error.className = 'sora-form-error'; error.setAttribute('role', 'alert'); wrapper.append(error);
             const actions = document.createElement('div'); actions.className = 'sora-format-actions';
@@ -668,6 +721,7 @@
         ['column-before', '左侧插入列', '左侧插列', '表格'], ['column-after', '右侧插入列', '右侧插列', '表格'], ['column-delete', '删除当前列', '删除列', '表格'],
         ['table-header', '切换首行表头', '首行表头', '表格'], ['cell-left', '单元格左对齐', '左对齐', '表格'], ['cell-center', '单元格居中', '居中', '表格'], ['cell-right', '单元格右对齐', '右对齐', '表格'], ['delete-table', '删除表格', '删除表格', '表格'],
         ['edit-callout', '编辑当前提示块', '编辑提示块', '编辑'], ['edit-details', '编辑当前折叠块', '编辑折叠块', '编辑'],
+        ['edit-kbd', '编辑当前按键文字或录入组合键', '编辑按键', '编辑'], ['exit-inline', '退出当前文字格式，继续输入正文', '退出文字格式', '编辑'],
         ['brush-copy', '复制文字和段落样式', '复制样式', '编辑'], ['brush-apply', '应用已复制样式', '应用样式', '编辑'],
         ['undo', '撤销正文编辑', '撤销正文', '编辑'], ['redo', '重做正文编辑', '重做正文', '编辑']
     ].map(([command, label, text, group]) => ({ command, label, text, group }));
@@ -695,6 +749,12 @@
         if (command === 'more') { openMore(); return; }
         const token = suppliedToken || capture();
         if (!token) { showToast('请先在正文中放置光标或选择内容', 'warning'); return; }
+        if (command === 'exit-inline') {
+            const nodes = inlineAncestors(token.range);
+            if (valid(token) && nodes.length) outsideInline(nodes[nodes.length - 1]);
+            hideTextFormatToolbar();
+            return;
+        }
         executing = true;
         try {
             let value = null;
@@ -707,7 +767,14 @@
             else if (command === 'anchor') { value = await customPrompt('输入锚点名:', ''); if (!value) return; }
             else if (command === 'method') { value = await promptMethodConfig(null); if (!value) return; }
             else if (command === 'code-block') { value = await codeEditDialog(token.range.toString(), '', CODE_LANG_OPTIONS, '插入代码块'); if (!value) return; }
-            else if (command === 'kbd' && token.range.collapsed) { value = await customPrompt('输入按键，例如 Ctrl+S:', ''); if (!value) return; }
+            else if ((command === 'kbd' && token.range.collapsed) || command === 'edit-kbd') {
+                const node = element(token.range.startContainer)?.closest('kbd');
+                if (command === 'edit-kbd' && !node) return;
+                if (node && !node.contains(token.range.endContainer)) return;
+                const values = await form(node ? '编辑按键文字' : '插入按键文字', [{ key: 'text', label: '按键文字 / 组合键', required: true, shortcut: true, maxLength: 200 }], { text: node?.textContent || '' });
+                if (!values) return;
+                value = { text: values.text, node };
+            }
             else if (command === 'table') {
                 value = await form('插入表格', [
                     { key: 'rows', label: '总行数（含表头，1–100）', type: 'number', min: 1, max: 100, required: true },
@@ -751,8 +818,14 @@
             }
             transaction(labels.get(command) || command, token, range => {
                 if (inlineDefinitions[command] || textProperties.includes(command) || command === 'clear-format') {
-                    if (command === 'kbd' && value) { const node = document.createElement('kbd'); node.textContent = value; range.insertNode(node); const next = document.createRange(); next.selectNodeContents(node); setRange(next); }
+                    if (command === 'kbd' && value) {
+                        const node = value.node || document.createElement('kbd'); node.textContent = value.text;
+                        if (!value.node) range.insertNode(node);
+                        outsideInline(node);
+                    }
                     else inline(range, command, value);
+                } else if (command === 'edit-kbd') {
+                    value.node.textContent = value.text; outsideInline(value.node);
                 } else if (command === 'default-color' || command === 'default-background') inline(range, command === 'default-color' ? 'color' : 'background-color', '');
                 else if (/^h[1-6]$/.test(command) || command === 'paragraph') changeBlock(range, command === 'paragraph' ? 'p' : command);
                 else if (['unordered-list', 'ordered-list', 'task-list'].includes(command)) list(range, command);
@@ -818,6 +891,11 @@
 
     function state(command, range = getRange()) {
         if (!key() || !range || composing || restoring) return { disabled: true, pressed: 'false' };
+        if (command === 'exit-inline') return { disabled: !inlineAncestors(range).length, pressed: 'false' };
+        if (command === 'edit-kbd') {
+            const node = element(range.startContainer)?.closest('kbd');
+            return { disabled: !node?.contains(range.endContainer), pressed: 'false' };
+        }
         if (command === 'edit-callout' || command === 'edit-details') return { disabled: !currentContentBlock(range, command.slice(5)), pressed: 'false' };
         if (command === 'undo' || command === 'redo') return { disabled: !history()[command === 'undo' ? 'undo' : 'redo'].length, pressed: 'false' };
         if (command === 'brush-apply') return { disabled: !brush, pressed: 'false' };
@@ -954,10 +1032,17 @@
     });
     root.addEventListener('keydown', event => {
         if (event.isComposing || composing || event.keyCode === 229) return;
+        const range = currentRange();
+        if (exitInline(event, range)) return;
         const ctrl = event.ctrlKey || event.metaKey;
+        if (ctrl && !event.altKey && event.key.toLowerCase() === 'd' && element(range?.startContainer)?.closest('kbd')) {
+            event.preventDefault(); event.stopImmediatePropagation();
+            showToast('组合键请通过“更多格式 → 编辑按键”录入；Esc 可退出按键样式', 'info');
+            return;
+        }
         const command = ctrl && ({ b: 'bold', i: 'italic', u: 'underline', z: event.shiftKey ? 'redo' : 'undo', y: 'redo' })[event.key.toLowerCase()];
         if (command) { event.preventDefault(); event.stopImmediatePropagation(); apply(command); return; }
-        const range = currentRange(), item = range && currentListItem(range.startContainer);
+        const item = range && currentListItem(range.startContainer);
         if (event.key === 'Tab' && item && !item.closest('[data-sora-footnotes]')) { event.preventDefault(); apply(event.shiftKey ? 'outdent' : 'indent'); }
         if (event.key === 'Enter' && !event.shiftKey && item && !item.closest('[data-sora-footnotes]') && !item.textContent.replace(/\u200B/g, '').trim() && !item.querySelector('img,video,table,ul,ol')) {
             event.preventDefault(); event.stopImmediatePropagation();
@@ -970,6 +1055,21 @@
         const ref = event.target.closest('[data-footnote-ref]');
         if (ref && !event.ctrlKey && !event.metaKey) { event.preventDefault(); event.stopImmediatePropagation(); editFootnote(ref); }
     }, true);
+    root.addEventListener('click', event => {
+        if (event.defaultPrevented || event.button !== 0 || event.detail !== 1 || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey || composing) return;
+        if (event.target.closest('input,button,select,textarea,[contenteditable="false"],summary,pre,a,img,video,audio')) return;
+        const nodes = inlineAncestors(currentRange());
+        for (const node of nodes.reverse()) {
+            if (node.contains(event.target)) continue;
+            const rects = Array.from(node.getClientRects());
+            if (!rects.length) continue;
+            const rtl = getComputedStyle(node).direction === 'rtl';
+            const first = rects[0], last = rects[rects.length - 1];
+            const before = event.clientY >= first.top && event.clientY <= first.bottom && (rtl ? event.clientX > first.right : event.clientX < first.left);
+            const after = event.clientY >= last.top && event.clientY <= last.bottom && (rtl ? event.clientX < last.left : event.clientX > last.right);
+            if (before || after) { outsideInline(node, before); break; }
+        }
+    });
     document.addEventListener('selectionchange', () => { if (!composing && !restoring) { remember(); updateState(); } });
     document.addEventListener('sora:document-loaded', () => { generation++; savedRange = null; inputBefore = null; histories.clear(); });
     window.SoraEditor = { capture, captureElement, transaction, onRender, remember, undo, collectMediaIds, isComposing: () => composing, flushInput, didSync };

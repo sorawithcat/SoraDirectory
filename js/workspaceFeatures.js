@@ -174,7 +174,7 @@ const FeatureDialog = (function() {
         }
         const target = returnFocus;
         returnFocus = null;
-        if (target && target.isConnected && typeof target.focus === 'function') target.focus();
+        if (target && target.isConnected && typeof target.focus === 'function') target.focus({ preventScroll: true });
     }
 
     function showRetry(container, message, retry) {

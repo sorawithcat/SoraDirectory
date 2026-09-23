@@ -28,6 +28,7 @@ const CODE_LANG_OPTIONS = [
 let selectedText = '';
 /** 当前选中范围 */
 let selectionRange = null;
+let selectionToolbarTimer = null;
 // -------------------- 辅助函数 --------------------
 /**
  * 获取预览区域的选中内容
@@ -49,20 +50,42 @@ function getPreviewSelection() {
         range: range.cloneRange()
     };
 }
-/**
- * 显示文字格式工具栏
- * @param {MouseEvent} e - 鼠标事件对象
- */
+function placeContextMenuCaret(event) {
+    const current = getPreviewSelection()?.range;
+    if (!event || (event.clientX === 0 && event.clientY === 0 && current)) return;
+    // 在原选区上右键保留选区；在其他位置右键则定位到实际单元格或正文。
+    if (current && !current.collapsed && Array.from(current.getClientRects()).some(rect =>
+        event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom)) return;
+    let range = null;
+    if (document.caretPositionFromPoint) {
+        const point = document.caretPositionFromPoint(event.clientX, event.clientY);
+        if (point) { range = document.createRange(); range.setStart(point.offsetNode, point.offset); range.collapse(true); }
+    } else if (document.caretRangeFromPoint) range = document.caretRangeFromPoint(event.clientX, event.clientY);
+    const cell = event.target.closest?.('td,th');
+    if (cell && (!range || !cell.contains(range.startContainer))) {
+        range = document.createRange(); range.selectNodeContents(cell); range.collapse(true);
+    }
+    if (!range || !markdownPreview.contains(range.startContainer)) {
+        range = document.createRange(); range.selectNodeContents(markdownPreview); range.collapse(false);
+    }
+    markdownPreview.focus({ preventScroll: true });
+    const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+    window.SoraEditor?.remember();
+}
+function hideTextFormatToolbar() {
+    clearTimeout(selectionToolbarTimer);
+    textFormatToolbar.style.display = 'none';
+    textFormatToolbar.style.visibility = 'hidden';
+}
 function showTextFormatToolbar(e) {
+    clearTimeout(selectionToolbarTimer);
+    if (e?.type === 'contextmenu') placeContextMenuCaret(e);
     syncPreviewToTextarea();
     const previewSelection = getPreviewSelection();
     const hasSelection = previewSelection && previewSelection.text && previewSelection.text.length > 0;
-    if (hasSelection) {
-        selectedText = previewSelection.text;
-        selectionRange = previewSelection.range;
-    } else {
-        selectionRange = null;
-    }
+    selectedText = previewSelection?.text || '';
+    selectionRange = previewSelection?.range || null;
+    window.SoraFormatting?.updateState();
     textFormatToolbar.style.display = 'flex';
     textFormatToolbar.style.visibility = 'hidden'; 
     const toolbarWidth = textFormatToolbar.offsetWidth || 400;
@@ -113,15 +136,22 @@ function showTextFormatToolbar(e) {
 }
 if (markdownPreview) {
     markdownPreview.addEventListener("mouseup", function(e) {
-        setTimeout(() => {
+        if (e.button !== 0) return;
+        clearTimeout(selectionToolbarTimer);
+        selectionToolbarTimer = setTimeout(() => {
             const previewSelection = getPreviewSelection();
             if (previewSelection && previewSelection.text && previewSelection.text.length > 0) {
                 showTextFormatToolbar(e);
             } else {
-                textFormatToolbar.style.display = 'none';
-                textFormatToolbar.style.visibility = 'hidden';
+                hideTextFormatToolbar();
             }
         }, 10);
+    });
+    document.addEventListener('pointerdown', event => {
+        if (!textFormatToolbar.contains(event.target)) hideTextFormatToolbar();
+    });
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') hideTextFormatToolbar();
     });
 }
 document.querySelectorAll('.format-btn').forEach(btn => {
@@ -1034,6 +1064,8 @@ async function editCodeBlock(pre) {
     const codeElement = pre.querySelector('code');
     if (!codeElement) return;
     const token = window.SoraEditor?.captureElement(pre);
+    const scrollTop = markdownPreview.scrollTop;
+    const scrollLeft = markdownPreview.scrollLeft;
     // 获取当前语言和代码
     const langAttr = pre.getAttribute('data-lang') || '';
     const langClass = Array.from(codeElement.classList).find(c => c.startsWith('language-'));
@@ -1041,9 +1073,12 @@ async function editCodeBlock(pre) {
     const currentCode = codeElement.textContent;
     // 弹出编辑对话框
     const result = await codeEditDialog(currentCode, currentLang, CODE_LANG_OPTIONS, '编辑代码块');
-    if (result === null) return; // 用户取消
+    if (result === null) {
+        if (pre.isConnected) { markdownPreview.scrollTop = scrollTop; markdownPreview.scrollLeft = scrollLeft; }
+        return;
+    }
     if (!token) return;
-    SoraEditor.transaction('编辑代码块', token, () => {
+    const changed = SoraEditor.transaction('编辑代码块', token, () => {
     if (result.delete) {
         // 删除代码块
         pre.remove();
@@ -1063,6 +1098,10 @@ async function editCodeBlock(pre) {
         langLabel.dataset.lang = langValue.toUpperCase();
     }
     });
+    if (changed) {
+        markdownPreview.scrollTop = scrollTop;
+        markdownPreview.scrollLeft = scrollLeft;
+    }
 }
 // -------------------- 预览区域事件监听 --------------------
 // 注意：图片相关功能已移至 imageHandler.js

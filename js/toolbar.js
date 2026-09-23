@@ -415,46 +415,48 @@ function buildHelpNavHtml() {
         { id: 'mulu_help_quickstart', name: '快速开始' },
         { id: 'mulu_help_directory', name: '目录操作' },
         { id: 'mulu_help_format', name: '编辑与格式' },
+        { id: 'mulu_help_samples', name: '样式示例' },
         { id: 'mulu_help_link_anchor', name: '链接与锚点' },
         { id: 'mulu_help_search', name: '查找与替换' },
         { id: 'mulu_help_advanced', name: '高级操作' },
         { id: 'mulu_help_export', name: '保存、导出与加密' },
         { id: 'mulu_help_notes', name: '注意事项与常见问题' }
     ];
-    let out = '<p>';
+    let out = '<details class="sora-help-chapters" data-sora-details="true" data-default-open="false"><summary>查看说明章节</summary><div class="sora-details-body"><ul>';
     for (let i = 0; i < items.length; i++) {
         const it = items[i];
-        out += '<a href="sora-dir:' + it.id + '" data-sora-link="dir" data-dir-id="' + it.id + '">' + it.name + '</a>';
-        if (i !== items.length - 1) out += ' | ';
+        out += '<li><a href="sora-dir:' + it.id + '" data-sora-link="dir" data-dir-id="' + it.id + '">' + it.name + '</a></li>';
     }
-    out += '</p>';
+    out += '</ul></div></details>';
     return out;
 }
 
 function buildHelpPageContents() {
     const nav = buildHelpNavHtml();
+    const callout = (type, title, body) => '<aside class="sora-callout" data-callout="' + type + '"><p class="sora-callout-title">' + title + '</p><div class="sora-callout-body">' + body + '</div></aside>';
 
     const root = [
         '<h1>使用说明</h1>',
         nav,
-        '<p>这是随项目版本更新的内置说明。</p>',
+        '<p>从组织目录、编写正文，到保存文件和部署网站。此说明随项目更新，示例使用编辑器提供的真实格式。</p>',
+        callout('info', '第一次使用', '<p>先看“快速开始”；想了解格式效果，打开“样式示例”。在说明弹窗中，左侧可搜索章节，正文上方可跳转本章小节。</p>'),
         '<p>点击顶部“说明”可选择<strong>弹窗查看</strong>或<strong>插入当前作品</strong>。弹窗查看不修改作品；插入后，说明将作为目录参与保存和导出。</p>',
         '<h2 id="交互说明">交互说明</h2>',
         '<ul>',
         '<li><strong>目录区</strong>：左键选择；双击重命名；拖拽移动（含子目录）；右键打开菜单。</li>',
-        '<li><strong>编辑区</strong>：右侧为可编辑预览区，直接输入/粘贴即可。</li>',
+        '<li><strong>编辑区</strong>：右侧直接输入或粘贴；选中文字可改格式，不选文字也能右键打开菜单。在表格单元格内右键，再选“更多格式”操作行列。</li>',
         '<li><strong>链接/锚点/方法</strong>：单击可编辑；链接与锚点要跳转/打开时使用 <strong>Ctrl+单击</strong>。</li>',
         '<li><strong>导出网页</strong>：网页里是普通单击跳转；锚点本身不可见且不可点击（仅作为跳转目标）。</li>',
         '</ul>',
         '<h2 id="常用快捷键">常用快捷键</h2>',
-        '<ul>',
-        '<li><strong>Ctrl+S</strong>：保存</li>',
-        '<li><strong>Ctrl+F</strong>：查找</li>',
-        '<li><strong>Ctrl+H</strong>：替换</li>',
-        '<li><strong>Ctrl+K</strong>：全局搜索目录、锚点与功能命令</li>',
-        '<li><strong>Ctrl+Z / Ctrl+Y</strong>：撤销 / 重做目录操作（焦点不在编辑区时）</li>',
-        '<li><strong>Ctrl+B / Ctrl+I / Ctrl+U</strong>：粗体 / 斜体 / 下划线</li>',
-        '</ul>',
+        '<table><thead><tr><th>按键</th><th>用途</th></tr></thead><tbody>',
+        '<tr><td><kbd>Ctrl+S</kbd></td><td>保存当前作品</td></tr>',
+        '<tr><td><kbd>Ctrl+F</kbd> / <kbd>Ctrl+H</kbd></td><td>查找 / 替换</td></tr>',
+        '<tr><td><kbd>Ctrl+K</kbd></td><td>搜索目录、锚点和功能命令</td></tr>',
+        '<tr><td><kbd>Ctrl+Z</kbd> / <kbd>Ctrl+Y</kbd></td><td>正文聚焦时撤销 / 重做正文；焦点在目录区时撤销 / 重做目录操作</td></tr>',
+        '<tr><td><kbd>Ctrl+B</kbd> / <kbd>Ctrl+I</kbd> / <kbd>Ctrl+U</kbd></td><td>粗体 / 斜体 / 下划线</td></tr>',
+        '<tr><td><kbd>Esc</kbd></td><td>光标在行内样式中时，退出样式继续写正文；弹窗打开时取消弹窗</td></tr>',
+        '</tbody></table>',
         '<h2 id="你可以做什么">你可以做什么</h2>',
         '<ul>',
         '<li>用左侧目录组织内容，支持多级目录与一整套复制/粘贴/快速复制操作。</li>',
@@ -472,10 +474,12 @@ function buildHelpPageContents() {
         '<li><a href="sora-dir:mulu_help_quickstart" data-sora-link="dir" data-dir-id="mulu_help_quickstart">快速开始：从新建到导出</a></li>',
         '<li><a href="sora-dir:mulu_help_directory" data-sora-link="dir" data-dir-id="mulu_help_directory">目录操作：复制/粘贴/拖拽/右键菜单</a></li>',
         '<li><a href="sora-dir:mulu_help_format" data-sora-link="dir" data-dir-id="mulu_help_format">编辑与格式：所有格式按钮清单</a></li>',
+        '<li><a href="sora-dir:mulu_help_samples" data-sora-link="dir" data-dir-id="mulu_help_samples">样式示例：提示、折叠、表格、任务与注释</a></li>',
         '<li><a href="sora-dir:mulu_help_link_anchor" data-sora-link="dir" data-dir-id="mulu_help_link_anchor">链接与锚点：完整语法与示例</a></li>',
         '<li><a href="sora-dir:mulu_help_export" data-sora-link="dir" data-dir-id="mulu_help_export">保存、导出与加密：文件/网页/密码</a></li>',
         '</ul>',
-        '<h2 id="跳转示例">跳转示例（请 Ctrl+单击测试）</h2>',
+        '<h2 id="跳转示例">跳转示例</h2>',
+        '<p>在此说明弹窗或导出网页中单击跳转；插入作品后，在编辑区用 <kbd>Ctrl+单击</kbd> 跳转。</p>',
         '<ul>',
         '<li>页内跳转：<a href="#示例标题" data-sora-link="anchor" data-anchor-id="示例标题">#示例标题</a></li>',
         '<li>目录内跳转（按目录ID）：<a href="sora-dir:mulu_help_link_anchor#目录内跳转" data-sora-link="dir" data-dir-id="mulu_help_link_anchor" data-anchor-id="目录内跳转">dir:mulu_help_link_anchor#目录内跳转</a></li>',
@@ -493,7 +497,7 @@ function buildHelpPageContents() {
         '<li>点击顶部工具栏 <strong>文件 / 新建</strong>；系统会保留当前草稿和媒体，创建并选中一个空白的“默认目录”。</li>',
         '<li>可双击重命名默认目录；点击 <strong>目录 / 添加目录</strong> 创建同级目录，再用 <strong>目录 / 添加节点</strong> 创建子目录。</li>',
         '<li>左键单击目录，右侧开始编辑内容（可直接粘贴图片/文本）。</li>',
-        '<li>选择文字后会出现悬浮工具栏，用于快速加粗/链接/列表等；点击任意按钮后会自动收起。</li>',
+        '<li>选择文字后使用悬浮工具栏修改格式；也可直接右键正文或空单元格，通过“更多格式”插入内容和调整表格。</li>',
         '<li>需要图片或视频时，可使用顶部插入按钮，也可把媒体文件或文件夹拖入编辑区。</li>',
         '<li>导出前点击 <strong>导出预检</strong>；再按 <strong>Ctrl+S</strong> 保存，或用 <strong>另存为</strong> 导出 <code>.sora</code> 单文件包或网页。</li>',
         '</ol>',
@@ -505,8 +509,8 @@ function buildHelpPageContents() {
         '<h2 id="保存与导出提示">保存与导出提示</h2>',
         '<ul>',
         '<li>按钮出现“保存 *”说明有未保存更改。</li>',
-        '<li><strong>另存为</strong>：可以选择“网页(.html)”或“自定义文件名”；两种都支持加密选项。</li>',
-        '<li>导出网页会把目录与正文打包进单个 HTML 文件，适合发送给别人直接打开。</li>',
+        '<li><strong>另存为 / 导出</strong>可选择可编辑文件（.sora）、单 HTML、网站目录（静态 / PWA）、服务器部署压缩包和 JSON 增量 / 差异补丁。</li>',
+        '<li><strong>单 HTML</strong>把目录、正文和媒体放在一个文件中，适合直接发送；<strong>.sora</strong>用于继续编辑；网站目录和部署包用于托管网站。</li>',
         '<li>图片会在导入时进行网页优化；同一媒体多次引用只会在导出文件中保存一份，图片和大视频按需加载。</li>',
         '<li>每个目录会记住正文滚动位置和最后选区；再次打开会恢复上下文。需要从头阅读时，点击正文上方的 <strong>回顶部</strong>。</li>',
         '</ul>'
@@ -530,7 +534,7 @@ function buildHelpPageContents() {
         '<li><strong>复制目录（不含子目录）</strong>：只复制当前目录本身。</li>',
         '<li><strong>粘贴目录</strong>：把剪贴板中的目录粘贴到当前目录下，作为子目录。</li>',
         '<li><strong>快速复制（含子目录 / 不含子目录）</strong>：等价于复制后立刻粘贴。</li>',
-        '<li><strong>删除选中目录</strong>：会递归删除子目录与其内容。</li>',
+        '<li><strong>删除选中目录</strong>：会递归删除子目录与其内容，并选中前一个仍存在的可见目录；没有前一个时选择后面的目录。全部删除后编辑区清空。</li>',
         '<li><strong>展开此目录 / 收起此目录</strong>：递归展开/收起该目录树。</li>',
         '<li><strong>复制目录ID</strong>：复制 data-dir-id，用于写 <strong>dir:目录ID</strong> 类型的目录内跳转链接。</li>',
         '<li><strong>修改同级目录颜色 / 恢复同级自动颜色</strong>：调整当前目录所在层级的统一背景色。</li>',
@@ -569,18 +573,20 @@ function buildHelpPageContents() {
         '<h2 id="点击定位输入">点击定位输入</h2>',
         '<p>点击已有文字或空白行按原生方式定位光标。自动补行仅用于正文外层空白：点击内容块前后、块间空隙可在块外继续写；点击正文下方较远的空白处，会补出空行并把光标放到所点的行。表格（含表头和单元格）、列表、折叠块、提示块等内容内部保留原生编辑，不因点击内边距或空白自动插入段落。</p>',
         '<p>新增空行可以用 Ctrl+Z 一次撤销。拖选文字、双击选词、滚动以及链接、媒体和组件按钮保留原有操作；代码块仍通过编辑弹窗修改。空白定位按行补齐，横向空白不会补空格或改变段落对齐。</p>',
+        callout('info', '从行内样式回到正文', '<p>按键、行内代码、高亮、链接等样式的边界可用方向键移出；也可按 <kbd>Esc</kbd>，或选择“更多格式 → 退出文字格式”。点击样式旁同一行的正文空白可在样式外继续输入。</p>'),
+        '<p>需要真实效果示例时，打开<a href="sora-dir:mulu_help_samples" data-sora-link="dir" data-dir-id="mulu_help_samples">样式示例</a>。</p>',
         '<h2 id="格式命令一览">格式命令一览</h2>',
         '<p>顶部格式栏提供常用文字格式、正文/标题类型和段落设置；完整格式、表格操作和正文撤销在“更多格式”中，也可通过 Ctrl+K 搜索。</p>',
-        '<table><thead><tr><th>分组</th><th>功能</th></tr></thead><tbody>',
+        '<details data-sora-details="true" data-default-open="false"><summary>展开完整格式命令清单</summary><div class="sora-details-body"><table><thead><tr><th>分组</th><th>功能</th></tr></thead><tbody>',
         ...(window.SoraFormatting?.definitions || []).map(item => '<tr><td>' + escapeHtml(item.group) + '</td><td>' + escapeHtml(item.label) + '</td></tr>'),
-        '</tbody></table>',
+        '</tbody></table></div></details>',
         '<h2 id="格式小技巧">格式与编辑</h2>',
         '<ul>',
         '<li>光标放在正文中可先开启粗体等格式再输入；选中文字时只修改选区，其他链接和样式会保留。按钮的选中状态表示已应用，点状下划线表示混合状态。</li>',
         '<li>“清除文字样式”保留链接、锚点、方法、代码、媒体与列表结构；“正文”用于把当前段落或标题转换为普通段落。</li>',
         '<li>正文内用 Ctrl+Z 撤销、Ctrl+Y 或 Ctrl+Shift+Z 重做；目录结构仍使用目录撤销。正文历史仅保留当前会话内有限记录，不替代草稿与快照。</li>',
         '<li>列表可以互换类型，再次选择同一种列表可取消；Tab / Shift+Tab 调整列表层级，空列表项按回车退出。</li>',
-        '<li>插入表格时一起设置行、列和表头；光标放在单元格后，通过“更多格式”的表格分组增删行列、切换表头、设置对齐或删除整表。</li>',
+        '<li>插入表格时一起设置行、列和表头；直接在目标单元格（含空表头）右键，通过“更多格式”的表格分组增删行列、切换表头、设置对齐或删除整表，不必选中文字。</li>',
         '<li>段落设置提供对齐、行距和段前段后间距；只修改选择的内容，不改变整个导出页的默认布局。</li>',
         '<li>“复制样式 / 应用样式”只复制文字与段落样式，不复制链接地址、锚点 ID、方法配置或组件状态。</li>',
         '<li>代码块通过点击打开编辑弹窗；纯文本模式不高亮，其他语言提供基础高亮或原文显示；保存以原始代码文字为准。</li>',
@@ -592,7 +598,8 @@ function buildHelpPageContents() {
         '<li>“插入引用块（可嵌套）”始终新增一层引用；原“引用”命令仍用于当前段落的引用切换。内容块内可继续插入表格、代码块、分隔线或术语解释；子块后保留普通段落，用于返回父级正文继续输入。</li>',
         '<li>标题只支持文字格式；插入子块请将光标放入正文。包裹选区需位于同一正文区域，不能跨越不同单元格或父子层级。嵌套表格的行列操作只作用于当前表格。</li>',
         '<li><strong>脚注 / 尾注</strong>在当前位置插入编号并在当前目录末尾生成注释；点击编号编辑或删除，Ctrl+单击前往注释，点击“返回正文”回到引用。编号会随引用顺序更新。</li>',
-        '<li><strong>键盘按键</strong>适合表示 Ctrl+S 等操作；<strong>术语解释</strong>用于成对编写名词和解释。</li>',
+        '<li><strong>键盘按键</strong>只显示文字，不绑定动作。插入时可在专用输入框中按 <kbd>Ctrl+D</kbd> 等组合键录入；修改已有按键时将光标放进去，选择“更多格式 → 编辑按键”。浏览器仍有自己的快捷键，组合键捕获只在此输入框中进行。</li>',
+        '<li><strong>术语解释</strong>用于成对编写名词和解释。</li>',
         '<li>Markdown 导出可选择保留丰富格式（使用 HTML）或通用 Markdown（简化样式）；确认写入前会列出受影响内容。任务状态、代码语言与表格单独转换。</li>',
         '</ul>',
         '<h2 id="插入媒体">插入图片与视频</h2>',
@@ -604,6 +611,41 @@ function buildHelpPageContents() {
         '<li>批量导入会显示逐项队列；可取消剩余任务，并对失败项重试。</li>',
         '<li>媒体数据存储在浏览器本地；导出网页或 <code>.sora</code> 时会一并打包，因此文件可能变大。</li>',
         '</ul>'
+    ].join('');
+
+    const samples = [
+        '<h1>样式示例</h1>', nav,
+        '<p>下面直接展示正文格式。说明弹窗中可展开折叠块和跳转注释；插入作品后可编辑这些示例。</p>',
+        '<h2 id="文字样式示例">文字与按键</h2>',
+        '<p><strong>重要结论</strong>、<em>补充语气</em>、<u>下划线</u>、<s>已取消的事项</s>，以及 <mark>需要关注的内容</mark>。</p>',
+        '<p>路径或变量用 <code>index.html</code> 表示；操作按键用 <kbd>Ctrl+S</kbd> 表示。还可以写 H<sub>2</sub>O 和 x<sup>2</sup>。</p>',
+        callout('info', '按键只是说明文字', '<p>示例里的 <kbd>Ctrl+S</kbd> 不会主动保存。录入组合键请使用“插入按键”或“编辑按键”的输入框；输入完成后光标落在样式外。</p>'),
+        '<h2 id="提示块示例">提示块</h2>',
+        callout('info', '补充信息', '<p>放置操作提示、背景信息或相关链接。</p>'),
+        callout('warning', '修改前留一份副本', '<p>批量替换或合并内容前，可先保存文件或建立命名快照。</p>'),
+        callout('success', '步骤已完成', '<p>用成功类型标出流程中已经完成的一步。</p>'),
+        callout('danger', '需要先处理的问题', '<p>仅在阻止继续操作的问题上使用警告类型，避免每段都强调。</p>'),
+        '<h2 id="嵌套折叠示例">折叠与嵌套</h2>',
+        '<details data-sora-details="true" data-default-open="true" open><summary>部署前需要准备什么？</summary><div class="sora-details-body">',
+        '<p>先确定接收方需要继续编辑，还是只需要阅读。</p>',
+        '<details data-sora-details="true" data-default-open="false"><summary>继续展开：怎样选导出格式？</summary><div class="sora-details-body">',
+        '<p>继续编辑选 <code>.sora</code>；单文件阅读选单 HTML；放服务器选部署压缩包。</p>',
+        callout('warning', '追加目录的条件', '<p>PHP 追加模式需服务器支持 PHP 7.4+。首次完整部署后，可只导出新增目录并解压到原位置；纯静态模式需完整更新。</p>'),
+        '</div></details><p>这是内层折叠块之外、外层正文之内的段落。嵌套块后仍可继续写。</p></div></details>',
+        '<h2 id="任务表格示例">任务列表与表格</h2>',
+        '<ul class="task-list"><li class="task-list-item"><input class="task-list-item-checkbox" type="checkbox" checked disabled aria-label="已完成：整理目录"> 整理目录</li><li class="task-list-item"><input class="task-list-item-checkbox" type="checkbox" disabled aria-label="待完成：检查链接与媒体"> 检查链接与媒体</li></ul>',
+        '<table><thead><tr><th scope="col">想做什么</th><th scope="col">使用的格式</th><th scope="col">操作入口</th></tr></thead><tbody>',
+        '<tr><td>并排比较内容</td><td>表格</td><td>插入表格；右键单元格 → 更多格式</td></tr>',
+        '<tr><td>收起补充说明</td><td>折叠块</td><td>更多格式 → 插入折叠块</td></tr>',
+        '<tr><td>引用一段说明</td><td>引用块</td><td>更多格式 → 引用 / 插入引用块</td></tr>',
+        '</tbody></table>',
+        '<h2 id="引用术语示例">引用与术语</h2>',
+        '<blockquote><p>把较长的背景资料放进引用块，让读者能区分正文与引述。</p><blockquote><p>需要时也能在引用中继续嵌套引用。</p></blockquote><p>这里回到外层引用。</p></blockquote>',
+        '<dl class="sora-definitions"><dt>草稿</dt><dd><p>保存在当前浏览器中的编辑记录，用于恢复未完成的作品。</p></dd><dt>单 HTML</dt><dd><p>包含目录、正文和媒体的一个网页文件，便于交给别人阅读。</p></dd></dl>',
+        '<h2 id="注释示例">脚注与尾注</h2>',
+        '<p>把不影响正文阅读的补充资料放到注释中。<sup data-footnote-ref="help_sample_note"><a id="sora-ref-help_sample_note" href="#sora-help_sample_note">[1]</a></sup></p>',
+        '<section class="sora-footnotes" data-sora-footnotes="true"><h3>注释</h3><ol><li id="sora-help_sample_note" data-footnote-id="help_sample_note"><span class="sora-footnote-body">注释编号随引用顺序更新；编辑区单击编号可修改，Ctrl+单击可跳转。</span><a data-footnote-backlink="true" href="#sora-ref-help_sample_note">返回正文</a></li></ol></section>',
+        '<p>以上样式来自编辑器现有格式，可随作品一起保存和导出。</p>'
     ].join('');
 
     const linkAnchor = [
@@ -1022,13 +1064,13 @@ function buildHelpPageContents() {
         '<h2 id="加密导出">加密导出（网页/文件）</h2>',
         '<ul>',
         '<li>在“另存为”时选择加密：会要求设置密码并二次确认。</li>',
-        '<li><strong>加密保存</strong>：生成 <code>.encrypted.json</code>，打开时需要输入密码解密。</li>',
+        '<li><strong>加密可编辑文件</strong>：生成 <code>.encrypted.sora</code>，目录和媒体一起加密；增量 JSON 或差异补丁加密后使用 <code>.encrypted.json</code>。</li>',
         '<li><strong>加密网页</strong>：生成 <code>.encrypted.html</code>，打开网页会先显示输入密码页面，输入正确密码后才渲染内容。</li>',
         '<li>如果忘记密码，无法恢复内容（请务必妥善保存）。</li>',
         '</ul>',
         '<h2 id="加密文件如何打开">加密文件如何打开</h2>',
         '<ol>',
-        '<li>点击顶部工具栏 <strong>加载</strong> 选择 <code>.encrypted.json</code> 文件。</li>',
+        '<li>点击顶部工具栏 <strong>加载</strong> 选择 <code>.encrypted.sora</code> 或兼容的 <code>.encrypted.json</code> 文件。</li>',
         '<li>弹窗提示输入密码（最多可多次尝试）。</li>',
         '<li>解密成功后才会加载目录与内容。</li>',
         '</ol>',
@@ -1149,6 +1191,7 @@ function buildHelpPageContents() {
         mulu_help_quickstart: quickstart,
         mulu_help_directory: directory,
         mulu_help_format: format,
+        mulu_help_samples: samples,
         mulu_help_link_anchor: linkAnchor,
         mulu_help_search: search,
         mulu_help_advanced: advanced,
@@ -1164,6 +1207,7 @@ function buildHelpManualMulufile() {
         ['mulu_help_root', '快速开始', 'mulu_help_quickstart', pages.mulu_help_quickstart],
         ['mulu_help_root', '目录操作', 'mulu_help_directory', pages.mulu_help_directory],
         ['mulu_help_root', '编辑与格式', 'mulu_help_format', pages.mulu_help_format],
+        ['mulu_help_root', '样式示例', 'mulu_help_samples', pages.mulu_help_samples],
         ['mulu_help_root', '链接与锚点', 'mulu_help_link_anchor', pages.mulu_help_link_anchor],
         ['mulu_help_root', '查找与替换', 'mulu_help_search', pages.mulu_help_search],
         ['mulu_help_root', '高级操作', 'mulu_help_advanced', pages.mulu_help_advanced],
@@ -1256,16 +1300,49 @@ function openHelpManual() {
     search.placeholder = '搜索使用说明';
     search.setAttribute('aria-label', '搜索使用说明');
     const links = document.createElement('div');
+    links.className = 'sora-help-links';
+    const searchStatus = document.createElement('p');
+    searchStatus.className = 'sora-help-search-status';
+    searchStatus.setAttribute('role', 'status');
+    searchStatus.hidden = true;
+    const reader = document.createElement('section');
+    reader.className = 'sora-help-reader';
+    const outlineLabel = document.createElement('label');
+    outlineLabel.className = 'sora-help-outline';
+    outlineLabel.append('本章小节');
+    const outline = document.createElement('select');
+    outlineLabel.append(outline);
     const article = document.createElement('article');
     article.className = 'markdown-preview sora-help-content';
     article.tabIndex = 0;
+    const scrollToSection = anchor => {
+        const target = article.querySelector(`[id="${CSS.escape(anchor)}"]`);
+        if (!target) return;
+        for (let node = target.parentElement; node && node !== article; node = node.parentElement) {
+            if (node.tagName === 'DETAILS') node.open = true;
+        }
+        article.scrollTop += target.getBoundingClientRect().top - article.getBoundingClientRect().top - 12;
+    };
     const open = (id, anchor = '') => {
         const row = rows.find(item => item[2] === id) || rows[0];
         article.innerHTML = sanitizeEditorHtml(row[3]);
+        article.querySelector('.sora-help-chapters')?.remove();
+        SoraContentFormats.normalizeCallouts(article);
+        SoraContentFormats.normalizeFootnotes(article);
+        article.querySelectorAll('input[type="checkbox"]').forEach(input => { input.disabled = true; });
+        article.setAttribute('aria-label', row[1]);
+        outline.replaceChildren(new Option('回到本章开头', ''));
+        article.querySelectorAll('h2[id],h3[id]').forEach(heading => outline.append(new Option(heading.textContent, heading.id)));
         links.querySelectorAll('button').forEach(button => button.setAttribute('aria-current', button.dataset.helpId === row[2] ? 'page' : 'false'));
-        if (anchor) article.querySelector(`[id="${CSS.escape(anchor)}"]`)?.scrollIntoView({ block: 'start' });
+        if (anchor) scrollToSection(anchor);
         else article.scrollTop = 0;
     };
+    outline.onchange = () => { if (outline.value) scrollToSection(outline.value); else article.scrollTop = 0; };
+    const searchTexts = rows.map(row => {
+        const source = document.createElement('template'); source.innerHTML = row[3];
+        source.content.querySelector('.sora-help-chapters')?.remove();
+        return `${row[1]} ${source.content.textContent}`.toLocaleLowerCase();
+    });
     rows.forEach(row => {
         const button = document.createElement('button');
         button.type = 'button';
@@ -1276,9 +1353,13 @@ function openHelpManual() {
     });
     search.oninput = () => {
         const term = search.value.trim().toLocaleLowerCase();
+        let count = 0;
         links.querySelectorAll('button').forEach((button, index) => {
-            button.hidden = !`${rows[index][1]} ${rows[index][3]}`.toLocaleLowerCase().includes(term);
+            button.hidden = !searchTexts[index].includes(term);
+            if (!button.hidden) count++;
         });
+        searchStatus.hidden = !term;
+        searchStatus.textContent = count ? `找到 ${count} 个相关章节` : '没有匹配的章节，试试更短的关键词。';
     };
     article.addEventListener('click', event => {
         const link = event.target.closest('a[href]');
@@ -1287,18 +1368,15 @@ function openHelpManual() {
         if (!href.startsWith('sora-dir:') && !href.startsWith('#')) return;
         event.preventDefault();
         event.stopPropagation();
-        if (href.startsWith('#')) article.querySelector(`[id="${CSS.escape(href.slice(1))}"]`)?.scrollIntoView({ block: 'start' });
+        if (href.startsWith('#')) scrollToSection(href.slice(1));
         else {
             const [id, anchor] = href.slice(9).split('#');
             open(id, anchor);
         }
     });
-    const insert = document.createElement('button');
-    insert.type = 'button';
-    insert.textContent = '将完整说明插入当前作品…';
-    insert.onclick = insertHelpManual;
-    nav.append(search, links, insert);
-    wrapper.append(nav, article);
+    nav.append(search, searchStatus, links);
+    reader.append(outlineLabel, article);
+    wrapper.append(nav, reader);
     FeatureDialog.open('使用说明', wrapper);
     open(rows[0][2]);
 }

@@ -13,6 +13,8 @@ function removeSearchHighlights(html) {
  * 同步预览区域内容到隐藏的 textarea，并更新数据
  */
 function syncPreviewToTextarea() {
+    // 异步切换目录期间，旧 DOM 不能回写到新目录的数据。
+    if (isUpdating) return;
     if (markdownPreview && jiedianwords) {
         if (window.SoraEditor?.isComposing()) return;
         window.SoraContentFormats?.normalizeFootnotes(markdownPreview);
