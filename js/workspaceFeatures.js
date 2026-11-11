@@ -435,7 +435,8 @@ const DraftManager = (function() {
             const target = Array.from(document.querySelectorAll('.mulu')).find(el => el.getAttribute('data-dir-id') === draft.selectedDirId)
                 || document.querySelector('.mulu');
             if (target && typeof switchToDirectoryElement === 'function') {
-                await switchToDirectoryElement(target, { syncCurrent: false, scrollPreviewTop: true, forceRender: true });
+                if (DirectoryMetadata.get(target.dataset.dirId).disabled) await selectFirstRootDirectory();
+                else await switchToDirectoryElement(target, { syncCurrent: false, scrollPreviewTop: true, forceRender: true });
             }
             markUnsavedChanges();
             setStatus('草稿已恢复', `恢复时间：${new Date(draft.updatedAt).toLocaleString()}`);
@@ -780,7 +781,7 @@ const DirectoryHistory = (function() {
             const target = Array.from(document.querySelectorAll('.mulu')).find(el => el.getAttribute('data-dir-id') === state.selectedDirId)
                 || document.querySelector('.mulu');
             if (target && typeof switchToDirectoryElement === 'function') {
-                await switchToDirectoryElement(target, { syncCurrent: false, scrollPreviewTop: true, forceRender: true });
+                await switchToDirectoryElement(target, { syncCurrent: false, scrollPreviewTop: true, forceRender: true, categoryContext: true });
             } else {
                 currentMuluName = null;
                 if (jiedianwords) jiedianwords.value = '';

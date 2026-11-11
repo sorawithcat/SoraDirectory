@@ -30,7 +30,7 @@
 
     function key() {
         const dir = currentMuluName && document.getElementById(currentMuluName)?.getAttribute('data-dir-id');
-        return dir ? `${window.SoraDocumentIdentity?.get?.().id || 'document'}:${dir}` : '';
+        return dir && !window.DirectoryMetadata?.get(dir).disabled ? `${window.SoraDocumentIdentity?.get?.().id || 'document'}:${dir}` : '';
     }
     function inside(range) {
         return !!range && range.startContainer.isConnected && range.endContainer.isConnected &&
@@ -293,10 +293,10 @@
         setRange(range); updateState();
     }
     function exitInline(event, range) {
-        if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey || !['Escape', 'ArrowLeft', 'ArrowRight'].includes(event.key)) return false;
+        if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey || !['Escape', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return false;
         let target = null, exitBefore = false;
         for (const node of inlineAncestors(range)) {
-            const before = event.key === (getComputedStyle(node).direction === 'rtl' ? 'ArrowRight' : 'ArrowLeft');
+            const before = event.key === 'ArrowUp' || event.key === (getComputedStyle(node).direction === 'rtl' ? 'ArrowRight' : 'ArrowLeft');
             const remaining = document.createRange(); remaining.selectNodeContents(node);
             if (before) remaining.setEnd(range.startContainer, range.startOffset);
             else remaining.setStart(range.startContainer, range.startOffset);
@@ -487,6 +487,67 @@
         } else range.insertNode(node);
         const after = paragraphAfter(node);
         const next = document.createRange(); next.selectNodeContents(after); next.collapse(true); setRange(next);
+    }
+
+    function pasteFragment(range, holder) {
+        const hasBlocks = holder.querySelector('p,div,h1,h2,h3,h4,h5,h6,pre,table,details,figure,ul,ol,blockquote');
+        if (hasBlocks) prepareBlockRange(range);
+        range.deleteContents();
+        const fragment = document.createDocumentFragment(); fragment.append(...holder.childNodes);
+        let last = fragment.lastChild;
+        if (!last) return;
+        const block = hasBlocks && element(range.startContainer)?.closest('p,h1,h2,h3,h4,h5,h6');
+        if (block) {
+            const tail = document.createRange(); tail.selectNodeContents(block); tail.setStart(range.startContainer, range.startOffset);
+            const suffix = cloneShell(block); suffix.append(tail.extractContents());
+            // 首尾普通段落与粘贴位置衔接，保留剪贴板内部的段落边界。
+            const first = fragment.firstChild;
+            if (first.nodeType === Node.ELEMENT_NODE && first.tagName === block.tagName && !first.attributes.length) {
+                block.append(...first.childNodes);
+                first.remove();
+                if (last === first) last = block;
+            }
+            block.after(fragment);
+            last.after(suffix);
+            if (last !== block && last.nodeType === Node.ELEMENT_NODE && last.tagName === suffix.tagName && !last.attributes.length) {
+                range.selectNodeContents(last); range.collapse(false);
+                last.append(...suffix.childNodes); suffix.remove();
+            } else {
+                range.selectNodeContents(last); range.collapse(false);
+                if (!suffix.hasChildNodes()) suffix.remove();
+            }
+            if (!block.hasChildNodes() && last !== block) block.remove();
+        } else {
+            range.insertNode(fragment);
+            if (hasBlocks && last.nodeType === Node.ELEMENT_NODE && !last.matches('img,video,hr,table,pre,details,figure')) range.selectNodeContents(last);
+            else range.setStartAfter(last);
+            range.collapse(false);
+        }
+        setRange(range);
+    }
+    function exitBlock(event, range) {
+        if (!range?.collapsed || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey ||
+            !['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Escape'].includes(event.key)) return false;
+        const target = element(range.startContainer)?.closest('pre,table,blockquote,details,.sora-callout,dl,figure,ul,ol');
+        if (!target || !root.contains(target)) return false;
+        const before = event.key === 'ArrowLeft' || event.key === 'ArrowUp';
+        const remaining = document.createRange(); remaining.selectNodeContents(target);
+        if (before) remaining.setEnd(range.startContainer, range.startOffset);
+        else remaining.setStart(range.startContainer, range.startOffset);
+        const fragment = remaining.cloneContents();
+        fragment.querySelectorAll('.code-lang-label,.sora-callout-kind,[data-footnote-backlink]').forEach(node => node.remove());
+        if (event.key !== 'Escape' && (fragment.textContent.replace(/\u200B/g, '') || fragment.querySelector('img,video,br'))) return false;
+        event.preventDefault(); event.stopImmediatePropagation();
+        const token = capture(range);
+        transaction('移出内容块', token, () => {
+            let paragraph = before ? target.previousElementSibling : target.nextElementSibling;
+            if (!paragraph?.matches('p,div:not([class])') || !paragraph.isContentEditable) {
+                paragraph = document.createElement('p'); paragraph.append(document.createElement('br'));
+                if (before) target.before(paragraph); else target.after(paragraph);
+            }
+            const next = document.createRange(); next.selectNodeContents(paragraph); next.collapse(!before); setRange(next);
+        }, { refreshWidgets: false });
+        return true;
     }
 
     function listKind(list) { return list.classList.contains('contains-task-list') ? 'task-list' : list.tagName === 'OL' ? 'ordered-list' : 'unordered-list'; }
@@ -1033,7 +1094,7 @@
     root.addEventListener('keydown', event => {
         if (event.isComposing || composing || event.keyCode === 229) return;
         const range = currentRange();
-        if (exitInline(event, range)) return;
+        if (exitInline(event, range) || exitBlock(event, range)) return;
         const ctrl = event.ctrlKey || event.metaKey;
         if (ctrl && !event.altKey && event.key.toLowerCase() === 'd' && element(range?.startContainer)?.closest('kbd')) {
             event.preventDefault(); event.stopImmediatePropagation();
@@ -1072,7 +1133,7 @@
     });
     document.addEventListener('selectionchange', () => { if (!composing && !restoring) { remember(); updateState(); } });
     document.addEventListener('sora:document-loaded', () => { generation++; savedRange = null; inputBefore = null; histories.clear(); });
-    window.SoraEditor = { capture, captureElement, transaction, onRender, remember, undo, collectMediaIds, isComposing: () => composing, flushInput, didSync };
+    window.SoraEditor = { capture, captureElement, transaction, insertBlock, pasteFragment, onRender, remember, undo, collectMediaIds, isComposing: () => composing, flushInput, didSync };
     window.SoraFormatting = { apply, definitions, state, openMore, updateState };
     mount();
 })();

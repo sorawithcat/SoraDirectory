@@ -408,6 +408,7 @@ function handleDirectoryTreeKeydown(event) {
 function bindMuluEvents(muluElement, mulufileIndex = -1) {
     let clickTimer = null;
     const level = Number.parseInt(muluElement.getAttribute('data-level'), 10) || 0;
+    muluElement.setAttribute('aria-disabled', String(!!window.DirectoryMetadata?.get(muluElement.dataset.dirId).disabled));
     muluElement.setAttribute('role', 'treeitem');
     muluElement.setAttribute('aria-level', String(level + 1));
     muluElement.setAttribute('aria-selected', muluElement.classList.contains('select') ? 'true' : 'false');
@@ -470,6 +471,7 @@ function bindMuluEvents(muluElement, mulufileIndex = -1) {
             }
             const done = typeof switchToDirectoryElement === 'function'
                 ? switchToDirectoryElement(muluElement, {
+                    categoryContext: true,
                     syncCurrent: true,
                     viewMode: currentMuluName === muluElement.id ? 'preserve' : 'restore',
                     forceRender: false

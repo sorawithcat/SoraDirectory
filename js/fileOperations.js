@@ -1749,12 +1749,16 @@ function selectFirstRootDirectory() {
         let mulu = allMulusForSelect[i];
 
         let parentId = mulu.getAttribute("data-parent-id");
-        if (!parentId || parentId === "mulu") {
+        if (!window.DirectoryMetadata?.get(mulu.dataset.dirId).disabled) {
             firstRootMulu = mulu;
             break;
         }
     }
+    if (!firstRootMulu && allMulusForSelect.length) {
+        return switchToDirectoryElement(allMulusForSelect[0], { syncCurrent: false, forceRender: true, categoryContext: true });
+    }
     if (firstRootMulu) {
+        expandParentDirectories(firstRootMulu);
         if (typeof switchToDirectoryElement === 'function') {
             return switchToDirectoryElement(firstRootMulu, { syncCurrent: false, scrollPreviewTop: true, forceRender: true });
         }
@@ -3278,6 +3282,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
     // 移除可能的扩展名
     baseName = baseName.replace(/\.(json|txt|xml|csv|html|encrypted)$/i, '');
     const sourceData = Array.isArray(exportData) ? exportData : mulufile;
+    const directoryMetadata = exportScope?.documentState?.metadata || DirectoryMetadata.serialize();
     const publicationSettings = window.PublicationSettings && typeof window.PublicationSettings.resolve === 'function'
         ? window.PublicationSettings.resolve(sourceData, typeof currentMuluName !== 'undefined' ? currentMuluName : '', baseName, exportScope?.publicationSettings)
         : {
@@ -3405,7 +3410,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             }
         });
         // 构建树形结构
-        Object.values(idMap).forEach(item => {
+        muluData.filter(row => row.length === 4).map(row => idMap[row[2]]).forEach(item => {
             if (item.parentId === 'mulu') {
                 tree.push(item);
             } else if (idMap[item.parentId]) {
@@ -3434,6 +3439,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             const palette = getDirectoryLevelPalette(level);
             html += `<div class="mulu${hasChildren ? ' has-children expanded' : ''}" 
                          data-dir-id="${escapeHtml(item.id)}" 
+                         aria-disabled="${directoryMetadata[item.id]?.disabled === true}"
                          data-level="${level}"
                          role="treeitem"
                          tabindex="-1"
@@ -4108,6 +4114,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             display: none;
         }
         .content-area {
+            min-width: 0;
             flex: 1;
             display: flex;
             flex-direction: column;
@@ -4890,6 +4897,8 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         }
 
         function selectDirectory(dirId, toggleExpand = false, options = {}) {
+            const requested = document.querySelector('[data-dir-id="' + escapeCssSelectorValue(dirId) + '"]');
+            if (!requested || requested.getAttribute('aria-disabled') === 'true') return false;
             methodDebugLog('[Sora方法] selectDirectory被调用, dirId:', dirId);
             const previousDirId = currentDirId;
             const viewMode = options.viewMode || (previousDirId === dirId ? 'preserve' : 'restore');
@@ -7039,7 +7048,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             const menu = document.getElementById('contentOutlineMenu');
             const details = document.getElementById('contentOutline');
             if (!contentBody || !menu || !details) return;
-            const headings = Array.from(contentBody.querySelectorAll('h1, h2, h3, h4, h5, h6')).filter(function(heading) { return heading.id; });
+            const headings = Array.from(contentBody.querySelectorAll('h1, h2, h3, h4, h5, h6')).filter(function(heading) { return heading.id && heading.textContent.trim(); });
             menu.innerHTML = '';
             details.hidden = headings.length === 0;
             headings.forEach(function(heading) {
@@ -7449,7 +7458,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         let exportSearchTimer = null;
 
         function normalizeExportSearchText(value) {
-            return String(value || '').replace(/\s+/g, ' ').trim().toLocaleLowerCase();
+            return String(value || '').replace(/\\s+/g, ' ').trim().toLocaleLowerCase();
         }
 
         function buildExportSearchEntry(element) {
@@ -7458,7 +7467,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             const temp = document.createElement('div');
             temp.innerHTML = getContent(dirId) || '';
             temp.querySelectorAll('script, style, template').forEach(function(item) { item.remove(); });
-            const text = String(temp.textContent || '').replace(/\s+/g, ' ').trim();
+            const text = String(temp.textContent || '').replace(/\\s+/g, ' ').trim();
             return {
                 dirId: dirId,
                 title: title,
@@ -7474,7 +7483,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         }
 
         function scheduleExportSearchIndexBuild() {
-            const elements = Array.from(document.querySelectorAll('.mulu'));
+            const elements = Array.from(document.querySelectorAll('.mulu:not([aria-disabled="true"])'));
             exportSearchIndex.length = 0;
             exportSearchIndexedCount = 0;
             exportSearchTotalCount = elements.length;
@@ -7540,6 +7549,10 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             const after = node.splitText(index);
             after.deleteData(0, query.length);
             after.parentNode.insertBefore(mark, after);
+            for (let parent = mark.parentElement; parent && parent !== contentBody; parent = parent.parentElement) {
+                if (parent.matches('details')) parent.open = true;
+                if (parent.matches('[hidden]')) parent.hidden = false;
+            }
             mark.scrollIntoView({ behavior: 'smooth', block: 'center' });
             return true;
         }
@@ -8462,8 +8475,13 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
         const initialRouteTarget = initialRoute && initialRoute.dirId
             ? document.querySelector('[data-dir-id="' + escapeCssSelectorValue(initialRoute.dirId) + '"]')
             : null;
-        const initialDirId = initialRouteTarget ? initialRoute.dirId : defaultDirId;
-        const initialAnchorId = initialRouteTarget ? initialRoute.anchorId : '';
+        const preferred = initialRouteTarget || document.querySelector('[data-dir-id="' + escapeCssSelectorValue(defaultDirId) + '"]');
+        const available = Array.from(document.querySelectorAll('.mulu'));
+        const initialTarget = preferred?.getAttribute('aria-disabled') !== 'true' && preferred
+            || available.slice(Math.max(0, available.indexOf(preferred))).find(node => node.getAttribute('aria-disabled') !== 'true')
+            || available.find(node => node.getAttribute('aria-disabled') !== 'true');
+        const initialDirId = initialTarget?.dataset.dirId || '';
+        const initialAnchorId = initialRouteTarget === initialTarget ? initialRoute.anchorId : '';
         (function applyInitialTreeState() {
             const mode = SORA_PUBLICATION.initialTreeState || 'expanded';
             document.querySelectorAll('.mulu.has-children').forEach(function(node) {

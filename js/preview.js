@@ -14,7 +14,7 @@ function removeSearchHighlights(html) {
  */
 function syncPreviewToTextarea() {
     // 异步切换目录期间，旧 DOM 不能回写到新目录的数据。
-    if (isUpdating) return;
+    if (isUpdating || (currentMuluName && window.DirectoryMetadata?.get(document.getElementById(currentMuluName)?.dataset.dirId).disabled)) return;
     if (markdownPreview && jiedianwords) {
         if (window.SoraEditor?.isComposing()) return;
         window.SoraContentFormats?.normalizeFootnotes(markdownPreview);
@@ -401,6 +401,8 @@ async function navigateToDirectoryInternalLink(dirId, anchorId) {
 
 async function switchToDirectoryElement(target, options = {}) {
     if (!target) return false;
+    const disabled = !!window.DirectoryMetadata?.get(target.dataset.dirId).disabled;
+    if (disabled && !options.categoryContext) return false;
     const syncCurrent = options.syncCurrent !== false;
     const forceRender = options.forceRender === true;
     const previous = currentMuluName ? document.getElementById(currentMuluName) : null;
@@ -426,7 +428,7 @@ async function switchToDirectoryElement(target, options = {}) {
     target.setAttribute('tabindex', '0');
 
     if (jiedianwords) {
-        jiedianwords.value = findMulufileData(target);
+        jiedianwords.value = disabled ? '' : findMulufileData(target);
     }
     isUpdating = true;
     try {
@@ -434,6 +436,8 @@ async function switchToDirectoryElement(target, options = {}) {
     } finally {
         isUpdating = false;
     }
+    markdownPreview.contentEditable = String(!disabled);
+    markdownPreview.setAttribute('aria-label', disabled ? '此目录仅用于分类，可在右键菜单启用' : '正文编辑器');
     DirectoryViewState.restore(targetDirId, { mode: viewMode });
     if (typeof DirectoryNavigation !== 'undefined') {
         if (targetDirId) DirectoryNavigation.track(targetDirId);
@@ -557,6 +561,7 @@ async function updateMarkdownPreview(options = {}) {
 
         // 更新DOM（使用 requestAnimationFrame 优化）
         const processAfterDOMUpdate = () => {
+            SoraContentFormats.normalizeMediaHeadings(markdownPreview);
             assignHeadingAutoIds(markdownPreview);
             if (window.SoraReusableBlocks) window.SoraReusableBlocks.renderEditor(markdownPreview);
             // 为每个视频设置 data-video-index 属性，用于后续恢复
@@ -891,6 +896,7 @@ if (markdownPreview) {
         const contents = range.cloneContents();
         const tempDiv = document.createElement('div');
         tempDiv.appendChild(contents);
+        SoraContentFormats.forStorage(tempDiv);
         e.clipboardData.setData('text/html', tempDiv.innerHTML);
         e.clipboardData.setData('text/plain', range.toString());
         e.preventDefault();
@@ -899,121 +905,60 @@ if (markdownPreview) {
 if (markdownPreview) {
     markdownPreview.addEventListener("paste", function(e) {
         e.preventDefault();
-        const clipboardData = e.clipboardData || window.clipboardData;
-        const items = clipboardData.items;
-        let hasImage = false;
-        for (let i = 0; i < items.length; i++) {
-            if (items[i].type.indexOf('image') !== -1) {
-                hasImage = true;
-                const file = items[i].getAsFile();
-                (async function() {
-                    const caption = await customPrompt('输入图片图注（可选，直接按确定跳过，取消则不上传）:', '');
-                    if (caption === null) {
-                        return;
+        const token = SoraEditor.capture();
+        if (!token || !markdownPreview.isContentEditable) return;
+        const clipboard = e.clipboardData;
+        const images = Array.from(clipboard.items).filter(item => item.type.startsWith('image/'));
+        if (images.length) {
+            const files = images.map(item => item.getAsFile());
+            const pending = (async () => {
+                const caption = await customPrompt('输入图片图注（可选，直接按确定跳过，取消则不上传）:', '');
+                if (caption === null) return;
+                const nodes = [];
+                for (const file of files) nodes.push(await createImageImportNode(file, caption));
+                SoraEditor.transaction('粘贴图片', token, range => {
+                    for (const node of nodes) {
+                        SoraEditor.insertBlock(range, node);
+                        range = window.getSelection().getRangeAt(0).cloneRange();
                     }
-                    const optimizedImage = typeof optimizeImageFile === 'function'
-                        ? await optimizeImageFile(file)
-                        : file;
-                    const imageStorageId = typeof MediaStorage !== 'undefined'
-                        ? await MediaStorage.save(optimizedImage, 'image', null, { deduplicate: true })
-                        : null;
-                    const imageData = imageStorageId
-                        ? await MediaStorage.getMediaAsUrl(imageStorageId)
-                        : URL.createObjectURL(optimizedImage);
-                    const img = document.createElement('img');
-                    img.src = imageData;
-                    img.alt = '粘贴的图片';
-                    if (caption) img.title = caption;
-                    if (imageStorageId) {
-                        img.setAttribute('data-media-storage-id', imageStorageId);
-                    }
-                    limitImageSize(img);
-                    img.setAttribute('data-click-attached', 'true');
-                    img.addEventListener('click', function(ev) {
-                        ev.stopPropagation();
-                        showImageViewer(imageData);
-                    });
-                    let imageContainer;
-                    if (caption) {
-                        imageContainer = document.createElement('figure');
-                        imageContainer.appendChild(img);
-                        const figcaption = document.createElement('figcaption');
-                        figcaption.textContent = caption;
-                        imageContainer.appendChild(figcaption);
-                    } else {
-                        imageContainer = img;
-                    }
-                    const selection = window.getSelection();
-                    if (selection.rangeCount > 0) {
-                        const range = selection.getRangeAt(0);
-                        range.deleteContents();
-                        range.insertNode(imageContainer);
-                        const br = document.createElement('br');
-                        range.setStartAfter(imageContainer);
-                        range.insertNode(br);
-                    } else {
-                        markdownPreview.appendChild(imageContainer);
-                        markdownPreview.appendChild(document.createElement('br'));
-                    }
-                    syncPreviewToTextarea();
-                })().catch(error => {
-                    console.error('粘贴图片失败:', error);
-                    showToast(`粘贴图片失败：${error.message || error}`, 'error', 2500);
                 });
-                break;
-            }
+            })();
+            window.__soraMediaImportPromise = pending;
+            pending.catch(error => {
+                console.error('粘贴图片失败:', error);
+                showToast('粘贴图片失败：' + (error.message || error), 'error', 2500);
+            }).finally(() => {
+                if (window.__soraMediaImportPromise === pending) window.__soraMediaImportPromise = null;
+            });
+            return;
         }
-        if (!hasImage) {
-            const selection = window.getSelection();
-            if (selection.rangeCount === 0) return;
-            const range = selection.getRangeAt(0);
-            let html = clipboardData.getData('text/html');
-            const text = clipboardData.getData('text/plain');
-            if (html && html.trim()) {
-                if (typeof sanitizeEditorHtml === 'function') {
-                    html = sanitizeEditorHtml(html);
+        const html = clipboard.getData('text/html');
+        const text = clipboard.getData('text/plain');
+        SoraEditor.transaction('粘贴', token, range => {
+            const holder = document.createElement('div');
+            if (html.trim()) {
+                holder.innerHTML = sanitizeEditorHtml(html);
+                SoraContentFormats.forStorage(holder);
+                if (holder.querySelector('p,div,table,pre,details,figure,ul,ol,h1,h2,h3,h4,h5,h6')) {
+                    Array.from(holder.childNodes).filter(node => node.nodeType === Node.TEXT_NODE && !node.textContent.trim()).forEach(node => node.remove());
                 }
-                range.deleteContents();
-                const tempDiv = document.createElement('div');
-                tempDiv.innerHTML = html;
-                const fragment = document.createDocumentFragment();
-                let lastNode = null;
-                while (tempDiv.firstChild) {
-                    const node = tempDiv.firstChild;
-                    fragment.appendChild(node);
-                    lastNode = node;
+                // 剪贴板的单段包装不是用户输入的换行。
+                if (holder.children.length === 1 && holder.firstElementChild.matches('p,div') &&
+                    !holder.firstElementChild.querySelector('p,div,table,pre,details,figure,ul,ol,h1,h2,h3,h4,h5,h6')) {
+                    const wrapper = holder.firstElementChild;
+                    wrapper.replaceWith(...wrapper.childNodes);
                 }
-                range.insertNode(fragment);
-                const newRange = document.createRange();
-                if (lastNode) {
-                    if (lastNode.nodeType === Node.TEXT_NODE) {
-                        newRange.setStart(lastNode, lastNode.textContent.length);
-                        newRange.setEnd(lastNode, lastNode.textContent.length);
-                    } else {
-                        newRange.setStartAfter(lastNode);
-                        newRange.setEndAfter(lastNode);
-                    }
-                } else {
-                    newRange.setStart(range.startContainer, range.startOffset);
-                    newRange.collapse(true);
-                }
-                selection.removeAllRanges();
-                selection.addRange(newRange);
-            } else if (text) {
-                range.deleteContents();
-                const textNode = document.createTextNode(text);
-                range.insertNode(textNode);
-                range.setStartAfter(textNode);
-                range.collapse(true);
-                selection.removeAllRanges();
-                selection.addRange(range);
+            } else {
+                text.split(/\r?\n/).forEach((line, index) => {
+                    if (index) holder.append(document.createElement('br'));
+                    holder.append(document.createTextNode(line));
+                });
             }
-            setTimeout(() => {
-                syncPreviewToTextarea();
-            }, 10);
-        }
+            SoraEditor.pasteFragment(range, holder);
+        });
     });
 }
+
 jiedianwords.addEventListener("input", function () {
     if (!isUpdating) {
         updateMarkdownPreview();

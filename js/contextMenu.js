@@ -3,6 +3,8 @@
  * @param {MouseEvent} e - 鼠标事件对象
  */
 function rightMouseMenu(e) {
+    const target = currentMuluName && document.getElementById(currentMuluName);
+    document.querySelector('.toggleMuluEnabled').textContent = window.DirectoryMetadata.get(target?.dataset.dirId).disabled ? '启用目录' : '禁用目录';
     if (directoryClipboard && directoryClipboard.data) {
         pasteMulu.classList.remove("disabled");
     } else {
@@ -64,6 +66,10 @@ async function copyTextToClipboard(text) {
 }
 
 function markDirectoryStructureChanged() {
+    const rows = new Map(mulufile.filter(row => row.length === 4).map(row => [String(row[2]), row]));
+    const ordered = Array.from(document.querySelectorAll('.mulu')).map(node => rows.get(node.dataset.dirId)).filter(Boolean);
+    mulufile = [...ordered, ...mulufile.filter(row => row.length !== 4)];
+    rebuildMulufileIndex();
     if (typeof markUnsavedChanges === 'function') {
         markUnsavedChanges();
     }
@@ -235,10 +241,11 @@ function deleteAllChildren(parentId) {
         hideRightMouseMenu();
         if (!activeElement?.isConnected) {
             currentMuluName = null;
-            const next = nextCandidates.find(node => node.isConnected);
+            const next = nextCandidates.find(node => node.isConnected && !DirectoryMetadata.get(node.dataset.dirId).disabled)
+                || nextCandidates.find(node => node.isConnected);
             if (next) {
                 expandParentDirectories(next);
-                await switchToDirectoryElement(next, { syncCurrent: false, forceRender: true, viewMode: 'restore' });
+                await switchToDirectoryElement(next, { syncCurrent: false, forceRender: true, viewMode: 'restore', categoryContext: true });
             } else {
                 RemoveOtherSelect();
                 jiedianwords.value = '';
@@ -356,6 +363,7 @@ function copyDirectoryData(dirId, includeChildren) {
     const copied = {
         name: muluData[1],
         content: muluData[3],
+        metadata: DirectoryMetadata.get(dirId),
         children: []
     };
     if (includeChildren) {
@@ -445,6 +453,7 @@ function pasteDirectoryData(data, parentDirId, insertAfterRef = null) {
     } else {
         mulu.appendChild(newMulu);
     }
+    DirectoryMetadata.set(newDirId, data.metadata || {}, { markUnsaved: false });
     setParentColorBall(newMulu);
     bindMuluEvents(newMulu);
     if (data.children && data.children.length > 0) {
@@ -608,4 +617,28 @@ quickDuplicateWithoutChildren.addEventListener("click", function() {
     DuplicateMuluHints();
     showToast("已快速复制目录（不含子目录）", "success", 2000);
     hideRightMouseMenu();
+});
+
+document.querySelector('.toggleMuluEnabled').addEventListener('click', async () => {
+    const target = currentMuluName && document.getElementById(currentMuluName);
+    if (!target) return;
+    syncPreviewToTextarea();
+    DirectoryHistory.record('切换目录启用状态');
+    const id = target.dataset.dirId;
+    const record = DirectoryMetadata.get(id);
+    record.disabled = !record.disabled;
+    DirectoryMetadata.set(id, record);
+    target.setAttribute('aria-disabled', String(record.disabled));
+    hideRightMouseMenu();
+    const directories = Array.from(document.querySelectorAll('.mulu'));
+    const next = record.disabled
+        ? directories.slice(directories.indexOf(target) + 1).find(node => !DirectoryMetadata.get(node.dataset.dirId).disabled)
+            || directories.find(node => !DirectoryMetadata.get(node.dataset.dirId).disabled)
+        : target;
+    if (next) {
+        expandParentDirectories(next);
+        await switchToDirectoryElement(next, { syncCurrent: false, forceRender: true });
+    } else {
+        await switchToDirectoryElement(target, { syncCurrent: false, forceRender: true, categoryContext: true });
+    }
 });

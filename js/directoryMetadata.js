@@ -19,6 +19,7 @@
             });
         }
         return {
+            disabled: source.disabled === true,
             tags: Array.from(new Set((Array.isArray(source.tags) ? source.tags : String(source.tags || '').split(','))
                 .map(tag => normalizeText(tag, 30))
                 .filter(Boolean))).slice(0, 20),
@@ -31,7 +32,7 @@
 
     function isEmpty(record) {
         const item = normalizeRecord(record);
-        return !item.tags.length && !item.status && !item.date && !item.priority && Object.keys(item.custom).length === 0;
+        return !item.disabled && !item.tags.length && !item.status && !item.date && !item.priority && Object.keys(item.custom).length === 0;
     }
 
     function get(dirId) {
@@ -219,6 +220,7 @@
         save.textContent = '保存字段';
         save.addEventListener('click', () => {
             set(id, {
+                disabled: get(id).disabled,
                 tags: tags.value.split(/[,，]/),
                 status: status.value,
                 priority: priority.value,

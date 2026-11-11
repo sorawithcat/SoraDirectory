@@ -234,6 +234,7 @@ const SoraServerPackage = (function() {
                     const item = document.createElement('div');
                     item.className = 'mulu' + (descendants.length ? ' has-children expanded' : '');
                     item.dataset.dirId = row.id;
+                    item.setAttribute('aria-disabled', String(row.disabled === true));
                     item.dataset.level = String(level);
                     item.setAttribute('role', 'treeitem');
                     item.tabIndex = -1;
@@ -333,6 +334,7 @@ echo json_encode(['format' => $site['format'], 'config' => $site['config'], 'run
             });
             const source = metadata[id] || {};
             const entry = { format: FORMAT, documentId: identity, id, name: String(row[1]), parentId: String(source.parentId || row[0]), order: source.order || 0,
+                disabled: scope.documentState.metadata[id]?.disabled === true,
                 palette: source.palette || {}, html: content.get(id) || '', mediaData: references, mediaAssets: assets };
             const key = await fingerprint(new Blob([identity, '\n', id]));
             packed.set(`content/${key}.json`, new Blob([JSON.stringify(entry)], { type: 'application/json' }));

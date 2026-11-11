@@ -1,6 +1,10 @@
 (function() {
     'use strict';
     const styles = `
+    :is(.markdown-preview,.content-body) { min-width:0; max-width:100%; box-sizing:border-box; overflow-x:auto; }
+    .content-area, .wordsbox, .markdown-editor-container { min-width:0; }
+    .mulu[aria-disabled="true"] { opacity:.65; cursor:default; }
+
     :is(.markdown-preview,.content-body) .sora-callout { margin:1em 0; padding:14px 16px; border:1px solid #94a3b8; border-radius:8px; background:#f1f5f9; color:#172033; }
     :is(.markdown-preview,.content-body) .sora-callout[data-callout="warning"] { background:#fff7ed; border-color:#c2410c; }
     :is(.markdown-preview,.content-body) .sora-callout[data-callout="danger"] { background:#fff1f2; border-color:#be123c; }
@@ -112,7 +116,20 @@
         entries.forEach(note => { if (!retained.has(note)) note.remove(); });
         container.querySelectorAll('[data-sora-footnotes]').forEach(section => { if (!section.querySelector('li[data-footnote-id]')) section.remove(); });
     }
+    function normalizeMediaHeadings(container) {
+        container.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach(heading => {
+            if (!heading.querySelector('img,video')) return;
+            const copy = heading.cloneNode(true);
+            copy.querySelectorAll('figcaption').forEach(node => node.remove());
+            if (copy.textContent.trim()) return;
+            const paragraph = document.createElement('div');
+            if (heading.id && !heading.hasAttribute('data-auto-heading-id')) paragraph.id = heading.id;
+            paragraph.append(...heading.childNodes);
+            heading.replaceWith(paragraph);
+        });
+    }
     function forStorage(container) {
+        normalizeMediaHeadings(container);
         container.querySelectorAll('[data-sora-caret]').forEach(node => {
             const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
             while (walker.nextNode()) walker.currentNode.textContent = walker.currentNode.textContent.replace(/\u200B/g, '');
@@ -134,6 +151,6 @@
             label.setAttribute('contenteditable', 'false');
         });
     }
-    window.SoraContentFormats = { styles, id, normalizeFootnotes, normalizeCallouts, forStorage };
+    window.SoraContentFormats = { normalizeMediaHeadings, styles, id, normalizeFootnotes, normalizeCallouts, forStorage };
     const style = document.createElement('style'); style.id = 'soraContentFormatStyles'; style.textContent = styles; document.head.append(style);
 })();

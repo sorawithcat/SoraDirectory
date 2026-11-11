@@ -295,6 +295,7 @@ function handleDrop(e) {
         }
     }
     if (typeof markUnsavedChanges === 'function') markUnsavedChanges();
+    markDirectoryStructureChanged();
     showToast("目录已移动", "success", 1500);
     handleDragEnd(e);
 }

@@ -83,7 +83,7 @@ function createNewDirectory(name, asChild = false) {
         }
     }
     bindMuluEvents(newMulu);
-    if (typeof markUnsavedChanges === 'function') markUnsavedChanges();
+    markDirectoryStructureChanged();
     if (hasDuplicate) {
         showToast("已存在同名目录", "warning", 2500);
     }
