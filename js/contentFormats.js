@@ -3,6 +3,8 @@
     const styles = `
     :is(.markdown-preview,.content-body) { min-width:0; max-width:100%; box-sizing:border-box; overflow-x:auto; }
     .content-area, .wordsbox, .markdown-editor-container { min-width:0; }
+    :is(.markdown-preview,.content-body) .sora-image-scroll { display:block; width:100%; max-width:100%; min-width:0; overflow-x:auto; overscroll-behavior-x:contain; }
+    :is(.markdown-preview,.content-body) .sora-image-scroll > img { max-width:none !important; }
     .mulu[aria-disabled="true"] { opacity:.65; cursor:default; }
 
     :is(.markdown-preview,.content-body) .sora-callout { margin:1em 0; padding:14px 16px; border:1px solid #94a3b8; border-radius:8px; background:#f1f5f9; color:#172033; }
@@ -116,6 +118,17 @@
         entries.forEach(note => { if (!retained.has(note)) note.remove(); });
         container.querySelectorAll('[data-sora-footnotes]').forEach(section => { if (!section.querySelector('li[data-footnote-id]')) section.remove(); });
     }
+    function wrapImage(img) {
+        if (img.parentElement?.classList.contains('sora-image-scroll')) return img.parentElement;
+        const scroll = document.createElement('span');
+        scroll.className = 'sora-image-scroll';
+        img.replaceWith(scroll);
+        scroll.append(img);
+        return scroll;
+    }
+    function normalizeImages(container) {
+        container.querySelectorAll('img').forEach(wrapImage);
+    }
     function normalizeMediaHeadings(container) {
         container.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach(heading => {
             if (!heading.querySelector('img,video')) return;
@@ -130,6 +143,7 @@
     }
     function forStorage(container) {
         normalizeMediaHeadings(container);
+        normalizeImages(container);
         container.querySelectorAll('[data-sora-caret]').forEach(node => {
             const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
             while (walker.nextNode()) walker.currentNode.textContent = walker.currentNode.textContent.replace(/\u200B/g, '');
@@ -151,6 +165,6 @@
             label.setAttribute('contenteditable', 'false');
         });
     }
-    window.SoraContentFormats = { normalizeMediaHeadings, styles, id, normalizeFootnotes, normalizeCallouts, forStorage };
+    window.SoraContentFormats = { wrapImage, normalizeImages, normalizeMediaHeadings, styles, id, normalizeFootnotes, normalizeCallouts, forStorage };
     const style = document.createElement('style'); style.id = 'soraContentFormatStyles'; style.textContent = styles; document.head.append(style);
 })();

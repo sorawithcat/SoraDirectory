@@ -287,7 +287,7 @@ function createImageMediaNode(src, storageId, displayName, caption = '') {
         ev.stopPropagation();
         showImageViewer(src);
     });
-    return wrapMediaWithCaption(img, caption);
+    return wrapMediaWithCaption(SoraContentFormats.wrapImage(img), caption);
 }
 
 function createVideoMediaNode(src, storageId, displayName, caption = '') {
@@ -654,6 +654,8 @@ let currentContextMediaType = null; // 'image' | 'video'
  */
 async function editMediaCaption(media, type = 'image') {
     if (!media) return;
+    const token = SoraEditor.captureElement(media);
+    const mediaContainer = media.closest('.sora-image-scroll') || media;
     const isVideo = type === 'video';
     const promptText = isVideo ? '编辑视频注释（留空可删除注释）:' : '编辑图片图注（留空可删除图注）:';
     const figure = media.closest('figure');
@@ -666,69 +668,59 @@ async function editMediaCaption(media, type = 'image') {
     }
     const newCaption = await customPrompt(promptText, currentCaption);
     if (newCaption === null) return;
-    if (figure) {
-        // 已有 figure 包装
-        let figcaption = figure.querySelector('figcaption');
-        if (newCaption) {
-            // 添加或更新注释
-            if (!figcaption) {
-                figcaption = document.createElement('figcaption');
-                figure.appendChild(figcaption);
+    SoraEditor.transaction('编辑图注', token, () => {
+        if (figure) {
+            // 已有 figure 包装
+            let figcaption = figure.querySelector('figcaption');
+            if (newCaption) {
+                // 添加或更新注释
+                if (!figcaption) {
+                    figcaption = document.createElement('figcaption');
+                    figure.appendChild(figcaption);
+                }
+                figcaption.textContent = newCaption;
+                media.title = newCaption;
+            } else {
+                // 移除注释，把媒体移出 figure
+                if (figcaption) {
+                    figcaption.remove();
+                }
+                if (figure.parentNode) {
+                    figure.parentNode.insertBefore(mediaContainer, figure);
+                    figure.remove();
+                }
+                media.title = '';
             }
-            figcaption.textContent = newCaption;
-            media.title = newCaption;
         } else {
-            // 移除注释，把媒体移出 figure
-            if (figcaption) {
-                figcaption.remove();
+            // 没有 figure 容器
+            if (newCaption && media.parentNode) {
+                const newFigure = document.createElement('figure');
+                mediaContainer.parentNode.insertBefore(newFigure, mediaContainer);
+                newFigure.appendChild(mediaContainer);
+                const figcaption = document.createElement('figcaption');
+                figcaption.textContent = newCaption;
+                newFigure.appendChild(figcaption);
+                media.title = newCaption;
             }
-            if (figure.parentNode) {
-                figure.parentNode.insertBefore(media, figure);
-                figure.remove();
-            }
-            media.title = '';
         }
-    } else {
-        // 没有 figure 容器
-        if (newCaption && media.parentNode) {
-            const newFigure = document.createElement('figure');
-            media.parentNode.insertBefore(newFigure, media);
-            newFigure.appendChild(media);
-            const figcaption = document.createElement('figcaption');
-            figcaption.textContent = newCaption;
-            newFigure.appendChild(figcaption);
-            media.title = newCaption;
-        }
-    }
-    syncPreviewToTextarea();
+    });
 }
 /**
- * 删除媒体元素（连同 figure 一起删除，同时删除 IndexedDB 数据）
+ * 删除正文媒体及其包装；保留资源以支持撤销和其他引用
  * @param {HTMLImageElement|HTMLVideoElement} media - 媒体元素
  */
 async function deleteMediaElement(media) {
     if (!media) return;
-    // 获取存储 ID 并删除 IndexedDB 数据
-    const storageId = media.getAttribute('data-media-storage-id');
-    if (storageId && typeof MediaStorage !== 'undefined') {
-        try {
-            await MediaStorage.deleteMedia(storageId);
-            // 更新存储空间信息
-            if (typeof updateStorageInfo === 'function') {
-                updateStorageInfo();
-            }
-        } catch (err) {
-            console.error('删除媒体数据失败:', err);
-        }
-    }
-    const figure = media.closest('figure');
-    if (figure) {
-        figure.remove();
-    } else {
-        media.remove();
-    }
-    syncPreviewToTextarea();
+    const token = SoraEditor.captureElement(media);
+    SoraEditor.transaction('删除媒体', token, () => {
+        // 正文删除保留媒体资源，供撤销及其他引用继续使用。
+        const container = media.closest('figure') || media.closest('.sora-image-scroll') || media;
+        const range = document.createRange(); range.setStartBefore(container); range.collapse(true);
+        container.remove();
+        const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+    });
 }
+
 /**
  * 删除压缩包元素（同时删除 IndexedDB 数据）
  * @param {HTMLElement} archiveElement - 压缩包元素
@@ -926,7 +918,7 @@ function getSelectedMedia(range, key) {
             if (childAtOffset.tagName === 'VIDEO') {
                 return { element: childAtOffset, type: 'video' };
             }
-            if (childAtOffset.tagName === 'FIGURE') {
+            if (childAtOffset.matches?.('figure,.sora-image-scroll')) {
                 const figImg = childAtOffset.querySelector('img');
                 if (figImg) return { element: figImg, type: 'image' };
                 const figVideo = childAtOffset.querySelector('video');
@@ -938,7 +930,7 @@ function getSelectedMedia(range, key) {
             if (prevChild) {
                 if (prevChild.tagName === 'IMG') return { element: prevChild, type: 'image' };
                 if (prevChild.tagName === 'VIDEO') return { element: prevChild, type: 'video' };
-                if (prevChild.tagName === 'FIGURE') {
+                if (prevChild.matches?.('figure,.sora-image-scroll')) {
                     const figImg = prevChild.querySelector('img');
                     if (figImg) return { element: figImg, type: 'image' };
                     const figVideo = prevChild.querySelector('video');
@@ -957,7 +949,7 @@ function getSelectedMedia(range, key) {
             if (nextChild) {
                 if (nextChild.tagName === 'IMG') return { element: nextChild, type: 'image' };
                 if (nextChild.tagName === 'VIDEO') return { element: nextChild, type: 'video' };
-                if (nextChild.tagName === 'FIGURE') {
+                if (nextChild.matches?.('figure,.sora-image-scroll')) {
                     const figImg = nextChild.querySelector('img');
                     if (figImg) return { element: figImg, type: 'image' };
                     const figVideo = nextChild.querySelector('video');
@@ -975,7 +967,7 @@ function getSelectedMedia(range, key) {
             if (prevSibling) {
                 if (prevSibling.tagName === 'IMG') return { element: prevSibling, type: 'image' };
                 if (prevSibling.tagName === 'VIDEO') return { element: prevSibling, type: 'video' };
-                if (prevSibling.tagName === 'FIGURE') {
+                if (prevSibling.matches?.('figure,.sora-image-scroll')) {
                     const figImg = prevSibling.querySelector('img');
                     if (figImg) return { element: figImg, type: 'image' };
                     const figVideo = prevSibling.querySelector('video');
@@ -991,7 +983,7 @@ function getSelectedMedia(range, key) {
             if (nextSibling) {
                 if (nextSibling.tagName === 'IMG') return { element: nextSibling, type: 'image' };
                 if (nextSibling.tagName === 'VIDEO') return { element: nextSibling, type: 'video' };
-                if (nextSibling.tagName === 'FIGURE') {
+                if (nextSibling.matches?.('figure,.sora-image-scroll')) {
                     const figImg = nextSibling.querySelector('img');
                     if (figImg) return { element: figImg, type: 'image' };
                     const figVideo = nextSibling.querySelector('video');

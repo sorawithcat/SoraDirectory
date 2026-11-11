@@ -562,6 +562,7 @@ async function updateMarkdownPreview(options = {}) {
         // 更新DOM（使用 requestAnimationFrame 优化）
         const processAfterDOMUpdate = () => {
             SoraContentFormats.normalizeMediaHeadings(markdownPreview);
+            SoraContentFormats.normalizeImages(markdownPreview);
             assignHeadingAutoIds(markdownPreview);
             if (window.SoraReusableBlocks) window.SoraReusableBlocks.renderEditor(markdownPreview);
             // 为每个视频设置 data-video-index 属性，用于后续恢复
@@ -934,6 +935,7 @@ if (markdownPreview) {
         }
         const html = clipboard.getData('text/html');
         const text = clipboard.getData('text/plain');
+        if (!html.trim() && !text) return;
         SoraEditor.transaction('粘贴', token, range => {
             const holder = document.createElement('div');
             if (html.trim()) {
@@ -943,8 +945,8 @@ if (markdownPreview) {
                     Array.from(holder.childNodes).filter(node => node.nodeType === Node.TEXT_NODE && !node.textContent.trim()).forEach(node => node.remove());
                 }
                 // 剪贴板的单段包装不是用户输入的换行。
-                if (holder.children.length === 1 && holder.firstElementChild.matches('p,div') &&
-                    !holder.firstElementChild.querySelector('p,div,table,pre,details,figure,ul,ol,h1,h2,h3,h4,h5,h6')) {
+                if (holder.children.length === 1 && holder.firstElementChild.matches('p:not([class]):not([style]),div:not([class]):not([style])') &&
+                    !holder.firstElementChild.querySelector('p,div,table,pre,details,figure,ul,ol,h1,h2,h3,h4,h5,h6,.sora-image-scroll')) {
                     const wrapper = holder.firstElementChild;
                     wrapper.replaceWith(...wrapper.childNodes);
                 }

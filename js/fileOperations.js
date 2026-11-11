@@ -7461,13 +7461,32 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             return String(value || '').replace(/\\s+/g, ' ').trim().toLocaleLowerCase();
         }
 
+        function collectExportSearchText(root) {
+            let text = '';
+            const parts = [];
+            function visit(node) {
+                if (node.nodeType === Node.TEXT_NODE) {
+                    parts.push({ node: node, start: text.length, end: text.length + node.length });
+                    text += node.data;
+                    return;
+                }
+                if (node.nodeType !== Node.ELEMENT_NODE || node.matches('script,style,template,.code-lang-label,button')) return;
+                const block = node.matches('p,div,section,article,aside,blockquote,h1,h2,h3,h4,h5,h6,li,dt,dd,summary,td,th,pre,br');
+                if (block) text += '\\n';
+                node.childNodes.forEach(visit);
+                if (block) text += '\\n';
+            }
+            root.childNodes.forEach(visit);
+            return { text: text, parts: parts };
+        }
+
         function buildExportSearchEntry(element) {
             const dirId = element.dataset.dirId || '';
             const title = nameMap[dirId] || '未命名';
             const temp = document.createElement('div');
             temp.innerHTML = getContent(dirId) || '';
             temp.querySelectorAll('script, style, template').forEach(function(item) { item.remove(); });
-            const text = String(temp.textContent || '').replace(/\\s+/g, ' ').trim();
+            const text = collectExportSearchText(temp).text.replace(/\\s+/g, ' ').trim();
             return {
                 dirId: dirId,
                 title: title,
@@ -7527,34 +7546,48 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
 
         function highlightExportSearchTerm(query) {
             const contentBody = document.getElementById('contentBody');
-            const normalizedQuery = normalizeExportSearchText(query);
-            if (!contentBody || !normalizedQuery) return false;
-            const walker = document.createTreeWalker(contentBody, NodeFilter.SHOW_TEXT, {
-                acceptNode: function(node) {
-                    const parent = node.parentElement;
-                    if (!parent || parent.closest('script, style, .code-lang-label')) return NodeFilter.FILTER_REJECT;
-                    return normalizeExportSearchText(node.textContent).includes(normalizedQuery)
-                        ? NodeFilter.FILTER_ACCEPT
-                        : NodeFilter.FILTER_SKIP;
+            if (!contentBody) return false;
+            contentBody.querySelectorAll('mark.export-search-hit').forEach(function(mark) {
+                mark.replaceWith(...mark.childNodes);
+            });
+            contentBody.normalize();
+            if (!query.trim()) return false;
+            const source = collectExportSearchText(contentBody);
+            const pattern = query.trim().split(/\\s+/).map(function(word) {
+                return word.replace(/[.*+?^$(){}|[\\]\\\\]/g, '\\\\$&');
+            }).join('\\\\s+');
+            const regex = new RegExp(pattern, 'gi');
+            const matches = Array.from(source.text.matchAll(regex));
+            let matchIndex = 0;
+            source.parts.forEach(function(part) {
+                while (matchIndex < matches.length && matches[matchIndex].index + matches[matchIndex][0].length <= part.start) matchIndex++;
+                const fragment = document.createDocumentFragment();
+                let offset = 0;
+                for (let i = matchIndex; i < matches.length && matches[i].index < part.end; i++) {
+                    const start = Math.max(0, matches[i].index - part.start);
+                    const end = Math.min(part.node.length, matches[i].index + matches[i][0].length - part.start);
+                    if (end <= start) continue;
+                    fragment.append(document.createTextNode(part.node.data.slice(offset, start)));
+                    const mark = document.createElement('mark');
+                    mark.className = 'export-search-hit';
+                    mark.textContent = part.node.data.slice(start, end);
+                    fragment.append(mark);
+                    offset = end;
+                }
+                if (!offset) return;
+                fragment.append(document.createTextNode(part.node.data.slice(offset)));
+                part.node.replaceWith(fragment);
+            });
+            const marks = contentBody.querySelectorAll('mark.export-search-hit');
+            marks.forEach(function(mark) {
+                for (let parent = mark.parentElement; parent && parent !== contentBody; parent = parent.parentElement) {
+                    if (parent.matches('details')) parent.open = true;
+                    if (parent.matches('[hidden]')) parent.hidden = false;
+                    if (parent.matches('spoiler')) parent.dataset.revealed = 'true';
                 }
             });
-            const node = walker.nextNode();
-            if (!node) return false;
-            const source = node.textContent || '';
-            const index = source.toLocaleLowerCase().indexOf(normalizedQuery);
-            if (index < 0) return false;
-            const mark = document.createElement('mark');
-            mark.className = 'export-search-hit';
-            mark.textContent = source.slice(index, index + query.length);
-            const after = node.splitText(index);
-            after.deleteData(0, query.length);
-            after.parentNode.insertBefore(mark, after);
-            for (let parent = mark.parentElement; parent && parent !== contentBody; parent = parent.parentElement) {
-                if (parent.matches('details')) parent.open = true;
-                if (parent.matches('[hidden]')) parent.hidden = false;
-            }
-            mark.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            return true;
+            if (marks.length) marks[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+            return matches.length > 0;
         }
 
         function renderExportSearchResults(rawQuery) {
@@ -7566,6 +7599,7 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
             resultsContainer.innerHTML = '';
             resultsContainer.hidden = !query;
             if (!query) {
+                highlightExportSearchTerm('');
                 updateExportSearchStatus(exportSearchReady
                     ? '可搜索 ' + exportSearchTotalCount + ' 个目录'
                     : '正在准备搜索索引：' + exportSearchIndexedCount + ' / ' + exportSearchTotalCount);
@@ -7577,13 +7611,16 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                 if (titleIndex < 0 && textIndex < 0) return null;
                 return {
                     item: item,
+                    bodyMatches: item.normalizedText.split(query).length - 1,
+                    titleMatched: titleIndex >= 0,
                     score: titleIndex === 0 ? 300 : (titleIndex > 0 ? 220 : 100),
                     snippet: getExportSearchSnippet(item.text, item.normalizedText, query)
                 };
             }).filter(Boolean).sort(function(a, b) {
                 return b.score - a.score || a.item.title.localeCompare(b.item.title);
-            }).slice(0, 50);
-            matches.forEach(function(match) {
+            });
+            const bodyMatches = matches.reduce(function(total, match) { return total + match.bodyMatches; }, 0);
+            matches.slice(0, 50).forEach(function(match) {
                 const item = document.createElement('div');
                 item.setAttribute('role', 'listitem');
                 const button = document.createElement('button');
@@ -7592,15 +7629,21 @@ async function handleSaveAsWebpage(encrypt = false, password = null, exportData 
                 button.dataset.exportSearchDir = match.item.dirId;
                 const title = document.createElement('strong');
                 title.textContent = match.item.title;
+                const count = document.createElement('small');
+                count.textContent = '正文 ' + match.bodyMatches + ' 处匹配' + (match.titleMatched ? ' · 目录名匹配' : '');
                 const snippet = document.createElement('small');
                 snippet.textContent = match.snippet || '目录名匹配';
                 button.appendChild(title);
+                button.appendChild(count);
                 button.appendChild(snippet);
                 item.appendChild(button);
                 resultsContainer.appendChild(item);
             });
             const suffix = exportSearchReady ? '' : '（索引仍在构建）';
-            updateExportSearchStatus(matches.length ? '找到 ' + matches.length + ' 项' + suffix : '未找到匹配项' + suffix);
+            const limit = matches.length > 50 ? '（仅展示前 50 个目录）' : '';
+            updateExportSearchStatus(matches.length
+                ? '找到 ' + matches.length + ' 个目录，正文共 ' + bodyMatches + ' 处匹配' + limit + suffix
+                : '未找到匹配项' + suffix);
         }
 
         function initExportSearch() {

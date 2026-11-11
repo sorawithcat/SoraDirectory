@@ -151,6 +151,7 @@
         updateState();
     }
     function refresh() {
+        SoraContentFormats.normalizeImages(root);
         normalizeFootnotes(root);
         SoraContentFormats.normalizeCallouts(root);
         initCodeBlocks();
@@ -490,7 +491,8 @@
     }
 
     function pasteFragment(range, holder) {
-        const hasBlocks = holder.querySelector('p,div,h1,h2,h3,h4,h5,h6,pre,table,details,figure,ul,ol,blockquote');
+        const hasBlocks = holder.querySelector('p,div,h1,h2,h3,h4,h5,h6,pre,table,details,figure,ul,ol,blockquote,.sora-image-scroll');
+        if (!holder.hasChildNodes()) return;
         if (hasBlocks) prepareBlockRange(range);
         range.deleteContents();
         const fragment = document.createDocumentFragment(); fragment.append(...holder.childNodes);
@@ -522,6 +524,9 @@
             if (hasBlocks && last.nodeType === Node.ELEMENT_NODE && !last.matches('img,video,hr,table,pre,details,figure')) range.selectNodeContents(last);
             else range.setStartAfter(last);
             range.collapse(false);
+        }
+        if (last.nodeType === Node.ELEMENT_NODE && last.matches('img,video,hr,table,pre,details,figure,.sora-image-scroll')) {
+            const after = paragraphAfter(last); range.selectNodeContents(after); range.collapse(true);
         }
         setRange(range);
     }
